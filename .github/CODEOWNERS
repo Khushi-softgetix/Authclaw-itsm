@@ -1,0 +1,11 @@
+# Either eligible engineer can review every change.
+* @RaviiTF @VidhiTF @KunalTF
+
+# Component rules retain the same reviewer set.
+/gateway/ @RaviiTF @VidhiTF @KunalTF
+/backend/ @RaviiTF @VidhiTF @KunalTF
+/audit_consumer/ @RaviiTF @VidhiTF @KunalTF
+/infra/ @RaviiTF @VidhiTF @KunalTF
+/.github/ @RaviiTF @VidhiTF @KunalTF
+/services/agent/ @RaviiTF @VidhiTF @KunalTF
+/console/ @RaviiTF @VidhiTF @KunalTF

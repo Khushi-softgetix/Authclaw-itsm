@@ -1,0 +1,120 @@
+@import "tailwindcss";
+
+:root {
+  --navy-950: #08152b;
+  --navy-900: #0b1f3f;
+  --navy-800: #12294b;
+  --navy-700: #1b3663;
+  --ink: #0e1726;
+  --slate: #475069;
+  --mute: #6b7488;
+  --line: #e6e9f0;
+  --line-2: #eef1f6;
+  --paper: #fbfaf9;
+  --paper-2: #f5f7fa;
+  --white: #ffffff;
+  --violet: #6d28d9;
+  --violet-500: #7c3aed;
+  --violet-300: #a78bfa;
+  --violet-050: #f1ecfe;
+  --gold: #e9a93c;
+  --gold-600: #c9862a;
+  --gold-050: #fbf1de;
+  --ok: #1e7a46;
+  --background: var(--paper);
+  --foreground: var(--ink);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: Inter, Arial, Helvetica, sans-serif;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: "Space Grotesk", Inter, Arial, Helvetica, sans-serif;
+}
+
+.authclaw-console {
+  --ac-text: #0f172a;
+  --ac-body: #263244;
+  --ac-muted-strong: #3f4a5f;
+  --ac-accent: #4f46e5;
+  --ac-success: #047857;
+  --ac-warning: #92400e;
+  --ac-danger: #b91c1c;
+  --ac-info: #0369a1;
+}
+
+.authclaw-console [class~="text-[#475069]"],
+.authclaw-console [class~="text-[#6B7488]"] {
+  color: var(--ac-muted-strong) !important;
+}
+
+.authclaw-console .text-indigo-300,
+.authclaw-console .text-indigo-400,
+.authclaw-console .text-indigo-500,
+.authclaw-console .text-violet-300,
+.authclaw-console .text-violet-400,
+.authclaw-console .text-purple-400 {
+  color: var(--ac-accent) !important;
+}
+
+.authclaw-console .text-emerald-100,
+.authclaw-console .text-emerald-200,
+.authclaw-console .text-emerald-300,
+.authclaw-console .text-emerald-400,
+.authclaw-console .text-emerald-450 {
+  color: var(--ac-success) !important;
+}
+
+.authclaw-console .text-amber-100,
+.authclaw-console .text-amber-200,
+.authclaw-console .text-amber-300,
+.authclaw-console .text-amber-400,
+.authclaw-console .text-yellow-400 {
+  color: var(--ac-warning) !important;
+}
+
+.authclaw-console .text-red-100,
+.authclaw-console .text-red-200,
+.authclaw-console .text-red-300,
+.authclaw-console .text-red-400 {
+  color: var(--ac-danger) !important;
+}
+
+.authclaw-console .text-sky-300,
+.authclaw-console .text-sky-400,
+.authclaw-console .text-blue-400 {
+  color: var(--ac-info) !important;
+}
+
+.authclaw-console button,
+.authclaw-console input,
+.authclaw-console select,
+.authclaw-console textarea {
+  color-scheme: light;
+}
+
+.authclaw-console input::placeholder,
+.authclaw-console textarea::placeholder {
+  color: #64748b;
+  opacity: 1;
+}
+
+.authclaw-console button:disabled,
+.authclaw-console input:disabled,
+.authclaw-console select:disabled,
+.authclaw-console textarea:disabled {
+  opacity: 0.72;
+}

@@ -1,0 +1,258 @@
+import { expect, test } from "@playwright/test";
+
+const canonicalPages = [
+  { path: "/", title: "AuthClaw — The runtime layer for AI compliance" },
+  { path: "/product", title: "Product — AuthClaw" },
+  { path: "/pricing", title: "Pricing — AuthClaw" },
+  { path: "/security", title: "Security & Trust — AuthClaw" },
+  { path: "/company", title: "Company — AuthClaw" },
+  { path: "/privacy", title: "Privacy Notice — AuthClaw" },
+  { path: "/terms", title: "Terms of Use — AuthClaw" },
+  { path: "/cookies", title: "Cookie & Analytics Disclosure — AuthClaw" },
+  { path: "/subprocessors", title: "Subprocessors — AuthClaw" },
+  { path: "/dpa", title: "DPA Requests — AuthClaw" },
+];
+
+const legacyRedirects = [
+  ["/index.html", "/"],
+  ["/product.html", "/product"],
+  ["/pricing.html", "/pricing"],
+  ["/security.html", "/security"],
+  ["/company.html", "/company"],
+] as const;
+
+test.describe("F25 public marketing routes", () => {
+  for (const route of canonicalPages) {
+    test(`${route.path} is public, canonical, and accessible`, async ({ page }) => {
+      const response = await page.goto(route.path);
+      expect(response?.status()).toBe(200);
+      await expect(page).toHaveTitle(route.title);
+      await expect(page.locator("main")).toHaveCount(1);
+      await expect(page.locator("h1")).toHaveCount(1);
+      await expect(page.locator('link[rel="canonical"]')).toHaveAttribute(
+        "href",
+        new RegExp(`${route.path === "/" ? "/?$" : `${route.path}$`}`)
+      );
+      await expect(page.locator('meta[property="og:title"]')).toHaveAttribute(
+        "content",
+        route.title
+      );
+      await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute(
+        "content",
+        "summary_large_image"
+      );
+      await expect(page.locator('a[href$=".html"]')).toHaveCount(0);
+    });
+  }
+
+  for (const [legacy, canonical] of legacyRedirects) {
+    test(`${legacy} redirects permanently to ${canonical}`, async ({ request }) => {
+      const response = await request.get(legacy, { maxRedirects: 0 });
+      expect(response.status()).toBe(308);
+      expect(response.headers().location).toBe(canonical);
+    });
+  }
+
+  test("desktop navigation exposes canonical active states", async ({ page }) => {
+    await page.goto("/security");
+    const navigation = page.getByRole("navigation", {
+      name: "Primary navigation",
+    });
+    await expect(navigation.getByRole("link", { name: "Security" })).toHaveAttribute(
+      "aria-current",
+      "page"
+    );
+    await expect(navigation.locator('a[href$=".html"]')).toHaveCount(0);
+  });
+
+  test("desktop navigation supports visible keyboard focus", async ({ page }) => {
+    await page.goto("/");
+    await page.keyboard.press("Tab");
+    const home = page.getByRole("link", { name: "AuthClaw home" }).first();
+    await expect(home).toBeFocused();
+    await expect(home).toHaveCSS("outline-style", "solid");
+    await page.keyboard.press("Tab");
+    await expect(page.getByRole("link", { name: "Product" }).first()).toBeFocused();
+  });
+
+  test("mobile navigation supports state and keyboard dismissal", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/");
+    const toggle = page.getByRole("button", { name: "Open menu" });
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await toggle.click();
+    await expect(page.getByRole("button", { name: "Close menu" })).toHaveAttribute(
+      "aria-expanded",
+      "true"
+    );
+    await expect(
+      page.getByRole("navigation", { name: "Mobile navigation" })
+    ).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(toggle).toBeFocused();
+  });
+
+  test("pricing interactions expose accessible state", async ({ page }) => {
+    await page.goto("/pricing");
+    const monthly = page.getByRole("button", { name: "Monthly", exact: true });
+    const annual = page.getByRole("button", { name: "Annual", exact: true });
+    await expect(annual).toHaveAttribute("aria-pressed", "true");
+    await monthly.click();
+    await expect(monthly).toHaveAttribute("aria-pressed", "true");
+    await expect(annual).toHaveAttribute("aria-pressed", "false");
+
+    const question = page.getByRole("button", {
+      name: /Do you mark up model tokens/,
+    });
+    const answer = page.locator("#faq-panel-1");
+    await expect(question).toHaveAttribute("aria-expanded", "false");
+    await expect(answer).toHaveAttribute("aria-hidden", "true");
+    await question.click();
+    await expect(question).toHaveAttribute("aria-expanded", "true");
+    await expect(answer).toHaveAttribute("aria-hidden", "false");
+    await page.keyboard.press("Escape");
+    await expect(question).toHaveAttribute("aria-expanded", "false");
+    await expect(answer).toHaveAttribute("aria-hidden", "true");
+  });
+
+  test("SEO endpoints and social image are public", async ({ page, request }) => {
+    await page.goto("/");
+    const imageUrl = await page
+      .locator('meta[property="og:image"]')
+      .getAttribute("content");
+    expect(imageUrl).toBeTruthy();
+    expect((await request.get(imageUrl!)).status()).toBe(200);
+
+    const robots = await request.get("/robots.txt");
+    expect(robots.status()).toBe(200);
+    const robotsBody = await robots.text();
+    expect(robotsBody).toContain("Disallow: /");
+
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute(
+      "content",
+      /noindex.*nofollow|nofollow.*noindex/
+    );
+
+    const sitemap = await request.get("/sitemap.xml");
+    expect(sitemap.status()).toBe(200);
+    const sitemapBody = await sitemap.text();
+    for (const route of canonicalPages) {
+      expect(sitemapBody).toContain(route.path);
+    }
+  });
+
+  test("internal links resolve and page fragments exist", async ({ page, request }) => {
+    const destinations = new Set<string>();
+    for (const route of canonicalPages) {
+      await page.goto(route.path);
+      const hrefs = await page.locator("a[href]").evaluateAll((links) =>
+        links.map((link) => link.getAttribute("href") || "")
+      );
+      for (const href of hrefs) {
+        if (href.startsWith("#")) {
+          await expect(page.locator(href)).toHaveCount(1);
+        } else if (href.startsWith("/")) {
+          destinations.add(href);
+        }
+      }
+    }
+    for (const destination of destinations) {
+      expect((await request.get(destination)).status()).toBeLessThan(400);
+    }
+  });
+
+  test("public pages contain no unsupported certification claim", async ({ page }) => {
+    for (const route of canonicalPages) {
+      await page.goto(route.path);
+      await expect(page.locator("body")).not.toContainText(
+        "SOC 2 Type II certified"
+      );
+      await expect(page.locator("body")).not.toContainText(
+        "Independently audited"
+      );
+      await expect(page.locator("body")).not.toContainText("tamper-proof");
+      await expect(page.locator("body")).not.toContainText("immutable");
+      expect(
+        await page.locator("table th:not([scope])").count()
+      ).toBe(0);
+    }
+  });
+
+  test("website and demo use registered claim wording", async ({ page }) => {
+    await page.goto("/security");
+    await expect(page.getByText(
+      "AuthClaw includes technical controls that support GDPR obligations and SOC 2 readiness.",
+    )).toBeVisible();
+    await expect(page.getByText(/Configured sensitive-data patterns can be detected and redacted before model-provider egress/)).toBeVisible();
+    await expect(page.getByText("No independent SOC report is currently offered.", { exact: false })).toBeVisible();
+    await expect(page.getByRole("link", { name: "subprocessor list" })).toHaveAttribute("href", "/subprocessors");
+    await expect(page.getByRole("link", { name: "DPA request path" })).toHaveAttribute("href", "/dpa");
+
+    await page.goto("/demo");
+    await expect(page.getByRole("heading", { name: "Book an AuthClaw demo" })).toBeVisible();
+    await expect(page.locator("main")).not.toContainText(/certified|compliant|guarantee|independently audited/i);
+  });
+
+  test("public signup requires an approved invitation", async ({ page }) => {
+    await page.goto("/signup");
+    await expect(page.getByRole("heading", { name: "Invitation required" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Request early access" })).toHaveAttribute(
+      "href",
+      "/early-access"
+    );
+    await expect(page.getByRole("button", { name: "Send Verification Code" })).toHaveCount(0);
+  });
+
+  test("invitation redemption requires versioned legal-notice acceptance", async ({ page }) => {
+    await page.goto("/signup?invite=00000000-0000-4000-8000-000000000001");
+    const acceptance = page.getByRole("checkbox");
+    await expect(acceptance).toBeVisible();
+    await expect(acceptance).toHaveAttribute("required", "");
+    await expect(page.getByRole("link", { name: "Terms of Use" })).toHaveAttribute(
+      "href",
+      "/terms"
+    );
+    await expect(page.getByRole("link", { name: "Privacy Notice" })).toHaveAttribute(
+      "href",
+      "/privacy"
+    );
+  });
+
+  for (const lifecycleState of ["expired", "revoked", "invalid"]) {
+    test(`${lifecycleState} invitation uses generic recovery guidance`, async ({ page }) => {
+      await page.route("**/api/onboarding/verify", (route) =>
+        route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          body: JSON.stringify({ detail: `Invitation is ${lifecycleState}` }),
+        })
+      );
+      await page.goto("/signup?invite=00000000-0000-4000-8000-000000000001");
+      await page.locator('input[name="authclaw_invite_password"]').fill("StrongPassword!234");
+      await page.locator('input[name="authclaw_invite_confirm_password"]').fill("StrongPassword!234");
+      await page.getByRole("checkbox").check();
+      await page.locator('input[name="authclaw_signup_otp"]').fill("123456");
+      await page.getByRole("button", { name: "Verify and Join Tenant" }).click();
+
+      await expect(page.getByText("Invitation is invalid or unavailable.", { exact: false })).toBeVisible();
+      await expect(page.getByText("Please contact your tenant administrator or support if you believe this is an error.", { exact: false })).toBeVisible();
+      if (lifecycleState !== "invalid") {
+        await expect(page.locator("body")).not.toContainText(lifecycleState);
+      }
+    });
+  }
+
+  test("malformed invitation uses the same generic recovery guidance", async ({ page }) => {
+    await page.goto("/signup?invite=malformed");
+    await page.locator('input[name="authclaw_invite_password"]').fill("StrongPassword!234");
+    await page.locator('input[name="authclaw_invite_confirm_password"]').fill("StrongPassword!234");
+    await page.getByRole("checkbox").check();
+    await page.locator('input[name="authclaw_signup_otp"]').fill("123456");
+    await page.getByRole("button", { name: "Verify and Join Tenant" }).click();
+
+    await expect(page.getByText("Invitation is invalid or unavailable.", { exact: false })).toBeVisible();
+    await expect(page.getByText("Please contact your tenant administrator or support if you believe this is an error.", { exact: false })).toBeVisible();
+    await expect(page.locator("body")).not.toContainText("incomplete");
+  });
+});

@@ -1,0 +1,4 @@
+# Canonical local deployment. Security prepare, migrations, finalization, and RLS verification
+# are defined once in docker-compose.full.yml to prevent insecure split-brain stacks.
+include:
+  - path: ./docker-compose.full.yml

@@ -1077,3 +1077,887 @@ class TrustCenterAccessLog(Base):
         Index("idx_trust_access_tenant", "tenant_id", "accessed_at"),
         Index("idx_trust_access_share", "share_id"),
     )
+<<<<<<< HEAD
+=======
+
+
+# =============================================================================
+# ITSM DOMAIN MODELS (MVP -> V1 -> V1.5 -> V2)
+# =============================================================================
+from sqlalchemy import Numeric
+from sqlalchemy.dialects.postgresql import JSONB, ARRAY as PG_ARRAY, UUID as PG_UUID
+
+
+# -----------------------------------------------------------------------------
+# MVP Models (12 tables)
+# -----------------------------------------------------------------------------
+
+class ITSMBusinessCalendar(Base):
+    """Business calendar with working hours and holidays for SLA calculations."""
+    __tablename__ = "itsm_business_calendars"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(255), nullable=False)
+    timezone = Column(String(50), nullable=False, default="UTC")
+    weekly_hours = Column(JSONB, nullable=False, default=dict)
+    holidays = Column(JSONB, nullable=False, default=list)
+    is_default = Column(Boolean, nullable=False, default=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_itsm_calendar_tenant_name"),
+        Index("idx_itsm_calendar_tenant", "tenant_id"),
+    )
+
+
+class ITSMService(Base):
+    """Business and technical service definitions."""
+    __tablename__ = "itsm_services"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(255), nullable=False)
+    slug = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    tier = Column(String(20), nullable=False, default="TIER_2")
+    status = Column(String(32), nullable=False, default="OPERATIONAL")
+    owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    escalation_team = Column(String(100), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    owner = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "slug", name="uq_itsm_services_tenant_slug"),
+        Index("idx_itsm_services_tenant", "tenant_id"),
+        Index("idx_itsm_services_tenant_tier", "tenant_id", "tier"),
+        Index("idx_itsm_services_tenant_status", "tenant_id", "status"),
+    )
+
+
+class ITSMTicketCategory(Base):
+    """Hierarchical category taxonomy for ITSM tickets."""
+    __tablename__ = "itsm_ticket_categories"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(100), nullable=False)
+    code = Column(String(50), nullable=False)
+    description = Column(Text, nullable=True)
+    parent_category_id = Column(UUID(as_uuid=True), ForeignKey("itsm_ticket_categories.id", ondelete="CASCADE"), nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    display_order = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    parent_category = relationship("ITSMTicketCategory", remote_side=[id])
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "code", name="uq_itsm_category_tenant_code"),
+        Index("idx_itsm_category_tenant", "tenant_id"),
+        Index("idx_itsm_category_parent", "tenant_id", "parent_category_id"),
+    )
+
+
+class ITSMSLAPolicy(Base):
+    """SLA Policy defining response and resolution targets per priority/service."""
+    __tablename__ = "itsm_sla_policies"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    calendar_id = Column(UUID(as_uuid=True), ForeignKey("itsm_business_calendars.id", ondelete="SET NULL"), nullable=True)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    ticket_type = Column(String(32), nullable=False, default="INCIDENT")
+    priority = Column(String(20), nullable=False)
+    service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="CASCADE"), nullable=True)
+    response_target_minutes = Column(Integer, nullable=False)
+    resolution_target_minutes = Column(Integer, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    calendar = relationship("ITSMBusinessCalendar")
+    service = relationship("ITSMService")
+
+    __table_args__ = (
+        Index("idx_itsm_sla_lookup", "tenant_id", "ticket_type", "priority", "is_active"),
+    )
+
+
+class ITSMTicketCounter(Base):
+    """Concurrency-safe sequence counters for human-readable ticket numbers."""
+    __tablename__ = "itsm_ticket_counters"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    ticket_type = Column(String(32), nullable=False)
+    prefix = Column(String(10), nullable=False)
+    last_number = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "ticket_type", name="uq_itsm_ticket_counter_tenant_type"),
+    )
+
+
+class ITSMTicket(Base):
+    """Core ITSM Ticket entity for Incidents, Problems, and Service Requests."""
+    __tablename__ = "itsm_tickets"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    ticket_number = Column(String(32), nullable=False)
+    ticket_type = Column(String(32), nullable=False, default="INCIDENT")
+    title = Column(String(512), nullable=False)
+    description = Column(Text, nullable=False)
+    impact = Column(String(20), nullable=False, default="MEDIUM")
+    urgency = Column(String(20), nullable=False, default="MEDIUM")
+    priority = Column(String(20), nullable=False, default="P3")
+    status = Column(String(32), nullable=False, default="NEW")
+    status_reason = Column(Text, nullable=True)
+    source_channel = Column(String(50), nullable=False, default="PORTAL")
+    requester_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    assignee_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    assignment_group = Column(String(100), nullable=True)
+    service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="SET NULL"), nullable=True)
+    category_id = Column(UUID(as_uuid=True), ForeignKey("itsm_ticket_categories.id", ondelete="SET NULL"), nullable=True)
+    category = Column(String(100), nullable=False, default="GENERAL")
+    subcategory = Column(String(100), nullable=True)
+    is_major_incident = Column(Boolean, nullable=False, default=False)
+    linked_problem_id = Column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="SET NULL"), nullable=True)
+    linked_finding_id = Column(UUID(as_uuid=True), ForeignKey("findings.id", ondelete="SET NULL"), nullable=True)
+    sla_policy_id = Column(UUID(as_uuid=True), ForeignKey("itsm_sla_policies.id", ondelete="SET NULL"), nullable=True)
+    sla_response_due_at = Column(DateTime(timezone=True), nullable=True)
+    sla_response_met_at = Column(DateTime(timezone=True), nullable=True)
+    sla_resolution_due_at = Column(DateTime(timezone=True), nullable=True)
+    sla_resolution_met_at = Column(DateTime(timezone=True), nullable=True)
+    sla_status = Column(String(20), nullable=False, default="WITHIN_SLA")
+    sla_paused_at = Column(DateTime(timezone=True), nullable=True)
+    sla_accumulated_pause_seconds = Column(Integer, nullable=False, default=0)
+    resolution_code = Column(String(50), nullable=True)
+    resolution_summary = Column(Text, nullable=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+    closed_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    ai_triaged = Column(Boolean, nullable=False, default=False)
+    ai_suggested_priority = Column(String(20), nullable=True)
+    ai_confidence_score = Column(Float, nullable=True)
+    ai_summary = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    category_rel = relationship("ITSMTicketCategory", foreign_keys=[category_id])
+    service = relationship("ITSMService")
+    requester = relationship("User", foreign_keys=[requester_id])
+    assignee = relationship("User", foreign_keys=[assignee_id])
+    sla_policy = relationship("ITSMSLAPolicy")
+    linked_problem = relationship("ITSMTicket", remote_side=[id], foreign_keys=[linked_problem_id])
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "ticket_number", name="uq_itsm_tickets_tenant_number"),
+        Index("idx_itsm_tickets_tenant_status", "tenant_id", "status"),
+        Index("idx_itsm_tickets_tenant_priority", "tenant_id", "priority"),
+        Index("idx_itsm_tickets_tenant_assignee", "tenant_id", "assignee_id"),
+        Index("idx_itsm_tickets_tenant_created", "tenant_id", "created_at"),
+    )
+
+
+class ITSMTicketActivity(Base):
+    """Audit trail and conversation history for tickets."""
+    __tablename__ = "itsm_ticket_activities"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    ticket_id = Column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="CASCADE"), nullable=False)
+    activity_type = Column(String(50), nullable=False)
+    actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_type = Column(String(32), nullable=False, default="USER")
+    content = Column(Text, nullable=True)
+    activity_metadata = Column("metadata", JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    ticket = relationship("ITSMTicket")
+    actor = relationship("User", foreign_keys=[actor_id])
+
+    __table_args__ = (
+        Index("idx_itsm_activity_ticket_created", "tenant_id", "ticket_id", "created_at"),
+    )
+
+
+class ITSMServiceCatalogItem(Base):
+    """Service catalog request templates and dynamic intake forms."""
+    __tablename__ = "itsm_service_catalog_items"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(255), nullable=False)
+    slug = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    version = Column(Integer, nullable=False, default=1)
+    intake_schema = Column(JSONB, nullable=False, default=dict)
+    approval_required = Column(Boolean, nullable=False, default=False)
+    fulfillment_group = Column(String(100), nullable=True)
+    estimated_delivery_hours = Column(Integer, nullable=False, default=24)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    service = relationship("ITSMService")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "slug", name="uq_itsm_catalog_tenant_slug"),
+        Index("idx_itsm_catalog_tenant_service", "tenant_id", "service_id", "is_active"),
+    )
+
+
+class ITSMServiceRequestDetail(Base):
+    """Snapshot of catalog schema and user form data for submitted service requests."""
+    __tablename__ = "itsm_service_request_details"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    ticket_id = Column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="CASCADE"), nullable=False)
+    catalog_item_id = Column(UUID(as_uuid=True), ForeignKey("itsm_service_catalog_items.id", ondelete="RESTRICT"), nullable=False)
+    catalog_item_version = Column(Integer, nullable=False)
+    intake_schema_snapshot = Column(JSONB, nullable=False)
+    submitted_form_data = Column(JSONB, nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    ticket = relationship("ITSMTicket")
+    catalog_item = relationship("ITSMServiceCatalogItem")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "ticket_id", name="uq_itsm_request_details_ticket"),
+        Index("idx_itsm_request_details_catalog", "tenant_id", "catalog_item_id"),
+    )
+
+
+class ITSMKnowledgeArticle(Base):
+    """Knowledge base article metadata."""
+    __tablename__ = "itsm_knowledge_articles"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    title = Column(String(512), nullable=False)
+    slug = Column(String(255), nullable=False)
+    category = Column(String(100), nullable=False, default="TROUBLESHOOTING")
+    service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="SET NULL"), nullable=True)
+    status = Column(String(32), nullable=False, default="DRAFT")
+    current_published_version = Column(Integer, nullable=True)
+    view_count = Column(Integer, nullable=False, default=0)
+    helpful_count = Column(Integer, nullable=False, default=0)
+    author_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    published_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    service = relationship("ITSMService")
+    author = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "slug", name="uq_itsm_kb_tenant_slug"),
+        Index("idx_itsm_kb_tenant_status", "tenant_id", "status"),
+        Index("idx_itsm_kb_service", "tenant_id", "service_id"),
+    )
+
+
+class ITSMKnowledgeArticleVersion(Base):
+    """Immutable versioned revisions of knowledge articles."""
+    __tablename__ = "itsm_knowledge_article_versions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    article_id = Column(UUID(as_uuid=True), ForeignKey("itsm_knowledge_articles.id", ondelete="CASCADE"), nullable=False)
+    version_number = Column(Integer, nullable=False)
+    title = Column(String(512), nullable=False)
+    content_markdown = Column(Text, nullable=False)
+    summary = Column(Text, nullable=True)
+    keywords = Column(PG_ARRAY(Text), nullable=False, default=list)
+    change_summary = Column(Text, nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    article = relationship("ITSMKnowledgeArticle")
+    creator = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "article_id", "version_number", name="uq_itsm_kb_version_number"),
+        Index("idx_itsm_kb_version_article", "tenant_id", "article_id"),
+    )
+
+
+class ITSMConfigurationItem(Base):
+    """Configuration items (CIs) in the CMDB."""
+    __tablename__ = "itsm_configuration_items"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="SET NULL"), nullable=True)
+    name = Column(String(255), nullable=False)
+    ci_type = Column(String(50), nullable=False)
+    environment = Column(String(20), nullable=False, default="PRODUCTION")
+    cloud_connector_id = Column(UUID(as_uuid=True), ForeignKey("cloud_connectors.id", ondelete="SET NULL"), nullable=True)
+    external_resource_id = Column(String(512), nullable=True)
+    status = Column(String(32), nullable=False, default="ACTIVE")
+    attributes = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    service = relationship("ITSMService")
+
+    __table_args__ = (
+        Index("idx_itsm_ci_tenant_service", "tenant_id", "service_id"),
+        Index("idx_itsm_ci_type", "tenant_id", "ci_type"),
+        Index("idx_itsm_ci_cloud_connector", "tenant_id", "cloud_connector_id"),
+    )
+
+
+# -----------------------------------------------------------------------------
+# V1 Models (5 tables)
+# -----------------------------------------------------------------------------
+
+class ITSMChangeRequest(Base):
+    """Change requests for infrastructure and application modifications."""
+    __tablename__ = "itsm_change_requests"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    change_number = Column(String(32), nullable=False)
+    title = Column(String(512), nullable=False)
+    description = Column(Text, nullable=False)
+    change_type = Column(String(20), nullable=False, default="STANDARD")
+    risk_level = Column(String(20), nullable=False, default="LOW")
+    impact_level = Column(String(20), nullable=False, default="LOW")
+    status = Column(String(32), nullable=False, default="DRAFT")
+    service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="RESTRICT"), nullable=True)
+    lead_time_hours = Column(Integer, nullable=False, default=0)
+    outage_expected = Column(Boolean, nullable=False, default=False)
+    implementation_plan = Column(Text, nullable=False, default="")
+    backout_plan = Column(Text, nullable=False, default="")
+    test_plan = Column(Text, nullable=False, default="")
+    requested_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    assigned_to_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    assigned_team = Column(String(100), nullable=True)
+    pending_approval_id = Column(UUID(as_uuid=True), ForeignKey("pending_approvals.id", ondelete="SET NULL"), nullable=True)
+    earliest_start_at = Column(DateTime(timezone=True), nullable=True)
+    latest_finish_at = Column(DateTime(timezone=True), nullable=True)
+    actual_start_at = Column(DateTime(timezone=True), nullable=True)
+    actual_finish_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    service = relationship("ITSMService")
+    requested_by = relationship("User", foreign_keys=[requested_by_id])
+    assigned_to = relationship("User", foreign_keys=[assigned_to_id])
+    pending_approval = relationship("PendingApproval")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "change_number", name="uq_itsm_change_tenant_number"),
+        Index("idx_itsm_change_tenant_status", "tenant_id", "status"),
+        Index("idx_itsm_change_service", "tenant_id", "service_id"),
+        Index("idx_itsm_change_approval", "tenant_id", "pending_approval_id"),
+    )
+
+
+class ITSMChangeRequestCI(Base):
+    """Normalized join relationship between Changes and Configuration Items."""
+    __tablename__ = "itsm_change_request_cis"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    change_id = Column(UUID(as_uuid=True), ForeignKey("itsm_change_requests.id", ondelete="CASCADE"), nullable=False)
+    ci_id = Column(UUID(as_uuid=True), ForeignKey("itsm_configuration_items.id", ondelete="RESTRICT"), nullable=False)
+    impact_type = Column(String(32), nullable=False, default="AFFECTED")
+    notes = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    change = relationship("ITSMChangeRequest")
+    ci = relationship("ITSMConfigurationItem")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "change_id", "ci_id", name="uq_itsm_change_ci_unique"),
+        Index("idx_itsm_change_ci_change", "tenant_id", "change_id"),
+        Index("idx_itsm_change_ci_ci", "tenant_id", "ci_id"),
+    )
+
+
+class ITSMServiceRelationship(Base):
+    """Directed acyclic service dependency topology graph."""
+    __tablename__ = "itsm_service_relationships"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    parent_service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="CASCADE"), nullable=False)
+    child_service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="CASCADE"), nullable=False)
+    relationship_type = Column(String(50), nullable=False, default="DEPENDS_ON")
+    criticality = Column(String(20), nullable=False, default="MEDIUM")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    parent_service = relationship("ITSMService", foreign_keys=[parent_service_id])
+    child_service = relationship("ITSMService", foreign_keys=[child_service_id])
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "parent_service_id", "child_service_id", name="uq_itsm_service_rel"),
+        CheckConstraint("parent_service_id != child_service_id", name="ck_itsm_service_rel_no_self_ref"),
+        Index("idx_itsm_serv_rel_parent", "tenant_id", "parent_service_id"),
+        Index("idx_itsm_serv_rel_child", "tenant_id", "child_service_id"),
+    )
+
+
+class ITSMAttachment(Base):
+    """File attachment records across tickets, changes, problems, and KB articles."""
+    __tablename__ = "itsm_attachments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    target_type = Column(String(32), nullable=False)
+    target_id = Column(UUID(as_uuid=True), nullable=False)
+    file_name = Column(String(255), nullable=False)
+    file_size_bytes = Column(BigInteger, nullable=False)
+    mime_type = Column(String(127), nullable=False)
+    storage_path = Column(String(1024), nullable=False)
+    storage_backend = Column(String(32), nullable=False, default="S3")
+    checksum_sha256 = Column(String(64), nullable=False)
+    is_quarantined = Column(Boolean, nullable=False, default=False)
+    quarantine_reason = Column(String(255), nullable=True)
+    uploaded_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    uploaded_by = relationship("User")
+
+    __table_args__ = (
+        Index("idx_itsm_attach_target", "tenant_id", "target_type", "target_id"),
+    )
+
+
+class ITSMProblemDetail(Base):
+    """Root cause and permanent workaround tracking for problem tickets."""
+    __tablename__ = "itsm_problem_details"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    ticket_id = Column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="CASCADE"), nullable=False)
+    known_error = Column(Boolean, nullable=False, default=False)
+    root_cause_summary = Column(Text, nullable=True)
+    workaround_summary = Column(Text, nullable=True)
+    permanent_solution = Column(Text, nullable=True)
+    rca_document_url = Column(String(1024), nullable=True)
+    assigned_investigator_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    identified_at = Column(DateTime(timezone=True), nullable=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    ticket = relationship("ITSMTicket")
+    assigned_investigator = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "ticket_id", name="uq_itsm_problem_details_ticket"),
+        Index("idx_itsm_problem_investigator", "tenant_id", "assigned_investigator_id"),
+    )
+
+
+# -----------------------------------------------------------------------------
+# V1.5 Models (8 tables)
+# -----------------------------------------------------------------------------
+
+class ITSMMajorIncident(Base):
+    """Major incident response coordination, command bridge, and postmortem tracking."""
+    __tablename__ = "itsm_major_incidents"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    ticket_id = Column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="CASCADE"), nullable=False)
+    incident_commander_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    bridge_url = Column(String(1024), nullable=True)
+    communication_channel = Column(String(255), nullable=True)
+    declared_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    declared_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    postmortem_status = Column(String(32), nullable=False, default="PENDING")
+    postmortem_url = Column(String(1024), nullable=True)
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    closed_at = Column(DateTime(timezone=True), nullable=True)
+    executive_summary = Column(Text, nullable=True)
+    impacted_business_units = Column(PG_ARRAY(Text), nullable=False, default=list)
+    customer_impact_description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    ticket = relationship("ITSMTicket")
+    incident_commander = relationship("User", foreign_keys=[incident_commander_id])
+    declared_by = relationship("User", foreign_keys=[declared_by_id])
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "ticket_id", name="uq_itsm_major_incident_ticket"),
+        Index("idx_itsm_major_inc_commander", "tenant_id", "incident_commander_id"),
+    )
+
+
+class ITSMOnCallSchedule(Base):
+    """Service on-call schedules."""
+    __tablename__ = "itsm_oncall_schedules"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="CASCADE"), nullable=True)
+    name = Column(String(255), nullable=False)
+    timezone = Column(String(50), nullable=False, default="UTC")
+    is_active = Column(Boolean, nullable=False, default=True)
+    calendar_id = Column(UUID(as_uuid=True), ForeignKey("itsm_business_calendars.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    service = relationship("ITSMService")
+    calendar = relationship("ITSMBusinessCalendar")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_itsm_oncall_sched_name"),
+        Index("idx_itsm_oncall_service", "tenant_id", "service_id"),
+    )
+
+
+class ITSMOnCallRotation(Base):
+    """Tiered rotation schedules for primary, secondary, and escalation managers."""
+    __tablename__ = "itsm_oncall_rotations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    schedule_id = Column(UUID(as_uuid=True), ForeignKey("itsm_oncall_schedules.id", ondelete="CASCADE"), nullable=False)
+    tier_level = Column(Integer, nullable=False, default=1)
+    user_ids = Column(PG_ARRAY(PG_UUID(as_uuid=True)), nullable=False, default=list)
+    rotation_type = Column(String(20), nullable=False, default="WEEKLY")
+    rotation_start_at = Column(DateTime(timezone=True), nullable=False)
+    handoff_time = Column(String(10), nullable=False, default="09:00")
+    escalation_delay_minutes = Column(Integer, nullable=False, default=15)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    schedule = relationship("ITSMOnCallSchedule")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "schedule_id", "tier_level", name="uq_itsm_oncall_tier"),
+        Index("idx_itsm_oncall_rot_sched", "tenant_id", "schedule_id"),
+    )
+
+
+class ITSMOnCallOverride(Base):
+    """Temporary on-call shift substitution overrides."""
+    __tablename__ = "itsm_oncall_overrides"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    schedule_id = Column(UUID(as_uuid=True), ForeignKey("itsm_oncall_schedules.id", ondelete="CASCADE"), nullable=False)
+    tier_level = Column(Integer, nullable=False, default=1)
+    original_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True)
+    override_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    start_at = Column(DateTime(timezone=True), nullable=False)
+    end_at = Column(DateTime(timezone=True), nullable=False)
+    reason = Column(String(255), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    schedule = relationship("ITSMOnCallSchedule")
+    original_user = relationship("User", foreign_keys=[original_user_id])
+    override_user = relationship("User", foreign_keys=[override_user_id])
+
+    __table_args__ = (
+        Index("idx_itsm_override_time", "tenant_id", "schedule_id", "start_at", "end_at"),
+    )
+
+
+class ITSMAgentSession(Base):
+    """Safe agent decision logs and action proposals (NO raw chain-of-thought)."""
+    __tablename__ = "itsm_agent_sessions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    ticket_id = Column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="CASCADE"), nullable=False)
+    agent_run_id = Column(UUID(as_uuid=True), nullable=True)
+    session_type = Column(String(32), nullable=False, default="TRIAGE")
+    decision_summary = Column(Text, nullable=False)
+    evidence_artifacts = Column(JSONB, nullable=False, default=dict)
+    actions_proposed = Column(JSONB, nullable=False, default=list)
+    actions_executed = Column(JSONB, nullable=False, default=list)
+    confidence_score = Column(Numeric(4, 3), nullable=True)
+    guardrail_flags = Column(PG_ARRAY(Text), nullable=False, default=list)
+    requires_human_approval = Column(Boolean, nullable=False, default=False)
+    pending_approval_id = Column(UUID(as_uuid=True), ForeignKey("pending_approvals.id", ondelete="SET NULL"), nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    ticket = relationship("ITSMTicket")
+    pending_approval = relationship("PendingApproval")
+
+    __table_args__ = (
+        Index("idx_itsm_agent_ticket", "tenant_id", "ticket_id"),
+        Index("idx_itsm_agent_run", "tenant_id", "agent_run_id"),
+        Index("idx_itsm_agent_approval", "tenant_id", "pending_approval_id"),
+    )
+
+
+class ITSMWorkflow(Base):
+    """Workflow templates and triggers."""
+    __tablename__ = "itsm_workflows"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(255), nullable=False)
+    slug = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    trigger_type = Column(String(50), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    current_published_version = Column(Integer, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "slug", name="uq_itsm_workflow_slug"),
+        Index("idx_itsm_workflow_trigger", "tenant_id", "trigger_type", "is_active"),
+    )
+
+
+class ITSMWorkflowVersion(Base):
+    """Immutable versions of workflow definitions (nodes, edges, actions)."""
+    __tablename__ = "itsm_workflow_versions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    workflow_id = Column(UUID(as_uuid=True), ForeignKey("itsm_workflows.id", ondelete="CASCADE"), nullable=False)
+    version_number = Column(Integer, nullable=False)
+    definition = Column(JSONB, nullable=False)
+    changelog = Column(Text, nullable=True)
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    workflow = relationship("ITSMWorkflow")
+    creator = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "workflow_id", "version_number", name="uq_itsm_wf_version_number"),
+        Index("idx_itsm_wf_version_wf", "tenant_id", "workflow_id"),
+    )
+
+
+class ITSMWorkflowExecution(Base):
+    """Runtime execution instances of workflows."""
+    __tablename__ = "itsm_workflow_executions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    workflow_id = Column(UUID(as_uuid=True), ForeignKey("itsm_workflows.id", ondelete="CASCADE"), nullable=False)
+    workflow_version = Column(Integer, nullable=False)
+    trigger_event = Column(JSONB, nullable=False, default=dict)
+    status = Column(String(32), nullable=False, default="RUNNING")
+    current_step_id = Column(String(64), nullable=True)
+    execution_context = Column(JSONB, nullable=False, default=dict)
+    error_message = Column(Text, nullable=True)
+    pending_approval_id = Column(UUID(as_uuid=True), ForeignKey("pending_approvals.id", ondelete="SET NULL"), nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    tenant = relationship("Tenant")
+    workflow = relationship("ITSMWorkflow")
+    pending_approval = relationship("PendingApproval")
+
+    __table_args__ = (
+        Index("idx_itsm_wf_exec_status", "tenant_id", "status"),
+        Index("idx_itsm_wf_exec_approval", "tenant_id", "pending_approval_id"),
+    )
+
+
+# -----------------------------------------------------------------------------
+# V2 Models (5 tables)
+# -----------------------------------------------------------------------------
+
+class ITSMEventRule(Base):
+    """Event correlation, deduplication, and routing rules."""
+    __tablename__ = "itsm_event_rules"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(255), nullable=False)
+    source_pattern = Column(String(255), nullable=False)
+    condition_expression = Column(JSONB, nullable=False, default=dict)
+    action_type = Column(String(50), nullable=False)
+    target_service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="SET NULL"), nullable=True)
+    target_severity = Column(String(20), nullable=False, default="SEV_3")
+    is_active = Column(Boolean, nullable=False, default=True)
+    priority_order = Column(Integer, nullable=False, default=100)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    target_service = relationship("ITSMService")
+
+    __table_args__ = (
+        Index("idx_itsm_event_rules_tenant", "tenant_id", "is_active", "priority_order"),
+    )
+
+
+class ITSMIngestedEvent(Base):
+    """Ingested monitoring and alerting events with fingerprint deduplication."""
+    __tablename__ = "itsm_ingested_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    fingerprint = Column(String(64), nullable=False)
+    source = Column(String(100), nullable=False)
+    event_type = Column(String(100), nullable=False)
+    severity = Column(String(20), nullable=False, default="WARNING")
+    payload = Column(JSONB, nullable=False)
+    first_seen_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    last_seen_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    occurrence_count = Column(Integer, nullable=False, default=1)
+    status = Column(String(32), nullable=False, default="NEW")
+    correlated_ticket_id = Column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="SET NULL"), nullable=True)
+    rule_matched_id = Column(UUID(as_uuid=True), ForeignKey("itsm_event_rules.id", ondelete="SET NULL"), nullable=True)
+
+    tenant = relationship("Tenant")
+    correlated_ticket = relationship("ITSMTicket")
+    rule_matched = relationship("ITSMEventRule")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "fingerprint", name="uq_itsm_event_tenant_fingerprint"),
+        Index("idx_itsm_events_status", "tenant_id", "status"),
+        Index("idx_itsm_events_ticket", "tenant_id", "correlated_ticket_id"),
+    )
+
+
+class ITSMIntegrationConfig(Base):
+    """Third-party integration configurations (Jira, ServiceNow, PagerDuty, etc.)."""
+    __tablename__ = "itsm_integration_configs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    integration_type = Column(String(50), nullable=False)
+    name = Column(String(255), nullable=False)
+    config_schema = Column(JSONB, nullable=False, default=dict)
+    encrypted_credentials = Column(JSONB, nullable=False, default=dict)
+    is_active = Column(Boolean, nullable=False, default=True)
+    sync_interval_seconds = Column(Integer, nullable=False, default=300)
+    last_sync_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_itsm_integ_name"),
+        Index("idx_itsm_integ_type", "tenant_id", "integration_type", "is_active"),
+    )
+
+
+class ITSMIntegrationSyncRecord(Base):
+    """Synchronization audit and state tracking across external ITSM systems."""
+    __tablename__ = "itsm_integration_sync_records"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    integration_config_id = Column(UUID(as_uuid=True), ForeignKey("itsm_integration_configs.id", ondelete="CASCADE"), nullable=False)
+    sync_type = Column(String(50), nullable=False)
+    external_id = Column(String(255), nullable=True)
+    internal_entity_type = Column(String(50), nullable=False)
+    internal_entity_id = Column(UUID(as_uuid=True), nullable=False)
+    sync_status = Column(String(32), nullable=False, default="SUCCESS")
+    retry_count = Column(Integer, nullable=False, default=0)
+    max_retries = Column(Integer, nullable=False, default=3)
+    error_details = Column(Text, nullable=True)
+    conflict_resolution = Column(String(32), nullable=True)
+    synced_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    integration_config = relationship("ITSMIntegrationConfig")
+
+    __table_args__ = (
+        Index("idx_itsm_sync_entity", "tenant_id", "internal_entity_type", "internal_entity_id"),
+        Index("idx_itsm_sync_status", "tenant_id", "sync_status"),
+    )
+
+
+class ITSMProactiveRemediation(Base):
+    """Governed proactive remediation tracking with pre/post checks and rollback."""
+    __tablename__ = "itsm_proactive_remediations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    ticket_id = Column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="CASCADE"), nullable=True)
+    event_id = Column(UUID(as_uuid=True), ForeignKey("itsm_ingested_events.id", ondelete="SET NULL"), nullable=True)
+    rule_id = Column(UUID(as_uuid=True), ForeignKey("itsm_event_rules.id", ondelete="SET NULL"), nullable=True)
+    runbook_identifier = Column(String(255), nullable=False)
+    governance_approval_id = Column(UUID(as_uuid=True), ForeignKey("pending_approvals.id", ondelete="SET NULL"), nullable=True)
+    pre_check_results = Column(JSONB, nullable=False, default=dict)
+    execution_results = Column(JSONB, nullable=False, default=dict)
+    post_check_results = Column(JSONB, nullable=False, default=dict)
+    rollback_plan = Column(JSONB, nullable=False, default=dict)
+    rollback_executed = Column(Boolean, nullable=False, default=False)
+    rollback_results = Column(JSONB, nullable=False, default=dict)
+    status = Column(String(32), nullable=False, default="PENDING_APPROVAL")
+    started_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    tenant = relationship("Tenant")
+    ticket = relationship("ITSMTicket")
+    event = relationship("ITSMIngestedEvent")
+    rule = relationship("ITSMEventRule")
+    governance_approval = relationship("PendingApproval")
+
+    __table_args__ = (
+        Index("idx_itsm_remed_status", "tenant_id", "status"),
+        Index("idx_itsm_remed_approval", "tenant_id", "governance_approval_id"),
+    )
+
+
+class ITSMUserAccess(Base):
+    """Product-specific access and finalized ITSM business role assignment."""
+    __tablename__ = "itsm_user_access"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    itsm_role = Column(String(50), nullable=False, default="REQUESTER")
+    has_itsm_access = Column(Boolean, nullable=False, default=True)
+    has_governance_access = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    user = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "user_id", name="uq_itsm_user_access_tenant_user"),
+        Index("idx_itsm_user_access_lookup", "tenant_id", "user_id"),
+        Index("idx_itsm_user_access_role", "tenant_id", "itsm_role"),
+    )
+
+>>>>>>> itsm/main

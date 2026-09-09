@@ -31,7 +31,7 @@ from app.api.v1.endpoints.onboarding import (
 from app.core.passwords import hash_password, validate_password, verify_password
 from app.core.bff_client_ip import authenticate_bff_client_ip
 from app.core.auth import get_tenant_db, hash_key as _api_key_hash, require_roles, require_scopes
-from app.db.models import APIKey, OnboardingEmailOTP, Tenant, TenantOIDCConfig, User
+from app.db.models import APIKey, OnboardingEmailOTP, Tenant, TenantOIDCConfig, User, ITSMUserAccess
 from app.services.email_service import EmailDeliveryError
 
 from app.core.oidc import oidc_config
@@ -93,6 +93,11 @@ class PasswordLoginRequest(BaseModel):
     tenant_name: str | None = None
 
 
+class ProductAccessResponse(BaseModel):
+    governance: bool = True
+    itsm: bool = False
+
+
 class PasswordLoginResponse(BaseModel):
     user_id: UUID
     tenant_id: UUID | None = None
@@ -101,6 +106,8 @@ class PasswordLoginResponse(BaseModel):
     role: str
     scopes: list[str]
     session_token: str
+    product_access: ProductAccessResponse = Field(default_factory=ProductAccessResponse)
+    itsm_role: str | None = None
 
 
 def _enforce_password_login_rate_limit(email: str, request: Request) -> None:
@@ -130,6 +137,8 @@ class CurrentUserResponse(BaseModel):
     scopes: list[str]
     mfa_enabled: bool
     is_active: bool
+    product_access: ProductAccessResponse = Field(default_factory=ProductAccessResponse)
+    itsm_role: str | None = None
 
 
 class PasswordResetRequest(BaseModel):
@@ -224,6 +233,7 @@ def _active_users_for_email(db, email: str, tenant_name: str | None = None):
     ).all()
 
 
+<<<<<<< HEAD
 def _active_platform_admin_for_email(db, email: str):
     return db.execute(
         text(
@@ -234,6 +244,19 @@ def _active_platform_admin_for_email(db, email: str):
         ),
         {"email": email},
     ).first()
+=======
+def _lookup_user_product_access(db, tenant_id: UUID, user_id: UUID) -> tuple[bool, bool, str | None]:
+    try:
+        row = db.execute(
+            text("SELECT itsm_role, has_itsm_access, has_governance_access FROM authn.lookup_itsm_user_access(:tenant_id, :user_id)"),
+            {"tenant_id": str(tenant_id), "user_id": str(user_id)},
+        ).first()
+        if row:
+            return bool(row.has_governance_access), bool(row.has_itsm_access), row.itsm_role
+    except Exception:
+        pass
+    return True, False, None
+>>>>>>> itsm/main
 
 
 @router.get("/oidc/config")
@@ -373,6 +396,8 @@ def oidc_callback(payload: OIDCCallbackRequest, request: Request, transaction: d
             request_id=request_id,
             response_status=200,
         )
+        has_gov, has_itsm, itsm_role = _lookup_user_product_access(db, tenant.id, identity.user_id)
+
         return PasswordLoginResponse(
             user_id=identity.user_id,
             tenant_id=tenant.id,
@@ -381,6 +406,8 @@ def oidc_callback(payload: OIDCCallbackRequest, request: Request, transaction: d
             role=role,
             scopes=scopes,
             session_token=session_token,
+            product_access=ProductAccessResponse(governance=has_gov, itsm=has_itsm),
+            itsm_role=itsm_role,
         )
     except (oidc_sso.OIDCAuthorizationError, PermissionError) as exc:
         db.rollback()
@@ -545,6 +572,8 @@ def password_login(payload: PasswordLoginRequest, request: Request):
             provider="password",
         )
 
+        has_gov, has_itsm, itsm_role = _lookup_user_product_access(db, identity.tenant_id, identity.user_id)
+
         return PasswordLoginResponse(
             user_id=identity.user_id,
             tenant_id=identity.tenant_id,
@@ -553,6 +582,8 @@ def password_login(payload: PasswordLoginRequest, request: Request):
             role=role,
             scopes=scopes,
             session_token=session_token,
+            product_access=ProductAccessResponse(governance=has_gov, itsm=has_itsm),
+            itsm_role=itsm_role,
         )
     except HTTPException:
         db.rollback()
@@ -619,6 +650,9 @@ def current_user(request: Request, db: Session = Depends(get_db)):
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     role = user.role or "viewer"
+
+    has_gov, has_itsm, itsm_role = _lookup_user_product_access(db, request.state.tenant_id, request.state.user_id)
+
     return CurrentUserResponse(
         id=user.id,
         tenant_id=user.tenant_id,
@@ -629,6 +663,8 @@ def current_user(request: Request, db: Session = Depends(get_db)):
         scopes=list(request.state.scopes),
         mfa_enabled=bool(user.mfa_enabled),
         is_active=bool(user.is_active),
+        product_access=ProductAccessResponse(governance=has_gov, itsm=has_itsm),
+        itsm_role=itsm_role,
     )
 
 

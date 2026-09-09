@@ -4,12 +4,17 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  BookOpen,
   Building,
   Cable,
   ChevronDown,
   ClipboardCheck,
   Cloud,
   Cpu,
+  Database,
+  FileCheck,
+  GitPullRequest,
+  Layers,
   LayoutDashboard,
   LogOut,
   Menu,
@@ -18,6 +23,8 @@ import {
   Settings,
   ShieldAlert,
   ShieldCheck,
+  Sliders,
+  Ticket,
   X,
 } from "lucide-react";
 import NotificationBell from "@/components/notification-bell";
@@ -28,15 +35,27 @@ interface ConsoleShellProps {
   tenantId: string;
   tenantName: string;
   userRole: string;
+<<<<<<< HEAD
   platformRole?: string;
+=======
+  itsmRole?: string | null;
+>>>>>>> itsm/main
 }
+
+const ITSM_ROLE_LABELS: Record<string, string> = {
+  REQUESTER: "Requester",
+  SERVICE_AGENT: "Service Agent",
+  SERVICE_LEAD: "Service Lead",
+  PROCESS_CHANGE_MANAGER: "Process & Change Manager",
+  PLATFORM_ADMINISTRATOR: "Platform Administrator",
+  AUDITOR: "Auditor",
+};
 
 const readRoles = ["owner", "admin", "developer", "operator", "viewer"];
 
 const navigation = [
   { name: "Overview", href: "/overview", icon: LayoutDashboard, roles: readRoles },
-  { name: "Gateway", href: "/gateway", icon: Cpu, roles: ["owner", "admin"] },
-  { name: "Compliance", href: "/compliance", icon: ShieldCheck, roles: readRoles },
+  { name: "Compliance & Governance", href: "/compliance", icon: ShieldCheck, roles: readRoles },
   { name: "Approvals", href: "/approvals", icon: ClipboardCheck, roles: readRoles },
   { name: "Audit", href: "/audit", icon: ScrollText, roles: readRoles },
   { name: "Agent & Remediation", href: "/agent", icon: MessageSquare, roles: readRoles },
@@ -49,31 +68,70 @@ const navigation = [
   { name: "Settings", href: "/settings", icon: Settings, roles: ["owner", "admin"] },
 ];
 
+<<<<<<< HEAD
 export default function ConsoleShell({ children, userEmail, tenantId, tenantName, userRole, platformRole = "NONE" }: ConsoleShellProps) {
+=======
+const itsmNavigation = [
+  { name: "Dashboard", href: "/itsm/dashboard", icon: LayoutDashboard, roles: readRoles },
+  { name: "Incidents", href: "/itsm/incidents", icon: Ticket, roles: readRoles },
+  { name: "Requests", href: "/itsm/requests", icon: ClipboardCheck, roles: readRoles },
+  { name: "Knowledge", href: "/itsm/knowledge", icon: BookOpen, roles: readRoles },
+  { name: "Services", href: "/itsm/services", icon: Layers, roles: readRoles },
+  { name: "Problems & Changes", href: "/itsm/changes", icon: GitPullRequest, roles: readRoles },
+  { name: "CMDB", href: "/itsm/cmdb", icon: Database, roles: readRoles },
+  { name: "Reports & Audit", href: "/itsm/reports", icon: FileCheck, roles: readRoles },
+  { name: "Administration", href: "/itsm/settings", icon: Sliders, roles: ["owner", "admin"] },
+];
+
+export default function ConsoleShell({ children, userEmail, tenantId, tenantName, userRole, itsmRole }: ConsoleShellProps) {
+>>>>>>> itsm/main
   const pathname = usePathname();
   const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const normalizedRole = userRole?.toLowerCase() || "viewer";
+<<<<<<< HEAD
   const hasPlatformAccess = platformRole.toUpperCase() === "ADMIN";
   const allowedNavigation = navigation.filter((item) => item.roles.includes(normalizedRole));
+=======
+
+  const isItsm = pathname.startsWith("/itsm");
+  const displayedRole = isItsm
+    ? (itsmRole && ITSM_ROLE_LABELS[itsmRole.toUpperCase()]) || itsmRole?.replace(/_/g, " ") || "Requester"
+    : normalizedRole;
+  const activeNavigationList = isItsm ? itsmNavigation : navigation;
+  const allowedNavigation = activeNavigationList.filter((item) => item.roles.includes(normalizedRole));
+>>>>>>> itsm/main
 
   const handleLogout = async () => {
     try {
       await fetch("/api/auth/logout", { method: "POST" });
-      router.push("/login");
+      router.push(isItsm ? "/itsm/login" : "/login");
       router.refresh();
     } catch (error) {
       console.error("Failed to log out:", error);
     }
   };
 
-  const currentPage = pathname === "/notifications" ? "Notifications" : navigation.find((item) => pathname === item.href)?.name || "Overview";
+  const currentPage = pathname === "/notifications"
+    ? "Notifications"
+    : isItsm
+    ? pathname.startsWith("/itsm/dashboard")
+      ? "Dashboard"
+      : pathname === "/itsm/incidents/new"
+      ? "Create Incident"
+      : pathname.startsWith("/itsm/incidents/")
+      ? "Incident Details"
+      : itsmNavigation.find((item) => pathname === item.href || pathname.startsWith(item.href))?.name || "ITSM"
+    : navigation.find((item) => pathname === item.href)?.name || "Overview";
 
   const navLinks = (onClick?: () => void) => (
-    <>
+    <div className="space-y-1">
       {allowedNavigation.map((item) => {
-        const active = pathname === item.href;
+        const active =
+          pathname === item.href ||
+          (item.href === "/itsm/dashboard" && pathname.startsWith("/itsm/dashboard")) ||
+          (item.href !== "/itsm/dashboard" && item.href !== "/overview" && pathname.startsWith(item.href));
         return (
           <Link
             key={item.name}
@@ -90,7 +148,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
           </Link>
         );
       })}
-    </>
+    </div>
   );
 
   return (
@@ -98,11 +156,15 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
       <header className="md:hidden m-3 flex items-center justify-between rounded-[20px] border border-[#E6E9F0] bg-white px-4 py-3 shadow-[0_1px_2px_rgba(11,31,63,.05),0_12px_30px_-12px_rgba(11,31,63,.18)]">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-[10px] bg-[#6D28D9] flex items-center justify-center">
-            <ShieldCheck className="w-4 h-4 text-white" />
+            {isItsm ? <Ticket className="w-4 h-4 text-white" /> : <ShieldCheck className="w-4 h-4 text-white" />}
           </div>
           <div>
-            <span className="block font-bold text-sm text-[#0E1726]">AuthClaw</span>
-            <span className="block text-[10px] uppercase tracking-wider text-[#6B7488]">Governance Layer</span>
+            <span className="block font-bold text-sm text-[#0E1726]">
+              {isItsm ? "AuthClaw ITSM" : "AuthClaw"}
+            </span>
+            <span className="block text-[10px] uppercase tracking-wider text-[#6B7488]">
+              {isItsm ? "Service Management" : "Governance Layer"}
+            </span>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -121,15 +183,19 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
         <aside className="sticky top-4 m-4 mr-0 hidden h-[calc(100vh-2rem)] w-64 flex-col overflow-hidden rounded-[20px] border border-[#E6E9F0] bg-white shadow-[0_1px_2px_rgba(11,31,63,.05),0_12px_30px_-12px_rgba(11,31,63,.18)] md:flex">
           <div className="h-16 flex items-center gap-2.5 px-6 border-b border-[#E6E9F0]">
             <div className="w-8 h-8 rounded-[10px] bg-[#6D28D9] flex items-center justify-center shadow-[0_8px_20px_-8px_rgba(109,40,217,.6)]">
-              <ShieldCheck className="w-4.5 h-4.5 text-white" />
+              {isItsm ? <Ticket className="w-4.5 h-4.5 text-white" /> : <ShieldCheck className="w-4.5 h-4.5 text-white" />}
             </div>
             <div>
-              <span className="block font-bold text-base text-[#0E1726] tracking-wide">AuthClaw</span>
-              <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">AI Governance Layer</span>
+              <span className="block font-bold text-base text-[#0E1726] tracking-wide">
+                {isItsm ? "AuthClaw ITSM" : "AuthClaw"}
+              </span>
+              <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
+                {isItsm ? "Service Management" : "AI Governance Layer"}
+              </span>
             </div>
           </div>
 
-          <nav className="min-h-0 flex-1 overflow-y-auto px-4 py-6 pr-3 space-y-1.5">{navLinks()}</nav>
+          <nav className="min-h-0 flex-1 overflow-y-auto px-4 py-5 pr-3 space-y-1.5">{navLinks()}</nav>
 
           <div className="p-4 border-t border-[#E6E9F0] bg-[#F5F7FA]">
             <div className="flex items-center gap-2.5 px-2.5 py-2 rounded-[10px] bg-white border border-[#E6E9F0]">
@@ -156,16 +222,23 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
               <div className="h-16 flex items-center justify-between px-6 border-b border-[#E6E9F0]">
                 <div className="flex items-center gap-2">
                   <div className="w-8 h-8 rounded-[10px] bg-[#6D28D9] flex items-center justify-center">
-                    <ShieldCheck className="w-4.5 h-4.5 text-white" />
+                    {isItsm ? <Ticket className="w-4.5 h-4.5 text-white" /> : <ShieldCheck className="w-4.5 h-4.5 text-white" />}
                   </div>
-                  <span className="font-bold text-[#0E1726]">AuthClaw</span>
+                  <div>
+                    <span className="block font-bold text-sm text-[#0E1726]">
+                      {isItsm ? "AuthClaw ITSM" : "AuthClaw"}
+                    </span>
+                    <span className="block text-[10px] font-semibold text-[#6B7488]">
+                      {isItsm ? "Service Management" : "Governance"}
+                    </span>
+                  </div>
                 </div>
                 <button onClick={() => setMobileMenuOpen(false)} className="text-[#6B7488] hover:text-[#0E1726]" aria-label="Close navigation">
                   <X className="w-5 h-5" />
                 </button>
               </div>
 
-              <nav className="min-h-0 flex-1 overflow-y-auto px-4 py-6 pr-3 space-y-1">{navLinks(() => setMobileMenuOpen(false))}</nav>
+              <nav className="min-h-0 flex-1 overflow-y-auto px-4 py-4 pr-3 space-y-1">{navLinks(() => setMobileMenuOpen(false))}</nav>
 
               <div className="p-4 border-t border-[#E6E9F0]">
                 <div className="flex items-center gap-2.5 px-2 py-1.5 rounded bg-[#F5F7FA] mb-4">
@@ -189,7 +262,9 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
         <div className="flex-1 flex flex-col min-w-0 bg-[#FBFAF9]">
           <header className="sticky top-4 z-30 mx-4 mt-4 hidden h-14 items-center justify-between rounded-[20px] border border-[#E6E9F0] bg-white/90 px-6 shadow-[0_1px_2px_rgba(11,31,63,.05),0_12px_30px_-12px_rgba(11,31,63,.18)] backdrop-blur-md md:flex">
             <div className="flex items-center gap-3">
-              <span className="text-[#6B7488] text-sm">Governance Layer</span>
+              <span className="text-[#6B7488] text-sm">
+                {isItsm ? "AuthClaw ITSM" : "Governance Layer"}
+              </span>
               <span className="text-[#A8B0C0]">/</span>
               <span className="text-[#0E1726] text-sm font-medium">{currentPage}</span>
             </div>
@@ -220,9 +295,13 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
                     <div className="px-4 py-2 border-b border-[#E6E9F0]">
                       <p className="text-[10px] font-semibold uppercase text-[#6B7488] tracking-wider">Signed In As</p>
                       <p className="text-xs text-[#475069] truncate font-medium mt-0.5">{userEmail}</p>
+<<<<<<< HEAD
                       <p className="text-[10px] text-[#6B7488] capitalize mt-0.5">
                         {hasPlatformAccess ? "platform admin" : normalizedRole}
                       </p>
+=======
+                      <p className="text-[10px] text-[#6B7488] capitalize mt-0.5">{displayedRole}</p>
+>>>>>>> itsm/main
                     </div>
                     <button
                       onClick={handleLogout}

@@ -19,7 +19,11 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
-    return new URLSearchParams(window.location.search).get("sso_error");
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("error") === "access_denied") {
+      return "Your account does not have access to AuthClaw AI Governance. Please contact your workspace administrator or sign in to AuthClaw ITSM.";
+    }
+    return params.get("sso_error");
   });
   const [message, setMessage] = useState<string | null>(null);
   const hydrated = useSyncExternalStore(() => () => {}, () => true, () => false);
@@ -44,7 +48,21 @@ export default function LoginPage() {
         throw new Error(data.message || data.detail || "Authentication failed");
       }
 
+<<<<<<< HEAD
       router.push(data.user?.role === "platform_admin" ? "/developer" : "/connect");
+=======
+      if (data.user?.productAccess && data.user.productAccess.governance === false) {
+        setError("Your account does not have access to AuthClaw AI Governance. Please contact your workspace administrator or sign in to AuthClaw ITSM.");
+        return;
+      }
+
+      const searchParams = new URLSearchParams(window.location.search);
+      const returnTo =
+        searchParams.get("returnTo") || searchParams.get("redirect") || "/overview";
+      const safeRedirect =
+        returnTo.startsWith("/") && !returnTo.startsWith("//") && !returnTo.startsWith("/itsm") ? returnTo : "/overview";
+      router.push(safeRedirect);
+>>>>>>> itsm/main
       router.refresh();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "An unexpected error occurred");
@@ -141,9 +159,38 @@ export default function LoginPage() {
         </div>
 
         {error && (
-          <div className="flex items-center gap-3 p-3.5 mb-6 rounded-[10px] bg-red-50 border border-red-200 text-red-700 text-xs">
-            <ShieldAlert className="w-4.5 h-4.5 text-red-600 flex-shrink-0" />
-            <span>{error}</span>
+          <div className={`p-4 mb-6 rounded-[12px] text-xs space-y-2.5 ${
+            error.includes("does not have access")
+              ? "bg-amber-50/90 border border-amber-200 text-amber-900"
+              : "bg-red-50 border border-red-200 text-red-700"
+          }`}>
+            <div className="flex items-start gap-2.5">
+              <ShieldAlert className={`w-4.5 h-4.5 flex-shrink-0 mt-0.5 ${
+                error.includes("does not have access") ? "text-amber-600" : "text-red-600"
+              }`} />
+              <div>
+                {error.includes("does not have access") && (
+                  <p className="font-semibold text-amber-950 mb-0.5">Governance Access Denied</p>
+                )}
+                <span className="leading-relaxed">{error}</span>
+              </div>
+            </div>
+            {error.includes("does not have access") && (
+              <div className="pt-2 border-t border-amber-200/60 flex flex-col gap-1.5 pl-7">
+                <Link
+                  href="/itsm/incidents"
+                  className="font-semibold text-[#6D28D9] hover:underline inline-flex items-center gap-1"
+                >
+                  Go to AuthClaw ITSM &rarr;
+                </Link>
+                <Link
+                  href="/"
+                  className="text-[#6B7488] hover:text-[#0E1726] hover:underline"
+                >
+                  Return to AuthClaw Home
+                </Link>
+              </div>
+            )}
           </div>
         )}
 

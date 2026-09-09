@@ -45,6 +45,7 @@ AUTHN_RUNTIME_FUNCTIONS = {
     "current_tenant_id",
     "lookup_platform_password_identity",
     "lookup_password_identities",
+    "lookup_itsm_user_access",
     "lookup_oidc_config",
     "issue_oidc_session",
     "platform_admin_profile",
@@ -472,8 +473,8 @@ def secure_authentication_boundary(conn, backend_runtime: Role) -> None:
     conn.execute(
         text(
             f"GRANT SELECT ON public.tenants, public.users, public.api_keys, "
-            f"public.tenant_oidc_configs, public.onboarding_email_otps, "+
-            f"public.trust_center_shares "
+            f"public.tenant_oidc_configs, public.onboarding_email_otps, "
+            f"public.trust_center_shares, public.itsm_user_access "
             f"TO {definer}"
         )
     )

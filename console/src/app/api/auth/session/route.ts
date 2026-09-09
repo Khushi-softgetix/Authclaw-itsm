@@ -23,8 +23,14 @@ export async function GET() {
       tenantId: principal.tenant_id,
       email: principal.email,
       role: principal.role,
+<<<<<<< HEAD
       platformRole: principal.platform_role || "NONE",
       scopes: Array.isArray(principal.scopes) ? principal.scopes : [],
+=======
+      scopes: ["read", "write", "admin"],
+      productAccess: principal.product_access || { governance: true, itsm: false },
+      itsmRole: principal.itsm_role || null,
+>>>>>>> itsm/main
     });
   } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

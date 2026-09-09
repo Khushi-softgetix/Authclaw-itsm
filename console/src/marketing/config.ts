@@ -1,6 +1,7 @@
 export const marketingRoutes = {
   home: "/",
   product: "/product",
+  itsm: "/itsm",
   pricing: "/pricing",
   security: "/security",
   company: "/company",
@@ -10,6 +11,7 @@ export const marketingRoutes = {
   subprocessors: "/subprocessors",
   dpa: "/dpa",
   login: "/login",
+  itsmLogin: "/itsm/login",
   trial: "/early-access",
   demo: "/demo",
   earlyAccess: "/early-access",
@@ -17,6 +19,42 @@ export const marketingRoutes = {
   careers: "/early-access",
   trustReport: "/early-access",
 } as const;
+
+export interface ProductMenuItem {
+  href: string;
+  label: string;
+  description: string;
+  badge?: string;
+}
+
+export const productMenuItems: readonly ProductMenuItem[] = [
+  {
+    href: marketingRoutes.product,
+    label: "In-line gateway",
+    description: "Low-latency multi-model proxy with active PII/PHI redaction.",
+  },
+  {
+    href: marketingRoutes.product,
+    label: "Agentic remediation",
+    description: "LangGraph orchestrator proposing fixes under human-in-the-loop approvals.",
+  },
+  {
+    href: marketingRoutes.product,
+    label: "Audit & trust center",
+    description: "Append-only SHA-256 hash-chained log with exportable evidence bundles.",
+  },
+  {
+    href: marketingRoutes.product,
+    label: "Framework scoring",
+    description: "Automated framework scoring for SOC 2, HIPAA, and GDPR readiness.",
+  },
+  {
+    href: marketingRoutes.itsm,
+    label: "AuthClaw ITSM",
+    description: "AI-native IT service management with incident lifecycle, SLAs, and unified operations.",
+    badge: "New",
+  },
+] as const;
 
 export const marketingNavigation = [
   { href: marketingRoutes.product, label: "Product" },
@@ -34,6 +72,7 @@ export const marketingFooterGroups = [
       { href: marketingRoutes.product, label: "Agentic remediation" },
       { href: marketingRoutes.product, label: "Audit & trust center" },
       { href: marketingRoutes.product, label: "Framework scoring" },
+      { href: marketingRoutes.itsm, label: "AuthClaw ITSM" },
     ],
   },
   {

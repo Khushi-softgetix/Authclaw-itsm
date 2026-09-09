@@ -1,0 +1,41 @@
+"use client";
+
+import React from "react";
+import Link from "next/link";
+import { ClipboardCheck, ArrowRight, Sparkles, Ticket } from "lucide-react";
+
+export default function ServiceRequestsPage() {
+  return (
+    <div className="p-8 max-w-5xl mx-auto space-y-6">
+      <div className="bg-white rounded-2xl border border-[#E6E9F0] p-8 shadow-sm text-center space-y-4">
+        <div className="w-12 h-12 rounded-2xl bg-[#F1ECFE] text-[#6D28D9] flex items-center justify-center mx-auto shadow-sm">
+          <ClipboardCheck className="w-6 h-6" />
+        </div>
+        <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#F5F3FF] text-[#6D28D9] text-xs font-semibold">
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>Roadmap · Upcoming Phase</span>
+        </div>
+        <h1 className="text-2xl font-bold text-[#0E1726]">Service Requests &amp; Fulfillment</h1>
+        <p className="text-xs sm:text-sm text-[#6B7488] max-w-lg mx-auto leading-relaxed">
+          Standardized service requests, automated multi-level approval matrices, and fulfillment task dispatching are scheduled for the next ITSM release.
+        </p>
+        <div className="pt-4 flex flex-wrap items-center justify-center gap-3">
+          <Link
+            href="/itsm/incidents"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#6D28D9] text-white text-xs font-bold hover:bg-[#5B21B6] transition shadow-sm"
+          >
+            <Ticket className="w-4 h-4" />
+            <span>Manage Incidents (Available Now)</span>
+          </Link>
+          <Link
+            href="/itsm/dashboard"
+            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl border border-[#E6E9F0] text-[#0E1726] text-xs font-semibold hover:bg-[#F9FAFB] transition"
+          >
+            <span>Back to Dashboard</span>
+            <ArrowRight className="w-3.5 h-3.5" />
+          </Link>
+        </div>
+      </div>
+    </div>
+  );
+}

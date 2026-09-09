@@ -1260,20 +1260,19 @@ class ITSMTicketActivity(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
     ticket_id = Column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="CASCADE"), nullable=False)
-    actor_type = Column(String(20), nullable=False, default="USER")
-    actor_id = Column(UUID(as_uuid=True), nullable=True)
     activity_type = Column(String(50), nullable=False)
+    actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_type = Column(String(32), nullable=False, default="USER")
     content = Column(Text, nullable=True)
-    old_value = Column(JSONB, nullable=True)
-    new_value = Column(JSONB, nullable=True)
-    is_internal = Column(Boolean, nullable=False, default=False)
+    activity_metadata = Column("metadata", JSONB, nullable=False, default=dict)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
 
     tenant = relationship("Tenant")
     ticket = relationship("ITSMTicket")
+    actor = relationship("User", foreign_keys=[actor_id])
 
     __table_args__ = (
-        Index("idx_itsm_activity_ticket", "tenant_id", "ticket_id", "created_at"),
+        Index("idx_itsm_activity_ticket_created", "tenant_id", "ticket_id", "created_at"),
     )
 
 
@@ -1916,5 +1915,28 @@ class ITSMProactiveRemediation(Base):
     __table_args__ = (
         Index("idx_itsm_remed_status", "tenant_id", "status"),
         Index("idx_itsm_remed_approval", "tenant_id", "governance_approval_id"),
+    )
+
+
+class ITSMUserAccess(Base):
+    """Product-specific access and finalized ITSM business role assignment."""
+    __tablename__ = "itsm_user_access"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    itsm_role = Column(String(50), nullable=False, default="REQUESTER")
+    has_itsm_access = Column(Boolean, nullable=False, default=True)
+    has_governance_access = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    user = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "user_id", name="uq_itsm_user_access_tenant_user"),
+        Index("idx_itsm_user_access_lookup", "tenant_id", "user_id"),
+        Index("idx_itsm_user_access_role", "tenant_id", "itsm_role"),
     )
 

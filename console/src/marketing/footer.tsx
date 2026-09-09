@@ -1,7 +1,16 @@
+"use client";
+
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { marketingFooterGroups, marketingRoutes } from "./config";
 
 export function MarketingFooter() {
+  const pathname = usePathname();
+
+  if (pathname === "/itsm" || pathname?.startsWith("/itsm")) {
+    return null;
+  }
+
   return (
     <footer className="ft">
       <div className="wrap">

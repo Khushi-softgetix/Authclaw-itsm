@@ -21,6 +21,8 @@ export function proxy(request: NextRequest) {
   const publicMarketingFiles = new Set([
     "/",
     "/product",
+    "/itsm",
+    "/itsm/roles",
     "/pricing",
     "/security",
     "/company",
@@ -33,6 +35,7 @@ export function proxy(request: NextRequest) {
     "/early-access",
     "/index.html",
     "/product.html",
+    "/itsm.html",
     "/pricing.html",
     "/security.html",
     "/company.html",
@@ -47,6 +50,7 @@ export function proxy(request: NextRequest) {
     path.startsWith("/opengraph-image") ||
     path.startsWith("/twitter-image") ||
     path === "/login" ||
+    path === "/itsm/login" ||
     path === "/signup" ||
     path.startsWith("/trust/shared") ||
     path.startsWith("/trust-center") ||
@@ -66,19 +70,53 @@ export function proxy(request: NextRequest) {
 
   // 3. Handle redirects
   if (!session && !isPublicPath) {
-    return new NextResponse("Unauthorized", { status: 401 });
+    if (path.startsWith("/itsm")) {
+      return NextResponse.redirect(new URL("/itsm/login", request.url));
+    }
+    return NextResponse.redirect(new URL("/login", request.url));
+  }
+
+  const hasAccessError = request.nextUrl.searchParams.get("error") === "access_denied";
+
+  if (session && path === "/itsm/login") {
+    if (!hasAccessError) {
+      // Redirect authenticated user away from ITSM login
+      const returnTo =
+        request.nextUrl.searchParams.get("returnTo") ||
+        request.nextUrl.searchParams.get("redirect");
+      const safeRedirect =
+        returnTo && returnTo.startsWith("/itsm") && !returnTo.startsWith("//")
+          ? returnTo
+          : "/itsm/incidents";
+      return NextResponse.redirect(new URL(safeRedirect, request.url));
+    }
   }
 
   if (session && path === "/login") {
-    // Redirect authenticated user away from login to the demo onboarding flow
-    return NextResponse.redirect(new URL("/connect", request.url));
+    if (!hasAccessError) {
+      // Redirect authenticated user away from Governance login
+      const returnTo =
+        request.nextUrl.searchParams.get("returnTo") ||
+        request.nextUrl.searchParams.get("redirect");
+      const safeRedirect =
+        returnTo && returnTo.startsWith("/") && !returnTo.startsWith("//") && !returnTo.startsWith("/itsm")
+          ? returnTo
+          : "/overview";
+      return NextResponse.redirect(new URL(safeRedirect, request.url));
+    }
   }
 
   if (session && path === "/signup") {
-    return NextResponse.redirect(new URL("/connect", request.url));
+    return NextResponse.redirect(new URL("/overview", request.url));
   }
 
-  return NextResponse.next();
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-authclaw-pathname", path);
+  return NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  });
 }
 
 export const config = {

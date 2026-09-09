@@ -10,7 +10,15 @@ test("maps approved BFF routes and rejects broader proxy access", () => {
   assert.deepEqual(resolveBffRoute("POST", "ephemeral-workers/tokens/t-1/revoke"), { backendPath: "/v1/ephemeral-workers/tokens/t-1/revoke", body: "none", status: undefined });
   assert.deepEqual(resolveBffRoute("GET", "findings/summary/dashboard"), { backendPath: "/v1/findings/summary/dashboard", body: "none", status: undefined });
   assert.deepEqual(resolveBffRoute("POST", "data-subject-requests/r-1/verify"), { backendPath: "/v1/data-subject-requests/r-1/verify", body: "json", status: undefined });
-  assert.deepEqual(resolveBffRoute("DELETE", "api-keys/k-1"), { backendPath: "/v1/api-keys/k-1", body: "none", status: 204 });
+  assert.deepEqual(resolveBffRoute("GET", "itsm/incidents"), { backendPath: "/v1/itsm/incidents", body: "none", status: undefined });
+  assert.deepEqual(resolveBffRoute("GET", "itsm/incidents/inc-1"), { backendPath: "/v1/itsm/incidents/inc-1", body: "none", status: undefined });
+  assert.deepEqual(resolveBffRoute("GET", "itsm/incidents/inc-1/activities"), { backendPath: "/v1/itsm/incidents/inc-1/activities", body: "none", status: undefined });
+  assert.deepEqual(resolveBffRoute("POST", "itsm/incidents"), { backendPath: "/v1/itsm/incidents", body: "json", status: 201 });
+  assert.deepEqual(resolveBffRoute("POST", "itsm/incidents/inc-1/status"), { backendPath: "/v1/itsm/incidents/inc-1/status", body: "json", status: undefined });
+  assert.deepEqual(resolveBffRoute("POST", "itsm/incidents/inc-1/assign"), { backendPath: "/v1/itsm/incidents/inc-1/assign", body: "json", status: undefined });
+  assert.deepEqual(resolveBffRoute("POST", "itsm/incidents/inc-1/activities"), { backendPath: "/v1/itsm/incidents/inc-1/activities", body: "json", status: 201 });
+  assert.deepEqual(resolveBffRoute("PATCH", "itsm/incidents/inc-1"), { backendPath: "/v1/itsm/incidents/inc-1", body: "json", status: undefined });
+  assert.equal(resolveBffRoute("DELETE", "itsm/incidents/inc-1"), null);
   assert.equal(resolveBffRoute("DELETE", "users/me"), null);
   assert.equal(resolveBffRoute("POST", "auth/login"), null);
   assert.equal(resolveBffRoute("GET", "admin/secrets"), null);

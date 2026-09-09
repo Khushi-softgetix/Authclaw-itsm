@@ -29,6 +29,11 @@ ROLE_USERS = (
     (uuid.UUID("22222222-2222-4222-8222-222222222224"), "operator@authclaw-lite.demo", "operator"),
     (uuid.UUID("22222222-2222-4222-8222-222222222225"), "viewer@authclaw-lite.demo", "viewer"),
 )
+ITSM_AGENT_USER_ID = uuid.UUID("22222222-2222-4222-8222-222222222226")
+ITSM_AGENT_EMAIL = "itsm-agent@test.com"
+ITSM_REQUESTER_USER_ID = uuid.UUID("22222222-2222-4222-8222-222222222227")
+ITSM_REQUESTER_EMAIL = "requester123@gmail.com"
+RAW_REQUESTER_PASSWORD = os.getenv("AUTHCLAW_ITSM_REQUESTER_PASSWORD", "Requester@123")
 API_KEY_ID = uuid.UUID("33333333-3333-4333-8333-333333333333")
 GATEWAY_ID = uuid.UUID("44444444-4444-4444-8444-444444444444")
 POLICY_ID = uuid.UUID("55555555-5555-4555-8555-555555555555")
@@ -173,6 +178,68 @@ def main() -> None:
                     "role": role,
                 },
             )
+
+        # Seed ITSM Test User (itsm-agent@test.com)
+        conn.execute(
+            text("""
+            INSERT INTO users (id, tenant_id, email, password_hash, role, platform_role, mfa_enabled, is_active)
+            VALUES (:id, :tenant_id, :email, :password_hash, 'operator', 'NONE', false, true)
+            ON CONFLICT (tenant_id, email) DO UPDATE SET
+                password_hash = users.password_hash,
+                role = 'operator',
+                is_active = true,
+                updated_at = NOW()
+            """),
+            {
+                "id": ITSM_AGENT_USER_ID,
+                "tenant_id": TENANT_ID,
+                "email": ITSM_AGENT_EMAIL,
+                "password_hash": hash_password(RAW_ADMIN_PASSWORD),
+            },
+        )
+
+        # Seed ITSM Test Requester (requester123@gmail.com)
+        conn.execute(
+            text("""
+            INSERT INTO users (id, tenant_id, email, password_hash, role, platform_role, mfa_enabled, is_active)
+            VALUES (:id, :tenant_id, :email, :password_hash, 'viewer', 'NONE', false, true)
+            ON CONFLICT (tenant_id, email) DO UPDATE SET
+                password_hash = users.password_hash,
+                role = 'viewer',
+                is_active = true,
+                updated_at = NOW()
+            """),
+            {
+                "id": ITSM_REQUESTER_USER_ID,
+                "tenant_id": TENANT_ID,
+                "email": ITSM_REQUESTER_EMAIL,
+                "password_hash": hash_password(RAW_REQUESTER_PASSWORD),
+            },
+        )
+
+        # Seed ITSM Product Access & Business Roles
+        conn.execute(
+            text("""
+            INSERT INTO itsm_user_access (id, tenant_id, user_id, itsm_role, has_itsm_access, has_governance_access)
+            VALUES
+                (gen_random_uuid(), :tenant_id, :admin_id, 'PLATFORM_ADMINISTRATOR', true, true),
+                (gen_random_uuid(), :tenant_id, :agent_id, 'SERVICE_AGENT', true, false),
+                (gen_random_uuid(), :tenant_id, :requester_id, 'REQUESTER', true, false),
+                (gen_random_uuid(), :tenant_id, :viewer_id, 'REQUESTER', false, true)
+            ON CONFLICT (tenant_id, user_id) DO UPDATE SET
+                itsm_role = EXCLUDED.itsm_role,
+                has_itsm_access = EXCLUDED.has_itsm_access,
+                has_governance_access = EXCLUDED.has_governance_access,
+                updated_at = NOW()
+            """),
+            {
+                "tenant_id": TENANT_ID,
+                "admin_id": ADMIN_USER_ID,
+                "agent_id": ITSM_AGENT_USER_ID,
+                "requester_id": ITSM_REQUESTER_USER_ID,
+                "viewer_id": uuid.UUID("22222222-2222-4222-8222-222222222225"),
+            },
+        )
         conn.execute(
             text("""
             INSERT INTO api_keys (id, tenant_id, key_hash, name, description, scopes, is_active, expires_at, created_by)

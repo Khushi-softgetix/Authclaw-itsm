@@ -24,6 +24,8 @@ export async function GET() {
       email: principal.email,
       role: principal.role,
       scopes: ["read", "write", "admin"],
+      productAccess: principal.product_access || { governance: true, itsm: false },
+      itsmRole: principal.itsm_role || null,
     });
   } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

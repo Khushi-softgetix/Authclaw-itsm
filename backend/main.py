@@ -92,6 +92,8 @@ from app.api.v1.endpoints.data_subject_requests import router as data_subject_re
 from app.api.v1.endpoints.evidence import router as evidence_router
 # Phase 17 — Findings Dashboard
 from app.api.v1.endpoints.findings import router as findings_router
+# Phase 4 — ITSM Incident Management
+from app.api.v1.endpoints.itsm_incidents import router as itsm_incidents_router
 
 app.include_router(tenants_router, prefix="/v1/tenants", tags=["tenants"])
 app.include_router(gateways_router, prefix="/v1/gateways", tags=["gateways"])
@@ -121,6 +123,9 @@ app.include_router(evidence_router, prefix="/v1/evidence", tags=["evidence"])
 app.include_router(findings_router, prefix="/v1/findings", tags=["findings"])
 app.include_router(access_requests_router, prefix="/api/public/v1/access-requests", tags=["public-access-requests"])
 app.include_router(data_subject_requests_router, prefix="/v1/data-subject-requests", tags=["data-subject-requests"])
+# Phase 4 — ITSM Incident Management
+app.include_router(itsm_incidents_router, prefix="/v1/itsm/incidents", tags=["itsm-incidents"])
+app.include_router(itsm_incidents_router, prefix="/api/itsm/incidents", tags=["itsm-incidents"], include_in_schema=False)
 
 # Ravi's imported console and existing client SDKs use `/api/v1`. Keep Kunal's
 # `/v1` routes canonical while exposing a compatibility alias during migration.
@@ -149,6 +154,7 @@ _compatibility_routers = [
     (evidence_router, "/evidence", "evidence"),
     (findings_router, "/findings", "findings"),
     (data_subject_requests_router, "/data-subject-requests", "data-subject-requests"),
+    (itsm_incidents_router, "/itsm/incidents", "itsm-incidents"),
 ]
 for _router, _path, _tag in _compatibility_routers:
     app.include_router(_router, prefix=f"/api/v1{_path}", tags=[_tag], include_in_schema=False)

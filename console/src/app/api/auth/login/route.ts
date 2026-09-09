@@ -36,6 +36,8 @@ export async function POST(request: Request) {
       scopes: data.scopes,
       role: data.role,
       email: data.email,
+      productAccess: data.product_access || { governance: true, itsm: false },
+      itsmRole: data.itsm_role || null,
     };
     const response = NextResponse.json({ success: true, user });
 

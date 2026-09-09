@@ -35,11 +35,8 @@ interface ConsoleShellProps {
   tenantId: string;
   tenantName: string;
   userRole: string;
-<<<<<<< HEAD
   platformRole?: string;
-=======
   itsmRole?: string | null;
->>>>>>> itsm/main
 }
 
 const ITSM_ROLE_LABELS: Record<string, string> = {
@@ -68,9 +65,6 @@ const navigation = [
   { name: "Settings", href: "/settings", icon: Settings, roles: ["owner", "admin"] },
 ];
 
-<<<<<<< HEAD
-export default function ConsoleShell({ children, userEmail, tenantId, tenantName, userRole, platformRole = "NONE" }: ConsoleShellProps) {
-=======
 const itsmNavigation = [
   { name: "Dashboard", href: "/itsm/dashboard", icon: LayoutDashboard, roles: readRoles },
   { name: "Incidents", href: "/itsm/incidents", icon: Ticket, roles: readRoles },
@@ -83,25 +77,19 @@ const itsmNavigation = [
   { name: "Administration", href: "/itsm/settings", icon: Sliders, roles: ["owner", "admin"] },
 ];
 
-export default function ConsoleShell({ children, userEmail, tenantId, tenantName, userRole, itsmRole }: ConsoleShellProps) {
->>>>>>> itsm/main
+export default function ConsoleShell({ children, userEmail, tenantId, tenantName, userRole, platformRole = "NONE", itsmRole }: ConsoleShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const normalizedRole = userRole?.toLowerCase() || "viewer";
-<<<<<<< HEAD
   const hasPlatformAccess = platformRole.toUpperCase() === "ADMIN";
-  const allowedNavigation = navigation.filter((item) => item.roles.includes(normalizedRole));
-=======
-
   const isItsm = pathname.startsWith("/itsm");
   const displayedRole = isItsm
     ? (itsmRole && ITSM_ROLE_LABELS[itsmRole.toUpperCase()]) || itsmRole?.replace(/_/g, " ") || "Requester"
-    : normalizedRole;
+    : (hasPlatformAccess ? "platform admin" : normalizedRole);
   const activeNavigationList = isItsm ? itsmNavigation : navigation;
   const allowedNavigation = activeNavigationList.filter((item) => item.roles.includes(normalizedRole));
->>>>>>> itsm/main
 
   const handleLogout = async () => {
     try {
@@ -295,13 +283,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
                     <div className="px-4 py-2 border-b border-[#E6E9F0]">
                       <p className="text-[10px] font-semibold uppercase text-[#6B7488] tracking-wider">Signed In As</p>
                       <p className="text-xs text-[#475069] truncate font-medium mt-0.5">{userEmail}</p>
-<<<<<<< HEAD
-                      <p className="text-[10px] text-[#6B7488] capitalize mt-0.5">
-                        {hasPlatformAccess ? "platform admin" : normalizedRole}
-                      </p>
-=======
                       <p className="text-[10px] text-[#6B7488] capitalize mt-0.5">{displayedRole}</p>
->>>>>>> itsm/main
                     </div>
                     <button
                       onClick={handleLogout}

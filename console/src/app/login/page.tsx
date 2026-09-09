@@ -48,21 +48,21 @@ export default function LoginPage() {
         throw new Error(data.message || data.detail || "Authentication failed");
       }
 
-<<<<<<< HEAD
-      router.push(data.user?.role === "platform_admin" ? "/developer" : "/connect");
-=======
       if (data.user?.productAccess && data.user.productAccess.governance === false) {
         setError("Your account does not have access to AuthClaw AI Governance. Please contact your workspace administrator or sign in to AuthClaw ITSM.");
         return;
       }
 
-      const searchParams = new URLSearchParams(window.location.search);
-      const returnTo =
-        searchParams.get("returnTo") || searchParams.get("redirect") || "/overview";
-      const safeRedirect =
-        returnTo.startsWith("/") && !returnTo.startsWith("//") && !returnTo.startsWith("/itsm") ? returnTo : "/overview";
-      router.push(safeRedirect);
->>>>>>> itsm/main
+      if (data.user?.role === "platform_admin") {
+        router.push("/developer");
+      } else {
+        const searchParams = new URLSearchParams(window.location.search);
+        const returnTo =
+          searchParams.get("returnTo") || searchParams.get("redirect") || "/overview";
+        const safeRedirect =
+          returnTo.startsWith("/") && !returnTo.startsWith("//") && !returnTo.startsWith("/itsm") ? returnTo : "/overview";
+        router.push(safeRedirect);
+      }
       router.refresh();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "An unexpected error occurred");

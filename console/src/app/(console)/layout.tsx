@@ -31,12 +31,7 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
   }
   const tenantName = "Current Tenant";
   const userRole = principal.role;
-<<<<<<< HEAD
   const platformRole = principal.platform_role || "NONE";
-
-  return (
-    <ConsoleShell userEmail={userEmail} tenantId={tenantId} tenantName={tenantName} userRole={userRole} platformRole={platformRole}>
-=======
   const itsmRole = principal.itsm_role || null;
   const productAccess = principal.product_access || { governance: true, itsm: false };
 
@@ -52,9 +47,9 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
       tenantId={tenantId}
       tenantName={tenantName}
       userRole={userRole}
+      platformRole={platformRole}
       itsmRole={itsmRole}
     >
->>>>>>> itsm/main
       {children}
     </ConsoleShell>
   );

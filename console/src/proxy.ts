@@ -96,13 +96,8 @@ export function proxy(request: NextRequest) {
     }
   }
 
-<<<<<<< HEAD
-  if (session && path === "/login" && request.nextUrl.searchParams.get("developer") !== "1") {
-    // Redirect authenticated user away from login to the demo onboarding flow
-    return NextResponse.redirect(new URL("/connect", request.url));
-=======
   if (session && path === "/login") {
-    if (!hasAccessError) {
+    if (request.nextUrl.searchParams.get("developer") !== "1" && !hasAccessError) {
       // Redirect authenticated user away from Governance login
       const returnTo =
         request.nextUrl.searchParams.get("returnTo") ||
@@ -113,7 +108,6 @@ export function proxy(request: NextRequest) {
           : "/overview";
       return NextResponse.redirect(new URL(safeRedirect, request.url));
     }
->>>>>>> itsm/main
   }
 
   if (session && path === "/signup") {

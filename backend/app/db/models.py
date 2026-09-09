@@ -1077,9 +1077,6 @@ class TrustCenterAccessLog(Base):
         Index("idx_trust_access_tenant", "tenant_id", "accessed_at"),
         Index("idx_trust_access_share", "share_id"),
     )
-<<<<<<< HEAD
-=======
-
 
 # =============================================================================
 # ITSM DOMAIN MODELS (MVP -> V1 -> V1.5 -> V2)
@@ -1959,5 +1956,3 @@ class ITSMUserAccess(Base):
         Index("idx_itsm_user_access_lookup", "tenant_id", "user_id"),
         Index("idx_itsm_user_access_role", "tenant_id", "itsm_role"),
     )
-
->>>>>>> itsm/main

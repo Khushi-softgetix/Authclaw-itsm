@@ -233,7 +233,6 @@ def _active_users_for_email(db, email: str, tenant_name: str | None = None):
     ).all()
 
 
-<<<<<<< HEAD
 def _active_platform_admin_for_email(db, email: str):
     return db.execute(
         text(
@@ -244,7 +243,8 @@ def _active_platform_admin_for_email(db, email: str):
         ),
         {"email": email},
     ).first()
-=======
+
+
 def _lookup_user_product_access(db, tenant_id: UUID, user_id: UUID) -> tuple[bool, bool, str | None]:
     try:
         row = db.execute(
@@ -256,7 +256,6 @@ def _lookup_user_product_access(db, tenant_id: UUID, user_id: UUID) -> tuple[boo
     except Exception:
         pass
     return True, False, None
->>>>>>> itsm/main
 
 
 @router.get("/oidc/config")

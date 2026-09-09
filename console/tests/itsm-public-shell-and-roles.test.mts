@@ -80,7 +80,7 @@ test("ITSM Roles Page defines all 6 approved roles with dashboard links", () => 
   const requiredRoles = [
     "REQUESTER",
     "SERVICE_AGENT",
-    "SERVICE_LEAD",
+    "INCIDENT_MANAGER",
     "PROCESS_CHANGE_MANAGER",
     "PLATFORM_ADMINISTRATOR",
     "AUDITOR",
@@ -93,7 +93,7 @@ test("ITSM Roles Page defines all 6 approved roles with dashboard links", () => 
   const requiredDashboards = [
     "/itsm/dashboard/requester",
     "/itsm/dashboard/service-agent",
-    "/itsm/dashboard/service-lead",
+    "/itsm/incident-manager",
     "/itsm/dashboard/process-change",
     "/itsm/dashboard/platform-admin",
     "/itsm/dashboard/auditor",
@@ -111,6 +111,7 @@ test("All 6 role dashboard pages exist and dashboard root handles role routing",
 
   assert.ok(rootSource.includes("REQUESTER"), "Root must handle REQUESTER");
   assert.ok(rootSource.includes("SERVICE_AGENT"), "Root must handle SERVICE_AGENT");
+  assert.ok(rootSource.includes("INCIDENT_MANAGER"), "Root must handle INCIDENT_MANAGER");
   assert.ok(rootSource.includes("SERVICE_LEAD"), "Root must handle SERVICE_LEAD");
   assert.ok(rootSource.includes("PROCESS_CHANGE_MANAGER"), "Root must handle PROCESS_CHANGE_MANAGER");
   assert.ok(rootSource.includes("PLATFORM_ADMINISTRATOR"), "Root must handle PLATFORM_ADMINISTRATOR");
@@ -144,7 +145,6 @@ test("ConsoleShell itsmNavigation contains all approved ITSM modules with zero G
     "Problems & Changes",
     "CMDB",
     "Reports & Audit",
-    "Administration",
   ];
 
   for (const item of itsmNavItems) {
@@ -153,4 +153,10 @@ test("ConsoleShell itsmNavigation contains all approved ITSM modules with zero G
       `itsmNavigation must include ${item}`
     );
   }
+
+  // Ensure operational portal has NO Administration menu
+  assert.ok(
+    !source.includes('name: "Administration"'),
+    "ConsoleShell itsmNavigation must NOT include Administration"
+  );
 });

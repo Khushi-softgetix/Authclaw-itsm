@@ -25,9 +25,23 @@ import {
   ShieldCheck,
   Sliders,
   Ticket,
+  Users,
   X,
 } from "lucide-react";
 import NotificationBell from "@/components/notification-bell";
+
+interface NavItem {
+  name: string;
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+  roles: string[];
+  itsmRoles?: string[];
+  children?: {
+    name: string;
+    href: string;
+    icon?: React.ComponentType<{ className?: string }>;
+  }[];
+}
 
 interface ConsoleShellProps {
   children: React.ReactNode;
@@ -41,7 +55,8 @@ interface ConsoleShellProps {
 const ITSM_ROLE_LABELS: Record<string, string> = {
   REQUESTER: "Requester",
   SERVICE_AGENT: "Service Agent",
-  SERVICE_LEAD: "Service Lead",
+  INCIDENT_MANAGER: "Incident Manager",
+  SERVICE_LEAD: "Incident Manager",
   PROCESS_CHANGE_MANAGER: "Process & Change Manager",
   PLATFORM_ADMINISTRATOR: "Platform Administrator",
   AUDITOR: "Auditor",
@@ -49,7 +64,7 @@ const ITSM_ROLE_LABELS: Record<string, string> = {
 
 const readRoles = ["owner", "admin", "developer", "operator", "viewer"];
 
-const navigation = [
+const navigation: NavItem[] = [
   { name: "Overview", href: "/overview", icon: LayoutDashboard, roles: readRoles },
   { name: "Compliance & Governance", href: "/compliance", icon: ShieldCheck, roles: readRoles },
   { name: "Approvals", href: "/approvals", icon: ClipboardCheck, roles: readRoles },
@@ -64,7 +79,7 @@ const navigation = [
   { name: "Settings", href: "/settings", icon: Settings, roles: ["owner", "admin"] },
 ];
 
-const itsmNavigation = [
+const itsmNavigation: NavItem[] = [
   { name: "Dashboard", href: "/itsm/dashboard", icon: LayoutDashboard, roles: readRoles },
   { name: "Incidents", href: "/itsm/incidents", icon: Ticket, roles: readRoles },
   { name: "Requests", href: "/itsm/requests", icon: ClipboardCheck, roles: readRoles },
@@ -73,7 +88,6 @@ const itsmNavigation = [
   { name: "Problems & Changes", href: "/itsm/changes", icon: GitPullRequest, roles: readRoles },
   { name: "CMDB", href: "/itsm/cmdb", icon: Database, roles: readRoles },
   { name: "Reports & Audit", href: "/itsm/reports", icon: FileCheck, roles: readRoles },
-  { name: "Administration", href: "/itsm/settings", icon: Sliders, roles: ["owner", "admin"] },
 ];
 
 export default function ConsoleShell({ children, userEmail, tenantId, tenantName, userRole, itsmRole }: ConsoleShellProps) {
@@ -131,7 +145,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
             }`}
           >
             <item.icon className={`w-4.5 h-4.5 ${active ? "text-[#6D28D9]" : "text-[#6B7488]"}`} />
-            {item.name}
+            <span>{item.name}</span>
           </Link>
         );
       })}

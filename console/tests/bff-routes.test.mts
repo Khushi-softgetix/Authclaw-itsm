@@ -18,8 +18,13 @@ test("maps approved BFF routes and rejects broader proxy access", () => {
   assert.deepEqual(resolveBffRoute("POST", "itsm/incidents/inc-1/assign"), { backendPath: "/v1/itsm/incidents/inc-1/assign", body: "json", status: undefined });
   assert.deepEqual(resolveBffRoute("POST", "itsm/incidents/inc-1/activities"), { backendPath: "/v1/itsm/incidents/inc-1/activities", body: "json", status: 201 });
   assert.deepEqual(resolveBffRoute("PATCH", "itsm/incidents/inc-1"), { backendPath: "/v1/itsm/incidents/inc-1", body: "json", status: undefined });
+  assert.deepEqual(resolveBffRoute("GET", "itsm/admin/users"), { backendPath: "/v1/itsm/admin/users", body: "none", status: undefined });
+  assert.deepEqual(resolveBffRoute("POST", "itsm/admin/users/user-1/access"), { backendPath: "/v1/itsm/admin/users/user-1/access", body: "json", status: undefined });
+  assert.deepEqual(resolveBffRoute("PUT", "itsm/admin/users/user-1/access"), { backendPath: "/v1/itsm/admin/users/user-1/access", body: "json", status: undefined });
   assert.equal(resolveBffRoute("DELETE", "itsm/incidents/inc-1"), null);
+  assert.equal(resolveBffRoute("DELETE", "itsm/admin/users"), null);
   assert.equal(resolveBffRoute("DELETE", "users/me"), null);
   assert.equal(resolveBffRoute("POST", "auth/login"), null);
-  assert.equal(resolveBffRoute("GET", "admin/secrets"), null);
+  assert.deepEqual(resolveBffRoute("GET", "itsm/admin/teams"), { backendPath: "/v1/itsm/admin/teams", body: "none", status: undefined });
+  assert.equal(resolveBffRoute("GET", "itsm/admin/slas"), null);
 });

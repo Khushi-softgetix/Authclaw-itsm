@@ -1940,3 +1940,47 @@ class ITSMUserAccess(Base):
         Index("idx_itsm_user_access_role", "tenant_id", "itsm_role"),
     )
 
+
+class ITSMTeam(Base):
+    """ITSM operational teams and assignment groups."""
+    __tablename__ = "itsm_teams"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    members = relationship("ITSMTeamMember", back_populates="team", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_itsm_teams_tenant_name"),
+        Index("idx_itsm_teams_tenant", "tenant_id"),
+        Index("idx_itsm_teams_tenant_status", "tenant_id", "is_active"),
+    )
+
+
+class ITSMTeamMember(Base):
+    """Membership of an existing AuthClaw user within an ITSM operational team."""
+    __tablename__ = "itsm_team_members"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    team_id = Column(UUID(as_uuid=True), ForeignKey("itsm_teams.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    team = relationship("ITSMTeam", back_populates="members")
+    user = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("team_id", "user_id", name="uq_itsm_team_members_team_user"),
+        Index("idx_itsm_team_members_lookup", "tenant_id", "team_id"),
+        Index("idx_itsm_team_members_user", "tenant_id", "user_id"),
+    )
+
+

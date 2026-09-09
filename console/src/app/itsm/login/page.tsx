@@ -54,8 +54,17 @@ export default function ItsmLoginPage() {
       }
 
       const searchParams = new URLSearchParams(window.location.search);
-      const returnTo = searchParams.get("returnTo") || searchParams.get("redirect") || "/itsm/incidents";
-      const safeRedirect = returnTo.startsWith("/itsm") && !returnTo.startsWith("//") ? returnTo : "/itsm/incidents";
+      const explicitReturnTo = searchParams.get("returnTo") || searchParams.get("redirect");
+      const isIncidentManager = data.user?.itsmRole === "INCIDENT_MANAGER" || data.user?.itsmRole === "SERVICE_LEAD";
+      const defaultRoute = data.user?.itsmRole === "PLATFORM_ADMINISTRATOR"
+        ? "/itsm/admin-portal"
+        : isIncidentManager
+        ? "/itsm/incident-manager"
+        : "/itsm/incidents";
+      const returnTo = isIncidentManager && (!explicitReturnTo || explicitReturnTo === "/itsm/incidents")
+        ? "/itsm/incident-manager"
+        : explicitReturnTo || defaultRoute;
+      const safeRedirect = returnTo.startsWith("/itsm") && !returnTo.startsWith("//") ? returnTo : defaultRoute;
       router.push(safeRedirect);
       router.refresh();
     } catch (err: unknown) {

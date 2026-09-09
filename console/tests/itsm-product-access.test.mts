@@ -117,7 +117,11 @@ test("ConsoleShell supports ITSM business roles", () => {
     "ConsoleShell must support SERVICE_AGENT"
   );
   assert.ok(
-    shellSource.includes("SERVICE_LEAD: \"Service Lead\""),
+    shellSource.includes("INCIDENT_MANAGER: \"Incident Manager\""),
+    "ConsoleShell must support INCIDENT_MANAGER"
+  );
+  assert.ok(
+    shellSource.includes("SERVICE_LEAD: \"Incident Manager\""),
     "ConsoleShell must support SERVICE_LEAD"
   );
   assert.ok(

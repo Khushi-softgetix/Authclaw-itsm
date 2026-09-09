@@ -35,6 +35,7 @@ def upgrade() -> None:
 
     # Enforce RLS and grants
     op.execute(f"ALTER TABLE public.{_TABLE_NAME} ENABLE ROW LEVEL SECURITY;")
+    op.execute(f"ALTER TABLE public.{_TABLE_NAME} FORCE ROW LEVEL SECURITY;")
     op.execute(
         f"""
         CREATE POLICY tenant_isolation ON public.{_TABLE_NAME} FOR ALL

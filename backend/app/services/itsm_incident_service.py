@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import (
     ITSMService,
+    ITSMMajorIncident,
     ITSMSLAPolicy,
     ITSMTicket,
     ITSMTicketActivity,
@@ -25,6 +26,8 @@ from app.schemas.itsm_incidents import (
     IncidentCreateRequest,
     IncidentStatusUpdateRequest,
     IncidentUpdateRequest,
+    MajorIncidentDeclareRequest,
+    MajorIncidentUpdateRequest,
     VALID_IMPACTS,
     VALID_PRIORITIES,
     VALID_STATUSES,
@@ -666,6 +669,84 @@ class IncidentService:
         db.commit()
         db.refresh(ticket)
         return ticket
+
+    @classmethod
+    def declare_major_incident(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        incident_id: UUID,
+        actor_id: UUID,
+        payload: MajorIncidentDeclareRequest,
+    ) -> ITSMMajorIncident:
+        ticket = cls.get_incident(db, tenant_id, incident_id)
+        existing = db.query(ITSMMajorIncident).filter(
+            ITSMMajorIncident.tenant_id == tenant_id,
+            ITSMMajorIncident.ticket_id == incident_id,
+        ).first()
+        if existing:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Incident is already declared as major")
+
+        commander_id = payload.incident_commander_id or actor_id
+        cls._validate_user_in_tenant(db, tenant_id, commander_id, "Incident commander")
+        major_incident = ITSMMajorIncident(
+            id=uuid4(),
+            tenant_id=tenant_id,
+            ticket_id=ticket.id,
+            incident_commander_id=commander_id,
+            declared_by_id=actor_id,
+            bridge_url=payload.bridge_url,
+            communication_channel=payload.communication_channel,
+            impacted_business_units=payload.impacted_business_units,
+            customer_impact_description=payload.customer_impact_description,
+            executive_summary=payload.executive_summary,
+        )
+        ticket.is_major_incident = True
+        ticket.updated_at = datetime.now(timezone.utc)
+        db.add(major_incident)
+        cls._record_activity(
+            db, tenant_id, ticket.id, "MAJOR_INCIDENT_DECLARED",
+            content="Major incident declared",
+            new_value={"incident_commander_id": str(commander_id)}, actor_id=actor_id,
+        )
+        cls._emit_audit_event(db, tenant_id, ticket, "major_incident_declared", actor_id)
+        db.commit()
+        db.refresh(major_incident)
+        return major_incident
+
+    @classmethod
+    def get_major_incident(cls, db: Session, tenant_id: UUID, incident_id: UUID) -> ITSMMajorIncident:
+        cls.get_incident(db, tenant_id, incident_id)
+        major_incident = db.query(ITSMMajorIncident).filter(
+            ITSMMajorIncident.tenant_id == tenant_id,
+            ITSMMajorIncident.ticket_id == incident_id,
+        ).first()
+        if not major_incident:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Major incident not found")
+        return major_incident
+
+    @classmethod
+    def update_major_incident(
+        cls, db: Session, tenant_id: UUID, incident_id: UUID, actor_id: UUID, payload: MajorIncidentUpdateRequest,
+    ) -> ITSMMajorIncident:
+        major_incident = cls.get_major_incident(db, tenant_id, incident_id)
+        changes = payload.model_dump(exclude_unset=True)
+        audit_changes = payload.model_dump(mode="json", exclude_unset=True)
+        if "incident_commander_id" in changes and changes["incident_commander_id"] is not None:
+            cls._validate_user_in_tenant(db, tenant_id, changes["incident_commander_id"], "Incident commander")
+        for field, value in changes.items():
+            setattr(major_incident, field, value)
+        if changes:
+            ticket = cls.get_incident(db, tenant_id, incident_id)
+            ticket.updated_at = datetime.now(timezone.utc)
+            cls._record_activity(
+                db, tenant_id, ticket.id, "MAJOR_INCIDENT_UPDATED",
+                content="Major incident command details updated", new_value=audit_changes, actor_id=actor_id,
+            )
+            cls._emit_audit_event(db, tenant_id, ticket, "major_incident_updated", actor_id)
+            db.commit()
+            db.refresh(major_incident)
+        return major_incident
 
     @classmethod
     def add_activity(

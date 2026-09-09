@@ -8,6 +8,7 @@ import { Incident } from "@/lib/itsm-types";
 
 interface EditModalProps {
   incident: Incident;
+  canManageOperations: boolean;
   onClose: () => void;
   onSuccess: (updated: Incident) => void;
 }
@@ -16,7 +17,7 @@ const IMPACTS = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
 const URGENCIES = ["LOW", "MEDIUM", "HIGH", "CRITICAL"] as const;
 const PRIORITIES = ["P1", "P2", "P3", "P4"] as const;
 
-export default function EditModal({ incident, onClose, onSuccess }: EditModalProps) {
+export default function EditModal({ incident, canManageOperations, onClose, onSuccess }: EditModalProps) {
   const [title, setTitle] = useState<string>(incident.title || "");
   const [description, setDescription] = useState<string>(incident.description || "");
   const [impact, setImpact] = useState<string>(incident.impact || "MEDIUM");
@@ -44,10 +45,9 @@ export default function EditModal({ incident, onClose, onSuccess }: EditModalPro
         description: description.trim(),
         impact,
         urgency,
-        priority,
+        ...(canManageOperations ? { priority, is_major_incident: isMajorIncident } : {}),
         category: category.trim() || "GENERAL",
         subcategory: subcategory.trim() ? subcategory.trim() : null,
-        is_major_incident: isMajorIncident,
       };
 
       const res = await fetch(`/api/itsm/incidents/${incident.id}`, jsonRequest("PATCH", payload));
@@ -139,7 +139,7 @@ export default function EditModal({ incident, onClose, onSuccess }: EditModalPro
             </select>
           </div>
 
-          <div>
+          {canManageOperations && <div>
             <label htmlFor="edit-priority" className="block text-xs font-semibold text-[#0E1726] mb-1.5">
               Priority
             </label>
@@ -155,7 +155,7 @@ export default function EditModal({ incident, onClose, onSuccess }: EditModalPro
                 </option>
               ))}
             </select>
-          </div>
+          </div>}
         </div>
 
         <div className="grid grid-cols-2 gap-3">
@@ -187,7 +187,7 @@ export default function EditModal({ incident, onClose, onSuccess }: EditModalPro
           </div>
         </div>
 
-        <div className="flex items-center gap-2 pt-1">
+        {canManageOperations && <div className="flex items-center gap-2 pt-1">
           <input
             id="edit-major"
             type="checkbox"
@@ -198,7 +198,7 @@ export default function EditModal({ incident, onClose, onSuccess }: EditModalPro
           <label htmlFor="edit-major" className="text-xs font-medium text-[#0E1726] cursor-pointer">
             Flag as Major Incident
           </label>
-        </div>
+        </div>}
 
         <div className="flex justify-end gap-2 pt-3 border-t border-[#E6E9F0]">
           <button

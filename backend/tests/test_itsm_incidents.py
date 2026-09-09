@@ -61,7 +61,7 @@ class ITSMIncidentTestCase(unittest.TestCase):
     def tearDownClass(cls):
         cls.migrator_engine.dispose()
 
-    def create_fixture_tenant(self, suffix: str):
+    def create_fixture_tenant(self, suffix: str, itsm_role: str = "SERVICE_LEAD"):
         tenant_id = uuid4()
         user_id = uuid4()
         api_key_str = f"test-key-{suffix}-{uuid4().hex[:12]}"
@@ -84,6 +84,19 @@ class ITSMIncidentTestCase(unittest.TestCase):
                     "id": user_id,
                     "tenant_id": tenant_id,
                     "email": f"user-{suffix}-{uuid4().hex[:8]}@example.com",
+                },
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_user_access "
+                    "(id, tenant_id, user_id, itsm_role, has_itsm_access, has_governance_access, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, :user_id, :itsm_role, true, true, now(), now())"
+                ),
+                {
+                    "id": uuid4(),
+                    "tenant_id": tenant_id,
+                    "user_id": user_id,
+                    "itsm_role": itsm_role,
                 },
             )
             conn.execute(
@@ -538,6 +551,89 @@ class ITSMIncidentTestCase(unittest.TestCase):
         self.assertEqual(act_res.status_code, 200)
         self.assertGreaterEqual(len(act_res.json()), 1)
         self.assertEqual(act_res.json()[0]["activity_type"], "CREATED")
+
+    def test_20_service_lead_can_declare_and_update_major_incident(self):
+        _, user_id, api_key = self.create_fixture_tenant("major-lead", "SERVICE_LEAD")
+        headers = {"Authorization": f"Bearer {api_key}"}
+        incident_id = self.client.post(
+            "/v1/itsm/incidents",
+            json={"title": "Regional login outage", "description": "Authentication unavailable", "priority": "P1"},
+            headers=headers,
+        ).json()["id"]
+
+        declared = self.client.post(
+            f"/v1/itsm/incidents/{incident_id}/major-incident",
+            json={
+                "incident_commander_id": str(user_id),
+                "bridge_url": "https://bridge.example.invalid/123",
+                "communication_channel": "#incident-123",
+                "impacted_business_units": ["Engineering", "Support"],
+            },
+            headers=headers,
+        )
+        self.assertEqual(declared.status_code, 201, declared.text)
+        self.assertEqual(declared.json()["ticket_id"], incident_id)
+        self.assertEqual(declared.json()["incident_commander_id"], str(user_id))
+
+        updated = self.client.patch(
+            f"/v1/itsm/incidents/{incident_id}/major-incident",
+            json={"executive_summary": "Restoration work is in progress."},
+            headers=headers,
+        )
+        self.assertEqual(updated.status_code, 200, updated.text)
+        self.assertEqual(updated.json()["executive_summary"], "Restoration work is in progress.")
+
+    def test_21_non_service_lead_cannot_perform_lead_actions(self):
+        _, _, lead_key = self.create_fixture_tenant("lead-owner", "SERVICE_LEAD")
+        _, _, requester_key = self.create_fixture_tenant("requester", "REQUESTER")
+        lead_headers = {"Authorization": f"Bearer {lead_key}"}
+        requester_headers = {"Authorization": f"Bearer {requester_key}"}
+        incident_id = self.client.post(
+            "/v1/itsm/incidents",
+            json={"title": "Lead-only action", "description": "Authorization check"},
+            headers=lead_headers,
+        ).json()["id"]
+
+        assign = self.client.post(
+            f"/v1/itsm/incidents/{incident_id}/assign",
+            json={"assignment_group": "Service Desk"},
+            headers=requester_headers,
+        )
+        self.assertEqual(assign.status_code, 403)
+
+        priority_update = self.client.patch(
+            f"/v1/itsm/incidents/{incident_id}",
+            json={"priority": "P1"},
+            headers=requester_headers,
+        )
+        self.assertEqual(priority_update.status_code, 403)
+
+        declare = self.client.post(
+            f"/v1/itsm/incidents/{incident_id}/major-incident",
+            json={},
+            headers=requester_headers,
+        )
+        self.assertEqual(declare.status_code, 403)
+
+    def test_22_major_incident_is_tenant_isolated_for_service_leads(self):
+        _, _, key_a = self.create_fixture_tenant("major-tenant-a", "SERVICE_LEAD")
+        _, _, key_b = self.create_fixture_tenant("major-tenant-b", "SERVICE_LEAD")
+        headers_a = {"Authorization": f"Bearer {key_a}"}
+        headers_b = {"Authorization": f"Bearer {key_b}"}
+        incident_id = self.client.post(
+            "/v1/itsm/incidents",
+            json={"title": "Tenant A major", "description": "Confidential outage"},
+            headers=headers_a,
+        ).json()["id"]
+        declared = self.client.post(
+            f"/v1/itsm/incidents/{incident_id}/major-incident", json={}, headers=headers_a
+        )
+        self.assertEqual(declared.status_code, 201, declared.text)
+
+        foreign_read = self.client.get(
+            f"/v1/itsm/incidents/{incident_id}/major-incident", headers=headers_b
+        )
+        self.assertEqual(foreign_read.status_code, 404)
 
 
 if __name__ == "__main__":

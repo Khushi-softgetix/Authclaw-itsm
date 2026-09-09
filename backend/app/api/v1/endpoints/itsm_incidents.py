@@ -8,7 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy.orm import Session
 
-from app.core.auth import get_current_tenant, get_tenant_db
+from app.core.auth import ensure_itsm_role, get_current_tenant, get_tenant_db, require_itsm_roles
 from app.schemas.itsm_incidents import (
     IncidentActivityCreateRequest,
     IncidentActivityResponse,
@@ -17,6 +17,9 @@ from app.schemas.itsm_incidents import (
     IncidentResponse,
     IncidentStatusUpdateRequest,
     IncidentUpdateRequest,
+    MajorIncidentDeclareRequest,
+    MajorIncidentResponse,
+    MajorIncidentUpdateRequest,
 )
 from app.services.itsm_incident_service import IncidentService
 
@@ -114,6 +117,8 @@ def update_incident(
     db: Session = Depends(get_tenant_db),
     tenant_id: str = Depends(get_current_tenant),
 ):
+    if any(getattr(payload, field) is not None for field in ("priority", "assignee_id", "assignment_group", "is_major_incident")):
+        ensure_itsm_role(request, db, ["SERVICE_LEAD"])
     actor_id = request.state.user_id
     return IncidentService.update_incident(
         db=db,
@@ -159,6 +164,7 @@ def assign_incident(
     request: Request,
     db: Session = Depends(get_tenant_db),
     tenant_id: str = Depends(get_current_tenant),
+    _service_lead: None = require_itsm_roles(["SERVICE_LEAD"]),
 ):
     actor_id = request.state.user_id
     return IncidentService.assign_incident(
@@ -168,6 +174,53 @@ def assign_incident(
         actor_id=UUID(str(actor_id)),
         payload=payload,
     )
+
+
+@router.post(
+    "/{incident_id}/major-incident",
+    response_model=MajorIncidentResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Declare a major incident",
+)
+def declare_major_incident(
+    incident_id: UUID,
+    payload: MajorIncidentDeclareRequest,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+    _service_lead: None = require_itsm_roles(["SERVICE_LEAD"]),
+):
+    return IncidentService.declare_major_incident(db, UUID(tenant_id), incident_id, UUID(str(request.state.user_id)), payload)
+
+
+@router.get(
+    "/{incident_id}/major-incident",
+    response_model=MajorIncidentResponse,
+    summary="Read major incident command details",
+)
+def get_major_incident(
+    incident_id: UUID,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+    _service_lead: None = require_itsm_roles(["SERVICE_LEAD"]),
+):
+    return IncidentService.get_major_incident(db, UUID(tenant_id), incident_id)
+
+
+@router.patch(
+    "/{incident_id}/major-incident",
+    response_model=MajorIncidentResponse,
+    summary="Update major incident command details",
+)
+def update_major_incident(
+    incident_id: UUID,
+    payload: MajorIncidentUpdateRequest,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+    _service_lead: None = require_itsm_roles(["SERVICE_LEAD"]),
+):
+    return IncidentService.update_major_incident(db, UUID(tenant_id), incident_id, UUID(str(request.state.user_id)), payload)
 
 
 @router.post(

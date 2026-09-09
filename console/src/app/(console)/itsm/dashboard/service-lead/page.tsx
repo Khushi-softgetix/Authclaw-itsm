@@ -7,14 +7,10 @@ import {
   Flame,
   Clock,
   CheckCircle2,
-  Users,
-  AlertTriangle,
   ArrowRight,
   RefreshCw,
   Radio,
-  ExternalLink,
   Layers,
-  Activity,
 } from "lucide-react";
 import { Incident } from "@/lib/itsm-types";
 import IncidentPriorityBadge from "@/components/itsm/incident-priority-badge";
@@ -24,11 +20,17 @@ import { formatDateTime } from "@/lib/itsm-format";
 export default function ServiceLeadDashboardPage() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isServiceLead, setIsServiceLead] = useState(false);
 
   const loadData = async () => {
     try {
       setLoading(true);
-      const res = await fetch("/api/itsm/incidents?limit=50");
+      const [res, sessionRes] = await Promise.all([
+        fetch("/api/itsm/incidents?limit=50"),
+        fetch("/api/auth/session"),
+      ]);
+      const session = sessionRes.ok ? await sessionRes.json() : null;
+      setIsServiceLead(session?.itsmRole === "SERVICE_LEAD");
       if (res.ok) {
         const data = await res.json();
         setIncidents(Array.isArray(data) ? data : []);
@@ -44,12 +46,33 @@ export default function ServiceLeadDashboardPage() {
     loadData();
   }, []);
 
-  const majorIncidents = incidents.filter(
-    (i) => (i.priority === "P1" || i.priority === "P2") && i.status !== "RESOLVED" && i.status !== "CLOSED"
-  );
-  const totalOpen = incidents.filter(
-    (i) => i.status !== "RESOLVED" && i.status !== "CLOSED" && i.status !== "CANCELLED"
-  ).length;
+  if (!loading && !isServiceLead) {
+    return <div className="max-w-2xl mx-auto py-16 text-center"><ShieldAlert className="w-10 h-10 text-red-500 mx-auto mb-3" /><h1 className="text-lg font-bold text-[#0E1726]">Service Lead access required</h1><p className="mt-2 text-sm text-[#6B7488]">Operational command actions are available only to Service Leads.</p></div>;
+  }
+
+  const now = Date.now();
+  const isActive = (incident: Incident) => !["RESOLVED", "CLOSED", "CANCELLED"].includes(incident.status);
+  const dueAt = (incident: Incident) => incident.sla_resolution_due_at || incident.sla_response_due_at;
+  const majorIncidents = incidents.filter((incident) => incident.is_major_incident && isActive(incident));
+  const activeIncidents = incidents.filter(isActive);
+  const totalOpen = activeIncidents.length;
+  const breached = activeIncidents.filter((incident) => {
+    const due = dueAt(incident);
+    return incident.sla_status?.toUpperCase().includes("BREACH") || Boolean(due && new Date(due).getTime() < now);
+  });
+  const atRisk = activeIncidents.filter((incident) => {
+    const due = dueAt(incident);
+    const remaining = due ? new Date(due).getTime() - now : Number.POSITIVE_INFINITY;
+    return !breached.includes(incident) && remaining > 0 && remaining <= 60 * 60 * 1000;
+  });
+  const stuck = activeIncidents.filter((incident) => now - new Date(incident.updated_at).getTime() >= 4 * 60 * 60 * 1000);
+  const escalationWatch = activeIncidents.filter((incident) => incident.priority === "P1" || breached.includes(incident) || stuck.includes(incident));
+  const workload = activeIncidents.reduce<Record<string, number>>((groups, incident) => {
+    const group = incident.assignment_group || "Unassigned";
+    groups[group] = (groups[group] || 0) + 1;
+    return groups;
+  }, {});
+  const workloadEntries = Object.entries(workload).sort(([, left], [, right]) => right - left);
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-8">
@@ -89,7 +112,7 @@ export default function ServiceLeadDashboardPage() {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white p-5 rounded-xl border border-[#E6E9F0] shadow-sm">
           <div className="flex items-center justify-between text-[#6B7488] mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Major Incidents (P1/P2)</span>
+            <span className="text-xs font-semibold uppercase tracking-wider">Active Major Incidents</span>
             <Flame className="w-4 h-4 text-[#DC2626]" />
           </div>
           <div className="text-2xl font-bold text-[#DC2626]">
@@ -111,20 +134,20 @@ export default function ServiceLeadDashboardPage() {
 
         <div className="bg-white p-5 rounded-xl border border-[#E6E9F0] shadow-sm">
           <div className="flex items-center justify-between text-[#6B7488] mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Mean Time To Resolve</span>
+            <span className="text-xs font-semibold uppercase tracking-wider">SLA Breached / Overdue</span>
             <Clock className="w-4 h-4 text-[#2563EB]" />
           </div>
-          <div className="text-2xl font-bold text-[#0E1726]">42 min</div>
-          <p className="text-xs text-[#6B7488] mt-1">-18% vs 30-day baseline</p>
+          <div className="text-2xl font-bold text-red-600">{loading ? "..." : breached.length}</div>
+          <p className="text-xs text-[#6B7488] mt-1">Needs immediate recovery action</p>
         </div>
 
         <div className="bg-white p-5 rounded-xl border border-[#E6E9F0] shadow-sm">
           <div className="flex items-center justify-between text-[#6B7488] mb-2">
-            <span className="text-xs font-semibold uppercase tracking-wider">Overall SLA Compliance</span>
+            <span className="text-xs font-semibold uppercase tracking-wider">SLA At Risk</span>
             <CheckCircle2 className="w-4 h-4 text-[#10B981]" />
           </div>
-          <div className="text-2xl font-bold text-[#10B981]">98.2%</div>
-          <p className="text-xs text-[#6B7488] mt-1">Target: &gt;= 95.0%</p>
+          <div className="text-2xl font-bold text-amber-600">{loading ? "..." : atRisk.length}</div>
+          <p className="text-xs text-[#6B7488] mt-1">Due within the next hour</p>
         </div>
       </div>
 
@@ -171,6 +194,21 @@ export default function ServiceLeadDashboardPage() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {!loading && (breached.length > 0 || atRisk.length > 0 || stuck.length > 0) && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {[
+            { title: "SLA Recovery", items: breached, empty: "No SLA breaches", color: "red" },
+            { title: "Stuck Incidents", items: stuck, empty: "No incidents idle for 4+ hours", color: "amber" },
+            { title: "Escalation Watch", items: escalationWatch, empty: "No escalation triggers", color: "purple" },
+          ].map(({ title, items, empty, color }) => (
+            <div key={title} className="bg-white rounded-2xl border border-[#E6E9F0] shadow-sm p-5">
+              <div className="flex items-center justify-between mb-3"><h2 className="text-xs font-bold uppercase tracking-wider text-[#0E1726]">{title}</h2><span className={`px-2 py-0.5 rounded-md text-xs font-bold ${color === "red" ? "bg-red-50 text-red-700" : color === "amber" ? "bg-amber-50 text-amber-700" : "bg-purple-50 text-purple-700"}`}>{items.length}</span></div>
+              {items.length === 0 ? <p className="text-xs text-[#6B7488]">{empty}</p> : <div className="space-y-2">{items.slice(0, 3).map((incident) => <Link key={incident.id} href={`/itsm/incidents/${incident.id}`} className="block rounded-lg bg-[#F8FAFC] px-3 py-2 hover:bg-[#F1ECFE]"><p className="font-mono text-[10px] font-bold text-[#6D28D9]">{incident.ticket_number}</p><p className="text-xs font-medium text-[#0E1726] truncate">{incident.title}</p></Link>)}</div>}
+            </div>
+          ))}
         </div>
       )}
 
@@ -242,42 +280,9 @@ export default function ServiceLeadDashboardPage() {
               Workload by Assignment Pool
             </h3>
             <div className="space-y-3 text-xs">
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#F8FAFC]">
-                <div>
-                  <span className="font-semibold text-[#0E1726]">Cloud Platform Ops</span>
-                  <p className="text-[10px] text-[#6B7488]">4 active agents</p>
-                </div>
-                <span className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-700 font-bold text-xs">
-                  8 tickets
-                </span>
-              </div>
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#F8FAFC]">
-                <div>
-                  <span className="font-semibold text-[#0E1726]">Security &amp; IAM</span>
-                  <p className="text-[10px] text-[#6B7488]">2 active agents</p>
-                </div>
-                <span className="px-2 py-0.5 rounded-md bg-amber-100 text-amber-700 font-bold text-xs">
-                  3 tickets
-                </span>
-              </div>
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#F8FAFC]">
-                <div>
-                  <span className="font-semibold text-[#0E1726]">Database Core Tier</span>
-                  <p className="text-[10px] text-[#6B7488]">3 active agents</p>
-                </div>
-                <span className="px-2 py-0.5 rounded-md bg-purple-100 text-purple-700 font-bold text-xs">
-                  5 tickets
-                </span>
-              </div>
-              <div className="flex items-center justify-between p-2.5 rounded-lg bg-[#F8FAFC]">
-                <div>
-                  <span className="font-semibold text-[#0E1726]">Tier 1 Helpdesk</span>
-                  <p className="text-[10px] text-[#6B7488]">5 active agents</p>
-                </div>
-                <span className="px-2 py-0.5 rounded-md bg-emerald-100 text-emerald-700 font-bold text-xs">
-                  12 tickets
-                </span>
-              </div>
+              {workloadEntries.length === 0 ? <p className="text-xs text-[#6B7488]">No active queue workload.</p> : workloadEntries.map(([group, count]) => (
+                <div key={group} className="flex items-center justify-between p-2.5 rounded-lg bg-[#F8FAFC]"><span className="font-semibold text-[#0E1726]">{group}</span><span className="px-2 py-0.5 rounded-md bg-blue-100 text-blue-700 font-bold text-xs">{count} ticket{count === 1 ? "" : "s"}</span></div>
+              ))}
             </div>
           </div>
         </div>

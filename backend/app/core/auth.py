@@ -259,6 +259,34 @@ def require_roles(required_roles: List[str]):
     return Depends(dependency)
 
 
+def ensure_itsm_role(request: Request, db: Session, required_roles: List[str]) -> None:
+    """Require an ITSM product role from the tenant-scoped access record."""
+    allowed = {role.upper() for role in required_roles}
+    row = db.execute(
+        text(
+            "SELECT itsm_role, has_itsm_access "
+            "FROM authn.lookup_itsm_user_access(:tenant_id, :user_id)"
+        ),
+        {
+            "tenant_id": str(request.state.tenant_id),
+            "user_id": str(request.state.user_id),
+        },
+    ).first()
+    if not row or not row.has_itsm_access or str(row.itsm_role).upper() not in allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Insufficient ITSM role",
+        )
+
+
+def require_itsm_roles(required_roles: List[str]):
+    """FastAPI dependency for actions reserved for specified ITSM product roles."""
+    def dependency(request: Request, db: Session = Depends(get_tenant_db)):
+        ensure_itsm_role(request, db, required_roles)
+
+    return Depends(dependency)
+
+
 def require_platform_admin():
     """Require the global ADMIN role and its dedicated platform scope."""
 

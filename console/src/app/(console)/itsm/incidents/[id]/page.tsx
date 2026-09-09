@@ -15,7 +15,7 @@ import {
   UserCheck,
 } from "lucide-react";
 import { formatDateTime } from "@/lib/itsm-format";
-import { Incident, IncidentActivity } from "@/lib/itsm-types";
+import { Incident, IncidentActivity, MajorIncident } from "@/lib/itsm-types";
 import IncidentPriorityBadge from "@/components/itsm/incident-priority-badge";
 import IncidentStatusBadge from "@/components/itsm/incident-status-badge";
 import IncidentStepper from "@/components/itsm/incident-stepper";
@@ -23,6 +23,7 @@ import StatusModal from "@/components/itsm/status-modal";
 import AssignModal from "@/components/itsm/assign-modal";
 import EditModal from "@/components/itsm/edit-modal";
 import ActivityTimeline from "@/components/itsm/activity-timeline";
+import MajorIncidentModal from "@/components/itsm/major-incident-modal";
 
 export default function IncidentDetailPage() {
   const params = useParams();
@@ -31,6 +32,8 @@ export default function IncidentDetailPage() {
 
   const [incident, setIncident] = useState<Incident | null>(null);
   const [activities, setActivities] = useState<IncidentActivity[]>([]);
+  const [majorIncident, setMajorIncident] = useState<MajorIncident | null>(null);
+  const [isServiceLead, setIsServiceLead] = useState(false);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -38,6 +41,7 @@ export default function IncidentDetailPage() {
   const [statusModalOpen, setStatusModalOpen] = useState<boolean>(false);
   const [assignModalOpen, setAssignModalOpen] = useState<boolean>(false);
   const [editModalOpen, setEditModalOpen] = useState<boolean>(false);
+  const [majorIncidentModalOpen, setMajorIncidentModalOpen] = useState<boolean>(false);
 
   const fetchIncidentData = useCallback(async () => {
     if (!incidentId) return;
@@ -46,9 +50,10 @@ export default function IncidentDetailPage() {
       setLoading(true);
       setError(null);
 
-      const [incRes, actRes] = await Promise.all([
+      const [incRes, actRes, sessionRes] = await Promise.all([
         fetch(`/api/itsm/incidents/${incidentId}`),
         fetch(`/api/itsm/incidents/${incidentId}/activities`),
+        fetch("/api/auth/session"),
       ]);
 
       if (incRes.status === 401 || actRes.status === 401) {
@@ -66,6 +71,16 @@ export default function IncidentDetailPage() {
 
       const incData = await incRes.json();
       setIncident(incData);
+
+      const session = sessionRes.ok ? await sessionRes.json() : null;
+      const canManageOperations = session?.itsmRole === "SERVICE_LEAD";
+      setIsServiceLead(canManageOperations);
+      if (canManageOperations && incData.is_major_incident) {
+        const majorResponse = await fetch(`/api/itsm/incidents/${incidentId}/major-incident`);
+        if (majorResponse.ok) setMajorIncident(await majorResponse.json());
+      } else {
+        setMajorIncident(null);
+      }
 
       if (actRes.ok) {
         const actData = await actRes.json();
@@ -167,10 +182,19 @@ export default function IncidentDetailPage() {
             </button>
             <button
               onClick={() => setAssignModalOpen(true)}
+              hidden={!isServiceLead}
               className="px-3.5 py-2 bg-white border border-[#E6E9F0] text-[#475069] hover:bg-[#F5F7FA] rounded-lg text-xs font-medium transition"
             >
               Assign
             </button>
+            {isServiceLead && (
+              <button
+                onClick={() => setMajorIncidentModalOpen(true)}
+                className="px-3.5 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-semibold shadow-sm transition"
+              >
+                {majorIncident ? "Command Room" : "Declare Major"}
+              </button>
+            )}
             <button
               onClick={() => setEditModalOpen(true)}
               className="p-2 bg-white border border-[#E6E9F0] text-[#475069] hover:text-[#0E1726] hover:bg-[#F5F7FA] rounded-lg transition"
@@ -300,12 +324,12 @@ export default function IncidentDetailPage() {
           <div className="bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm space-y-4">
             <div className="flex items-center justify-between border-b border-[#E6E9F0] pb-3">
               <h3 className="text-sm font-bold text-[#0E1726]">Ownership</h3>
-              <button
+              {isServiceLead && <button
                 onClick={() => setAssignModalOpen(true)}
                 className="text-xs font-semibold text-[#6D28D9] hover:underline"
               >
                 Reassign
-              </button>
+              </button>}
             </div>
 
             <div className="space-y-3">
@@ -387,6 +411,18 @@ export default function IncidentDetailPage() {
             </div>
           </div>
 
+          {isServiceLead && majorIncident && (
+            <div className="bg-red-50/60 rounded-[20px] border border-red-200 p-6 shadow-sm space-y-3">
+              <div className="flex items-center justify-between border-b border-red-200 pb-3"><h3 className="text-sm font-bold text-red-800">Major Incident Command</h3><button onClick={() => setMajorIncidentModalOpen(true)} className="text-xs font-semibold text-red-700 hover:underline">Update</button></div>
+              <div className="space-y-2 text-xs text-[#475069]">
+                <p><span className="font-semibold text-[#6B7488]">Commander:</span> {majorIncident.incident_commander_id || "Current Service Lead"}</p>
+                {majorIncident.communication_channel && <p><span className="font-semibold text-[#6B7488]">Channel:</span> {majorIncident.communication_channel}</p>}
+                {majorIncident.bridge_url && <a href={majorIncident.bridge_url} target="_blank" rel="noreferrer" className="inline-flex font-semibold text-red-700 hover:underline">Open command bridge</a>}
+                {majorIncident.executive_summary && <p className="rounded-lg bg-white/80 p-3 border border-red-100">{majorIncident.executive_summary}</p>}
+              </div>
+            </div>
+          )}
+
           {/* Metadata Card */}
           <div className="bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm space-y-3">
             <h3 className="text-sm font-bold text-[#0E1726] border-b border-[#E6E9F0] pb-3">
@@ -423,7 +459,7 @@ export default function IncidentDetailPage() {
         />
       )}
 
-      {assignModalOpen && (
+      {assignModalOpen && isServiceLead && (
         <AssignModal
           incident={incident}
           onClose={() => setAssignModalOpen(false)}
@@ -434,9 +470,22 @@ export default function IncidentDetailPage() {
         />
       )}
 
+      {majorIncidentModalOpen && isServiceLead && (
+        <MajorIncidentModal
+          incident={incident}
+          majorIncident={majorIncident}
+          onClose={() => setMajorIncidentModalOpen(false)}
+          onSuccess={(updated) => {
+            setMajorIncident(updated);
+            fetchIncidentData();
+          }}
+        />
+      )}
+
       {editModalOpen && (
         <EditModal
           incident={incident}
+          canManageOperations={isServiceLead}
           onClose={() => setEditModalOpen(false)}
           onSuccess={(updated) => {
             setIncident(updated);

@@ -61,6 +61,37 @@ export interface IncidentActivity {
   created_at: string;
 }
 
+export interface MajorIncident {
+  id: string;
+  tenant_id: string;
+  ticket_id: string;
+  incident_commander_id?: string | null;
+  bridge_url?: string | null;
+  communication_channel?: string | null;
+  declared_at: string;
+  declared_by_id: string;
+  postmortem_status: string;
+  postmortem_url?: string | null;
+  resolved_at?: string | null;
+  closed_at?: string | null;
+  executive_summary?: string | null;
+  impacted_business_units: string[];
+  customer_impact_description?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MajorIncidentPayload {
+  incident_commander_id?: string | null;
+  bridge_url?: string | null;
+  communication_channel?: string | null;
+  impacted_business_units?: string[];
+  customer_impact_description?: string | null;
+  executive_summary?: string | null;
+  postmortem_status?: string | null;
+  postmortem_url?: string | null;
+}
+
 export interface IncidentCreatePayload {
   title: string;
   description: string;

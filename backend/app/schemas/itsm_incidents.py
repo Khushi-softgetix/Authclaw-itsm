@@ -64,6 +64,30 @@ class IncidentAssignRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class MajorIncidentDeclareRequest(BaseModel):
+    incident_commander_id: Optional[UUID] = None
+    bridge_url: Optional[str] = Field(default=None, max_length=1024)
+    communication_channel: Optional[str] = Field(default=None, max_length=255)
+    impacted_business_units: list[str] = Field(default_factory=list)
+    customer_impact_description: Optional[str] = None
+    executive_summary: Optional[str] = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MajorIncidentUpdateRequest(BaseModel):
+    incident_commander_id: Optional[UUID] = None
+    bridge_url: Optional[str] = Field(default=None, max_length=1024)
+    communication_channel: Optional[str] = Field(default=None, max_length=255)
+    impacted_business_units: Optional[list[str]] = None
+    customer_impact_description: Optional[str] = None
+    executive_summary: Optional[str] = None
+    postmortem_status: Optional[str] = Field(default=None, max_length=32)
+    postmortem_url: Optional[str] = Field(default=None, max_length=1024)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class IncidentActivityCreateRequest(BaseModel):
     content: str = Field(..., min_length=1, description="Comment or activity details")
     activity_type: str = Field(default="COMMENT", max_length=50, description="COMMENT, NOTE, WORKAROUND")
@@ -142,6 +166,28 @@ class IncidentResponse(BaseModel):
     resolved_at: Optional[datetime] = None
     closed_at: Optional[datetime] = None
     closed_by: Optional[UUID] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class MajorIncidentResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    ticket_id: UUID
+    incident_commander_id: Optional[UUID] = None
+    bridge_url: Optional[str] = None
+    communication_channel: Optional[str] = None
+    declared_at: datetime
+    declared_by_id: UUID
+    postmortem_status: str
+    postmortem_url: Optional[str] = None
+    resolved_at: Optional[datetime] = None
+    closed_at: Optional[datetime] = None
+    executive_summary: Optional[str] = None
+    impacted_business_units: list[str] = Field(default_factory=list)
+    customer_impact_description: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

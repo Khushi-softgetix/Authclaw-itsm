@@ -51,6 +51,7 @@ export function proxy(request: NextRequest) {
     path.startsWith("/twitter-image") ||
     path === "/login" ||
     path === "/itsm/login" ||
+    path === "/itsm/setup" ||
     path === "/signup" ||
     path.startsWith("/trust/shared") ||
     path.startsWith("/trust-center") ||

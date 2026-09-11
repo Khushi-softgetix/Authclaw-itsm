@@ -46,8 +46,15 @@ img{max-width:100%;display:block}
 .btn{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-d);font-weight:500;
   font-size:15px;padding:13px 22px;border-radius:var(--r-sm);border:1px solid transparent;
   cursor:pointer;transition:transform .15s ease, box-shadow .2s ease, background .2s ease, border-color .2s}
-.btn-primary{background:var(--violet);color:#fff;box-shadow:0 8px 20px -8px rgba(109,40,217,.6)}
-.btn-primary:hover{background:var(--violet-500);transform:translateY(-1px)}
+.btn-primary{background:var(--violet);color:#fff!important;box-shadow:0 8px 20px -8px rgba(109,40,217,.6)}
+.btn-primary:hover{background:var(--violet-500);transform:translateY(-1px);color:#fff!important}
+.marketing-site a.btn-primary,
+.marketing-site .btn-primary,
+.marketing-site [class*="bg-[#6D28D9]"],
+.marketing-site [class*="bg-[#6D28D9]"] *,
+.marketing-site [class*="text-white"] {
+  color: #ffffff !important;
+}
 .btn-ghost{background:transparent;color:var(--ink);border-color:var(--line)}
 .btn-ghost:hover{border-color:var(--violet-300);color:var(--violet)}
 .btn-light{background:rgba(255,255,255,.08);color:#fff;border-color:rgba(255,255,255,.22)}

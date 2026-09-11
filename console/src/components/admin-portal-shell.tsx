@@ -6,10 +6,13 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Building,
   ChevronDown,
+  Clock,
   Database,
+  Layers,
   LogOut,
   Menu,
   Server,
+  Settings,
   ShieldCheck,
   Users,
   UsersRound,
@@ -31,6 +34,9 @@ const adminNavigation = [
   { name: "Teams", href: "/itsm/admin-portal/teams", icon: UsersRound },
   { name: "Services", href: "/itsm/admin-portal/services", icon: Server },
   { name: "Configuration Items", href: "/itsm/admin-portal/configuration-items", icon: Database },
+  { name: "Service Catalog", href: "/itsm/admin-portal/service-catalog", icon: Layers },
+  { name: "SLA Configuration", href: "/itsm/admin-portal/sla", icon: Clock },
+  { name: "Settings", href: "/itsm/admin-portal/settings", icon: Settings },
 ];
 
 export default function AdminPortalShell({
@@ -67,6 +73,12 @@ export default function AdminPortalShell({
       ? "Services"
       : pathname.startsWith("/itsm/admin-portal/configuration-items")
       ? "Configuration Items"
+      : pathname.startsWith("/itsm/admin-portal/service-catalog")
+      ? "Service Catalog"
+      : pathname.startsWith("/itsm/admin-portal/sla")
+      ? "SLA Configuration"
+      : pathname.startsWith("/itsm/admin-portal/settings")
+      ? "Settings"
       : "Administration";
 
   const navLinks = (onClick?: () => void) => (

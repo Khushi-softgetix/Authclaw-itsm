@@ -88,9 +88,10 @@ export function ItsmPublicHeader() {
           <Link
             href="/demo"
             className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-[#6D28D9] hover:bg-[#5B21B6] px-4 py-2 rounded-[10px] shadow-[0_4px_12px_-4px_rgba(109,40,217,.5)] transition active:scale-98"
+            style={{ color: "#ffffff" }}
           >
-            Book a Demo
-            <ArrowRight className="w-3.5 h-3.5" />
+            <span style={{ color: "#ffffff" }}>Book a Demo</span>
+            <ArrowRight className="w-3.5 h-3.5 text-white" style={{ color: "#ffffff" }} />
           </Link>
         </div>
 
@@ -133,8 +134,9 @@ export function ItsmPublicHeader() {
               href="/demo"
               onClick={() => setMobileMenuOpen(false)}
               className="w-full text-center py-2 text-xs font-semibold text-white bg-[#6D28D9] rounded-[10px]"
+              style={{ color: "#ffffff" }}
             >
-              Book a Demo
+              <span style={{ color: "#ffffff" }}>Book a Demo</span>
             </Link>
           </div>
         </div>

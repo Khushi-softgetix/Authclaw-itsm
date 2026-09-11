@@ -4,8 +4,11 @@ import React from "react";
 import Link from "next/link";
 import {
   ArrowRight,
+  Clock,
   Database,
+  Layers,
   Server,
+  Settings,
   ShieldCheck,
   Users,
   UsersRound,
@@ -53,6 +56,36 @@ export default function AdminPortalPage() {
       iconBg: "bg-[#FFF7ED]",
       iconColor: "text-[#C2410C]",
     },
+    {
+      title: "Service Catalog",
+      desc: "Manage requestable items, dynamic intake schemas, fulfillment groups, and delivery SLAs.",
+      href: "/itsm/admin-portal/service-catalog",
+      actionText: "Manage Catalog",
+      icon: Layers,
+      badge: "Active",
+      iconBg: "bg-[#EEF2FF]",
+      iconColor: "text-[#4F46E5]",
+    },
+    {
+      title: "SLA Configuration",
+      desc: "Configure response/resolution SLA policies per priority and operational business calendars.",
+      href: "/itsm/admin-portal/sla",
+      actionText: "Manage SLAs",
+      icon: Clock,
+      badge: "Active",
+      iconBg: "bg-[#FEF2F2]",
+      iconColor: "text-[#DC2626]",
+    },
+    {
+      title: "Platform Settings",
+      desc: "Review active tenant architecture, in-app notification infrastructure, and operational policy defaults.",
+      href: "/itsm/admin-portal/settings",
+      actionText: "Manage Settings",
+      icon: Settings,
+      badge: "Active",
+      iconBg: "bg-[#F3F4F6]",
+      iconColor: "text-[#4B5563]",
+    },
   ];
 
   return (
@@ -82,7 +115,7 @@ export default function AdminPortalPage() {
         {adminCards.map((card) => (
           <div
             key={card.title}
-            className="p-6 rounded-[20px] border border-[#E6E9F0] bg-white shadow-[0_1px_2px_rgba(11,31,63,.05)] flex flex-col justify-between hover:border-[#DDD6FE] transition"
+            className="p-6 rounded-[20px] border border-[#E6E9F0] bg-white shadow-[0_1px_2px_rgba(11,31,63,.05)] flex flex-col justify-between hover:border-[#DDD6FE] hover:shadow-[0_8px_24px_-8px_rgba(109,40,217,.12)] transition-all duration-200"
           >
             <div>
               <div className="flex items-start justify-between">
@@ -102,13 +135,19 @@ export default function AdminPortalPage() {
               </div>
             </div>
 
-            <div className="mt-6 pt-3 border-t border-[#F5F7FA]">
+            <div className="mt-6 pt-3.5 border-t border-[#F5F7FA] flex items-center justify-between">
               <Link
                 href={card.href}
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#6D28D9] text-white text-xs font-semibold hover:bg-[#5B21B6] transition"
+                className="group inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[#6D28D9] hover:bg-[#5B21B6] text-white text-xs font-semibold shadow-[0_2px_8px_-2px_rgba(109,40,217,0.35)] hover:shadow-[0_4px_14px_-2px_rgba(109,40,217,0.5)] transition-all duration-150 active:scale-[0.98]"
+                style={{ color: "#ffffff" }}
               >
-                <span>{card.actionText}</span>
-                <ArrowRight className="w-3.5 h-3.5" />
+                <span className="text-white font-semibold text-xs" style={{ color: "#ffffff" }}>
+                  {card.actionText}
+                </span>
+                <ArrowRight
+                  className="w-3.5 h-3.5 text-white transition-transform duration-150 group-hover:translate-x-0.5"
+                  style={{ color: "#ffffff" }}
+                />
               </Link>
             </div>
           </div>

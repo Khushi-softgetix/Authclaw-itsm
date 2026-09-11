@@ -13,6 +13,7 @@
   --paper: #fbfaf9;
   --paper-2: #f5f7fa;
   --white: #ffffff;
+  --color-white: #ffffff;
   --violet: #6d28d9;
   --violet-500: #7c3aed;
   --violet-300: #a78bfa;
@@ -28,6 +29,7 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-white: #ffffff;
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
@@ -97,6 +99,23 @@ h4 {
 .authclaw-console .text-sky-400,
 .authclaw-console .text-blue-400 {
   color: var(--ac-info) !important;
+}
+
+.authclaw-console .text-white,
+.authclaw-console [class~="text-white"] {
+  color: #ffffff !important;
+}
+
+.authclaw-console [class~="bg-[#6D28D9]"],
+.authclaw-console [class~="bg-[#6D28D9]"]:hover,
+.authclaw-console [class~="hover:bg-[#5B21B6]"]:hover {
+  color: #ffffff !important;
+}
+
+.authclaw-console [class~="bg-[#6D28D9]"] span,
+.authclaw-console [class~="bg-[#6D28D9]"] svg,
+.authclaw-console [class~="bg-[#6D28D9]"] * {
+  color: #ffffff !important;
 }
 
 .authclaw-console button,

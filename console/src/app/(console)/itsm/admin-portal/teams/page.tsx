@@ -39,6 +39,9 @@ interface TenantUser {
   id: string;
   name: string;
   email: string;
+  itsm_access?: boolean;
+  itsm_role?: string;
+  status?: string;
 }
 
 export default function AdminTeamsPage() {
@@ -63,6 +66,7 @@ export default function AdminTeamsPage() {
   const [teamMembers, setTeamMembers] = useState<TeamMember[]>([]);
   const [loadingMembers, setLoadingMembers] = useState(false);
   const [selectedAddUserId, setSelectedAddUserId] = useState("");
+  const [userSearchQuery, setUserSearchQuery] = useState("");
   const [memberActionLoading, setMemberActionLoading] = useState(false);
   const [memberError, setMemberError] = useState<string | null>(null);
 
@@ -178,12 +182,21 @@ export default function AdminTeamsPage() {
     setLoadingMembers(true);
     setMemberError(null);
     setSelectedAddUserId("");
+    setUserSearchQuery("");
 
     try {
-      const res = await fetch(`/api/itsm/admin/teams/${team.id}`, { cache: "no-store" });
-      if (!res.ok) throw new Error("Failed to load team members");
-      const data = await res.json();
+      const [teamRes, usersRes] = await Promise.all([
+        fetch(`/api/itsm/admin/teams/${team.id}`, { cache: "no-store" }),
+        fetch("/api/itsm/admin/users", { cache: "no-store" }),
+      ]);
+      if (!teamRes.ok) throw new Error("Failed to load team members");
+      const data = await teamRes.json();
       setTeamMembers(data.members || []);
+
+      if (usersRes.ok) {
+        const usersData = await usersRes.json();
+        setTenantUsers(Array.isArray(usersData) ? usersData : []);
+      }
     } catch (err: unknown) {
       setMemberError(err instanceof Error ? err.message : "Failed to load members");
     } finally {
@@ -191,8 +204,9 @@ export default function AdminTeamsPage() {
     }
   };
 
-  const handleAddMember = async () => {
-    if (!activeTeam || !selectedAddUserId) return;
+  const handleAddMember = async (userIdToUse?: string) => {
+    const targetUserId = userIdToUse || selectedAddUserId;
+    if (!activeTeam || !targetUserId) return;
     setMemberActionLoading(true);
     setMemberError(null);
 
@@ -200,7 +214,7 @@ export default function AdminTeamsPage() {
       const res = await fetch(`/api/itsm/admin/teams/${activeTeam.id}/members`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ user_id: selectedAddUserId }),
+        body: JSON.stringify({ user_id: targetUserId }),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -213,6 +227,7 @@ export default function AdminTeamsPage() {
         prev.map((t) => (t.id === activeTeam.id ? { ...t, member_count: t.member_count + 1 } : t))
       );
       setSelectedAddUserId("");
+      setUserSearchQuery("");
     } catch (err: unknown) {
       setMemberError(err instanceof Error ? err.message : "Failed to add member");
     } finally {
@@ -268,11 +283,27 @@ export default function AdminTeamsPage() {
     );
   }, [teams, searchQuery]);
 
-  // Non-member candidate users for the team
+  // Active users with ITSM access who are not yet members of this team
   const availableUsersToAdd = useMemo(() => {
     const memberUserIds = new Set(teamMembers.map((m) => m.user_id));
-    return tenantUsers.filter((u) => !memberUserIds.has(u.id));
+    return tenantUsers.filter((u) => {
+      const isActive = u.status ? u.status.toLowerCase() === "active" : true;
+      const hasItsmAccess = u.itsm_access === true;
+      const notMember = !memberUserIds.has(u.id);
+      return isActive && hasItsmAccess && notMember;
+    });
   }, [tenantUsers, teamMembers]);
+
+  // Candidate users filtered by employee name or email search query
+  const searchedUsersToAdd = useMemo(() => {
+    if (!userSearchQuery.trim()) return availableUsersToAdd;
+    const q = userSearchQuery.trim().toLowerCase();
+    return availableUsersToAdd.filter(
+      (u) =>
+        (u.name && u.name.toLowerCase().includes(q)) ||
+        (u.email && u.email.toLowerCase().includes(q))
+    );
+  }, [availableUsersToAdd, userSearchQuery]);
 
   return (
     <div className="space-y-6 max-w-7xl">
@@ -562,38 +593,124 @@ export default function AdminTeamsPage() {
                 </div>
               )}
 
-              {/* Add Member Form */}
-              <div className="p-3.5 rounded-xl border border-[#E6E9F0] bg-[#FBFAF9] space-y-2.5">
-                <label className="block text-xs font-semibold text-[#0E1726]">
-                  Add User to Team
-                </label>
-                <div className="flex gap-2">
-                  <select
-                    value={selectedAddUserId}
-                    onChange={(e) => setSelectedAddUserId(e.target.value)}
-                    disabled={memberActionLoading || availableUsersToAdd.length === 0}
-                    className="flex-1 px-3 py-1.5 rounded-lg border border-[#E6E9F0] bg-white text-xs text-[#0E1726] focus:outline-none focus:border-[#6D28D9]"
-                  >
-                    <option value="">
-                      {availableUsersToAdd.length === 0
-                        ? "All tenant users are already members"
-                        : "Select an existing tenant user..."}
-                    </option>
-                    {availableUsersToAdd.map((u) => (
-                      <option key={u.id} value={u.id}>
-                        {u.name} ({u.email})
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    onClick={handleAddMember}
-                    disabled={!selectedAddUserId || memberActionLoading}
-                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#6D28D9] text-white text-xs font-semibold hover:bg-[#5B21B6] disabled:opacity-50"
-                  >
-                    <UserPlus className="w-3.5 h-3.5" />
-                    <span>Add</span>
-                  </button>
+              {/* Add Member Form with Search & Instant Selection */}
+              <div className="p-3.5 rounded-xl border border-[#E6E9F0] bg-[#FBFAF9] space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="block text-xs font-semibold text-[#0E1726]">
+                    Add User to Team
+                  </label>
+                  <span className="text-[11px] text-[#6B7488]">
+                    {availableUsersToAdd.length} active ITSM candidate{availableUsersToAdd.length === 1 ? "" : "s"} available
+                  </span>
                 </div>
+
+                {/* Real-time Search Input */}
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-[#8E97A8] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    id="team-member-search-input"
+                    placeholder="Search by employee name or email (e.g. khushiverma9111)..."
+                    value={userSearchQuery}
+                    onChange={(e) => setUserSearchQuery(e.target.value)}
+                    disabled={memberActionLoading || availableUsersToAdd.length === 0}
+                    className="w-full pl-9 pr-8 py-2 rounded-lg border border-[#E6E9F0] bg-white text-xs text-[#0E1726] placeholder-[#8E97A8] focus:outline-none focus:border-[#6D28D9] focus:ring-1 focus:ring-[#6D28D9] transition"
+                  />
+                  {userSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setUserSearchQuery("")}
+                      className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#8E97A8] hover:text-[#0E1726] p-0.5"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Candidate Selection & Results */}
+                {availableUsersToAdd.length === 0 ? (
+                  <p className="text-[11px] text-[#8E97A8] italic py-1">
+                    All active users with ITSM access in this organization are already members.
+                  </p>
+                ) : searchedUsersToAdd.length === 0 ? (
+                  <div className="py-2 text-center text-[11px] text-[#8E97A8] bg-white rounded-lg border border-[#E6E9F0] p-3">
+                    No active ITSM users match &ldquo;{userSearchQuery}&rdquo;.
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {userSearchQuery.trim() ? (
+                      /* When search query is entered, display rich matching candidate cards */
+                      <div className="max-h-44 overflow-y-auto divide-y divide-[#F0F2F5] border border-[#E6E9F0] rounded-lg bg-white">
+                        {searchedUsersToAdd.map((u) => (
+                          <div
+                            key={u.id}
+                            className="px-3 py-2 flex items-center justify-between hover:bg-[#F9FAFB] transition-colors"
+                          >
+                            <div className="min-w-0 pr-2">
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-xs text-[#0E1726] truncate">
+                                  {u.name}
+                                </span>
+                                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-[#F5F3FF] text-[#6D28D9] border border-[#DDD6FE]">
+                                  {u.itsm_role || "ITSM USER"}
+                                </span>
+                              </div>
+                              <p className="text-[11px] text-[#6B7488] font-mono truncate">
+                                {u.email}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleAddMember(u.id)}
+                              disabled={memberActionLoading}
+                              className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[#6D28D9] text-white text-xs font-semibold hover:bg-[#5B21B6] disabled:opacity-50 transition shadow-xs"
+                            >
+                              {memberActionLoading && selectedAddUserId === u.id ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                              ) : (
+                                <UserPlus className="w-3 h-3" />
+                              )}
+                              <span>Add</span>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      /* When no query is typed, display the dropdown selector and Add button */
+                      <div className="flex gap-2">
+                        <select
+                          id="team-member-select"
+                          value={selectedAddUserId}
+                          onChange={(e) => setSelectedAddUserId(e.target.value)}
+                          disabled={memberActionLoading || searchedUsersToAdd.length === 0}
+                          className="flex-1 px-3 py-1.5 rounded-lg border border-[#E6E9F0] bg-white text-xs text-[#0E1726] focus:outline-none focus:border-[#6D28D9] focus:ring-1 focus:ring-[#6D28D9]"
+                        >
+                          <option value="">
+                            Select an active employee ({searchedUsersToAdd.length} available)...
+                          </option>
+                          {searchedUsersToAdd.map((u) => (
+                            <option key={u.id} value={u.id}>
+                              {u.name} ({u.email}) — [{u.itsm_role || "ITSM"}]
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => handleAddMember()}
+                          disabled={!selectedAddUserId || memberActionLoading}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#6D28D9] text-white text-xs font-semibold hover:bg-[#5B21B6] disabled:opacity-50 transition shadow-xs shrink-0"
+                        >
+                          {memberActionLoading ? (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          ) : (
+                            <UserPlus className="w-3.5 h-3.5" />
+                          )}
+                          <span>Add</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Members List */}

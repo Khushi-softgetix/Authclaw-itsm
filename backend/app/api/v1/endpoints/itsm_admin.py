@@ -290,8 +290,13 @@ def update_user_itsm_access(
         )
         db.add(access_record)
 
+    if payload.has_itsm_access and not target_user.is_active:
+        target_user.is_active = True
+        target_user.updated_at = now
+
     db.commit()
     db.refresh(access_record)
+    db.refresh(target_user)
 
     logger.info(
         "[ITSM_ADMIN_AUDIT] action=user_access_updated tenant_id=%s admin_user_id=%s target_user_id=%s role=%s itsm_access=%s",
@@ -707,8 +712,8 @@ def create_manual_itsm_employee(
         .first()
     )
 
-    if existing_user:
-        # Do NOT overwrite password. Fetch existing ITSM posture.
+    if existing_user and existing_user.is_active and not payload.email_credentials:
+        # Existing active user and credentials email not requested: do not duplicate user, do not reset password
         access_rec = (
             db.query(ITSMUserAccess)
             .filter(ITSMUserAccess.tenant_id == tenant_id, ITSMUserAccess.user_id == existing_user.id)
@@ -723,31 +728,50 @@ def create_manual_itsm_employee(
             has_itsm_access=access_rec.has_itsm_access if access_rec else False,
         )
 
-    # Create new AuthClaw user with hashed password
-    new_user = User(
-        tenant_id=tenant_id,
-        email=email,
-        password_hash=hash_password(payload.password),
-        role="viewer",
-        platform_role="NONE",
-        is_active=True,
-    )
-    db.add(new_user)
-    db.flush()
+    if existing_user:
+        # Reactivate or update credentials for user with the new password
+        target_user = existing_user
+        target_user.is_active = True
+        target_user.password_hash = hash_password(payload.password)
+        target_user.updated_at = now
+    else:
+        # Create new AuthClaw user with hashed password
+        target_user = User(
+            tenant_id=tenant_id,
+            email=email,
+            password_hash=hash_password(payload.password),
+            role="viewer",
+            platform_role="NONE",
+            is_active=True,
+        )
+        db.add(target_user)
+        db.flush()
 
     # Grant ITSM access with selected role, without governance access
-    access_rec = ITSMUserAccess(
-        tenant_id=tenant_id,
-        user_id=new_user.id,
-        itsm_role=role,
-        has_itsm_access=True,
-        has_governance_access=False,
-        created_at=now,
-        updated_at=now,
+    access_rec = (
+        db.query(ITSMUserAccess)
+        .filter(ITSMUserAccess.tenant_id == tenant_id, ITSMUserAccess.user_id == target_user.id)
+        .first()
     )
-    db.add(access_rec)
+    if access_rec:
+        access_rec.itsm_role = role
+        access_rec.has_itsm_access = True
+        access_rec.has_governance_access = False
+        access_rec.updated_at = now
+    else:
+        access_rec = ITSMUserAccess(
+            tenant_id=tenant_id,
+            user_id=target_user.id,
+            itsm_role=role,
+            has_itsm_access=True,
+            has_governance_access=False,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(access_rec)
+
     db.commit()
-    db.refresh(new_user)
+    db.refresh(target_user)
 
     # Optional credentials email
     delivery_method = None
@@ -768,8 +792,40 @@ def create_manual_itsm_employee(
             f"Portal URL: {login_url}\n\n"
             f"Please sign in and change your password.\n"
         )
+        html_body = f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:24px;background-color:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111827;">
+  <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:12px;border:1px solid #e5e7eb;padding:36px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+    <div style="margin-bottom:24px;">
+      <span style="font-size:18px;font-weight:700;color:#6D28D9;letter-spacing:-0.02em;">AuthClaw ITSM</span>
+    </div>
+    <h1 style="font-size:20px;font-weight:700;color:#0e1726;margin:0 0 12px 0;">Your Account Credentials</h1>
+    <p style="font-size:14px;line-height:22px;color:#475069;margin:0 0 20px 0;">
+      Your employee account has been created for <strong>{tenant.name}</strong> on AuthClaw ITSM with the role <strong>{role.replace('_', ' ')}</strong>.
+    </p>
+    <div style="background-color:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:20px;margin-bottom:28px;">
+      <div style="margin-bottom:12px;">
+        <span style="font-size:12px;color:#6b7488;display:block;">Login Email:</span>
+        <strong style="font-size:14px;color:#0e1726;font-family:monospace;">{email}</strong>
+      </div>
+      <div>
+        <span style="font-size:12px;color:#6b7488;display:block;">Temporary Password:</span>
+        <strong style="font-size:14px;color:#0e1726;font-family:monospace;">{payload.password}</strong>
+      </div>
+    </div>
+    <div style="text-align:center;margin-bottom:28px;">
+      <a href="{login_url}" style="display:inline-block;background-color:#6D28D9;color:#ffffff;padding:13px 32px;font-size:14px;font-weight:600;text-decoration:none;border-radius:10px;box-shadow:0 4px 14px rgba(109,40,217,0.35);">Sign In to ITSM Portal &rarr;</a>
+    </div>
+    <p style="font-size:12px;color:#6b7488;line-height:18px;margin:28px 0 0 0;border-top:1px solid #f1f3f7;padding-top:20px;">
+      Portal link: <a href="{login_url}" style="color:#6D28D9;word-break:break-all;">{login_url}</a><br/>
+      Please sign in and change your password upon your first login.
+    </p>
+  </div>
+</body>
+</html>"""
         try:
-            res = send_email(email, email_subject, email_body)
+            res = send_email(email, email_subject, email_body, html_body=html_body)
             delivery_method = res.method
         except Exception as exc:
             logger.warning("Failed to send credentials email to %s: %s", email, exc)
@@ -779,7 +835,7 @@ def create_manual_itsm_employee(
         "[ITSM_ADMIN_AUDIT] action=employee_created_manually tenant_id=%s admin_user_id=%s user_id=%s email=%s role=%s email_credentials=%s",
         tenant_id,
         admin_user_id,
-        new_user.id,
+        target_user.id,
         email,
         role,
         bool(payload.email_credentials),
@@ -788,9 +844,9 @@ def create_manual_itsm_employee(
     return ITSMEmployeeCreateManualResponse(
         status="created",
         message="Employee created successfully.",
-        email=new_user.email,
+        email=target_user.email,
         itsm_role=role,
-        user_id=new_user.id,
+        user_id=target_user.id,
         has_itsm_access=True,
         delivery=delivery_method,
     )

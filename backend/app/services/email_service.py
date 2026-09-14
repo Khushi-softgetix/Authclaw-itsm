@@ -80,7 +80,9 @@ def _send_smtp_message(message: EmailMessage) -> None:
         raise EmailDeliveryError("Could not send email") from exc
 
 
-def send_email(email: str, subject: str, body: str) -> EmailDeliveryResult:
+def send_email(
+    email: str, subject: str, body: str, html_body: str | None = None
+) -> EmailDeliveryResult:
     """Send a non-OTP email through the existing SMTP transport."""
     if not smtp_configured():
         if os.getenv("AUTHCLAW_ENV", "").lower() != "production":
@@ -96,6 +98,8 @@ def send_email(email: str, subject: str, body: str) -> EmailDeliveryResult:
     message["From"] = smtp_from
     message["To"] = email
     message.set_content(body)
+    if html_body:
+        message.add_alternative(html_body, subtype="html")
 
     try:
         _send_smtp_message(message)

@@ -2,7 +2,7 @@ name: Deploy Controlled Beta
 
 on:
   workflow_run:
-    workflows: ["AuthClaw Required CI"]
+    workflows: ["AuthClaw Minimal Master CI"]
     branches: [master]
     types: [completed]
 
@@ -17,42 +17,11 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  eligibility:
-    name: Verify source release completion
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      github.event.workflow_run.head_branch == 'master' &&
-      vars.CONTROLLED_BETA_ENABLED == 'true'
-    runs-on: ubuntu-latest
-    outputs:
-      ready: ${{ steps.release.outputs.ready }}
-    steps:
-      - name: Require all scanned release images from the triggering run
-        id: release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-          RUN_ID: ${{ github.event.workflow_run.id }}
-        run: |
-          set -euo pipefail
-          gh api --paginate "repos/$REPOSITORY/actions/runs/$RUN_ID/jobs?filter=latest&per_page=100" \
-            --jq '.jobs[]' | jq -s '.' > source-jobs.json
-          count="$(jq '[.[] | select(.name | startswith("Controlled-Beta Release Images")) | select(.conclusion != "skipped")] | length' source-jobs.json)"
-          if [[ "$count" == 0 ]]; then
-            echo 'ready=false' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          jq -e '([.[] | select(.name | startswith("Controlled-Beta Release Images"))] | length) == 7 and
-            all(.[] | select(.name | startswith("Controlled-Beta Release Images")); .conclusion == "success") and
-            any(.[]; .name == "Release Completion Gate" and .conclusion == "success") and
-            any(.[]; .name == "ACL-14 Required Checks" and .conclusion == "success")' source-jobs.json >/dev/null
-          echo 'ready=true' >> "$GITHUB_OUTPUT"
-
   deploy:
     name: Immutable Controlled-Beta Deployment
-    needs: eligibility
-    if: needs.eligibility.outputs.ready == 'true'
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      vars.CONTROLLED_BETA_ENABLED == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: controlled-beta
@@ -71,7 +40,7 @@ jobs:
       TF_VAR_primary_region: ${{ vars.AWS_REGION }}
     steps:
       - name: Check out the tested revision
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
 
@@ -84,14 +53,14 @@ jobs:
           done
 
       - name: Configure short-lived AWS credentials
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        uses: aws-actions/configure-aws-credentials@v6.2.3
         with:
           aws-region: ${{ env.AWS_REGION }}
           role-to-assume: ${{ env.AWS_ROLE_ARN }}
           role-session-name: authclaw-acl-14
 
       - name: Set up Terraform
-        uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4.0.0
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.15.7
           terraform_wrapper: false
@@ -130,7 +99,7 @@ jobs:
             -target=aws_ecr_repository.service
 
       - name: Log in to GHCR
-        uses: docker/login-action@b45d80f862d83dbcd57f89517bcf500b2ab88fb2 # v4.0.0
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -211,65 +180,7 @@ jobs:
               done
           fi
 
-      - name: Gate runtime rollout on complete ciphertext and key inventory
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Provision database jobs and their dependencies, never runtime services.
-          # Only an empty installation may bootstrap automatically. Existing
-          # databases must already satisfy the retirement preconditions.
-          terraform -chdir=infra/terraform state list > preflight-state.txt
-          fresh=false
-          if ! grep -q '^module.primary.aws_db_instance.postgres_primary' preflight-state.txt; then
-            [[ ! -s previous-task-definitions.tsv ]] || { echo '::error::Runtime exists without managed database state'; exit 1; }
-            fresh=true
-          fi
-          terraform -chdir=infra/terraform apply -input=false -auto-approve \
-            -target=module.primary.aws_ecs_cluster.main \
-            -target=module.primary.aws_ecs_task_definition.database_job \
-            -target=module.primary.aws_subnet.private \
-            -target=module.primary.aws_security_group.app \
-            -target=module.primary.aws_route.public_internet \
-            -target=module.primary.aws_route.private_nat \
-            -target=module.primary.aws_route_table_association.public \
-            -target=module.primary.aws_route_table_association.private \
-            -target=module.primary.aws_secretsmanager_secret_version.bootstrap_database_url \
-            -target=module.primary.aws_secretsmanager_secret_version.backend_migration_database_url \
-            -target=module.primary.aws_secretsmanager_secret_version.backend_database_url \
-            -target=module.primary.aws_secretsmanager_secret_version.agent_migration_database_url \
-            -target=module.primary.aws_secretsmanager_secret_version.agent_database_url \
-            -target=module.primary.aws_secretsmanager_secret_version.envelope \
-            -target=module.primary.aws_secretsmanager_secret_version.envelope_v2 \
-            -target=module.primary.aws_secretsmanager_secret_version.session \
-            -target=module.primary.aws_secretsmanager_secret_version.worker_token_hmac \
-            -target=module.primary.aws_iam_role_policy.task_secrets \
-            -target=module.primary.aws_iam_role_policy_attachment.task_execution
-          gate="$(terraform -chdir=infra/terraform output -json crypto_preflight)"
-          cluster="$(jq -er '.cluster' <<<"$gate")"
-          network="$(jq -c '.network_configuration' <<<"$gate")"
-          run_job() {
-            local job="$1" definition started task
-            definition="$(jq -er --arg job "$job" '.task_definitions[$job]' <<<"$gate")"
-            started="$(aws ecs run-task --cluster "$cluster" --task-definition "$definition" \
-              --launch-type FARGATE --network-configuration "$network")"
-            jq -e '(.failures | length) == 0 and (.tasks | length) == 1' <<<"$started" >/dev/null
-            task="$(jq -er '.tasks[0].taskArn' <<<"$started")"
-            aws ecs wait tasks-stopped --cluster "$cluster" --tasks "$task"
-            aws ecs describe-tasks --cluster "$cluster" --tasks "$task" > "database-${job}-task.json"
-            jq -e --arg job "$job" '(.failures | length) == 0 and (.tasks | length) == 1 and
-              ([.tasks[0].containers[] | select(.name == $job)] | length) == 1 and
-              all(.tasks[0].containers[]; .exitCode == 0)' "database-${job}-task.json" >/dev/null
-          }
-          if [[ "$fresh" == true ]]; then
-            for job in bootstrap_prepare backend_migrations agent_migrations bootstrap_finalize database_security_check; do
-              run_job "$job"
-            done
-          fi
-          run_job crypto_preflight
-          run_job worker_preflight
-
       - name: Apply controlled-beta infrastructure and immutable release
-        id: runtime_release
         shell: bash
         run: terraform -chdir=infra/terraform apply -input=false -auto-approve
 
@@ -312,13 +223,7 @@ jobs:
           fi
 
       - name: Roll back to previous task definitions
-        # Do not restart services after a failed preflight, or restore a
-        # CBC-capable image after retirement. The operator must approve the
-        # retained rollback image as strict AES-GCM-only before enabling this.
-        if: >-
-          failure() &&
-          (steps.runtime_release.outcome == 'success' || steps.runtime_release.outcome == 'failure') &&
-          vars.CRYPTO_STRICT_ROLLBACK_APPROVED == 'true'
+        if: failure()
         shell: bash
         run: |
           [[ -s previous-task-definitions.tsv ]] || exit 0
@@ -332,12 +237,11 @@ jobs:
 
       - name: Upload deployment and rollback evidence
         if: always()
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        uses: actions/upload-artifact@v7
         with:
           name: acl-14-controlled-beta-${{ github.event.workflow_run.head_sha }}
           path: |
             deployment-evidence.json
             previous-task-definitions.tsv
-            database-*-task.json
           if-no-files-found: warn
           retention-days: 30

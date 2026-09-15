@@ -45,8 +45,8 @@ export default function CreateSLAPolicyPage() {
   const [priority, setPriority] = useState("P1");
   const [serviceId, setServiceId] = useState("");
   const [calendarId, setCalendarId] = useState("");
-  const [responseTargetMinutes, setResponseTargetMinutes] = useState(15);
-  const [resolutionTargetMinutes, setResolutionTargetMinutes] = useState(240);
+  const [responseTargetMinutes, setResponseTargetMinutes] = useState<number | string>(15);
+  const [resolutionTargetMinutes, setResolutionTargetMinutes] = useState<number | string>(240);
   const [isActive, setIsActive] = useState(true);
 
   const [saving, setSaving] = useState(false);
@@ -92,7 +92,9 @@ export default function CreateSLAPolicyPage() {
       setError("Policy name is required.");
       return;
     }
-    if (responseTargetMinutes <= 0 || resolutionTargetMinutes <= 0) {
+    const respMinutes = Number(responseTargetMinutes);
+    const resMinutes = Number(resolutionTargetMinutes);
+    if (!respMinutes || respMinutes <= 0 || !resMinutes || resMinutes <= 0) {
       setError("Target minutes must be greater than 0.");
       return;
     }
@@ -111,8 +113,8 @@ export default function CreateSLAPolicyPage() {
           priority,
           service_id: serviceId || undefined,
           calendar_id: calendarId || undefined,
-          response_target_minutes: Number(responseTargetMinutes),
-          resolution_target_minutes: Number(resolutionTargetMinutes),
+          response_target_minutes: respMinutes,
+          resolution_target_minutes: resMinutes,
           is_active: isActive,
         }),
       });
@@ -313,7 +315,15 @@ export default function CreateSLAPolicyPage() {
                 min={1}
                 required
                 value={responseTargetMinutes}
-                onChange={(e) => setResponseTargetMinutes(Number(e.target.value))}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === "") {
+                    setResponseTargetMinutes("");
+                  } else {
+                    const parsed = parseInt(val, 10);
+                    setResponseTargetMinutes(isNaN(parsed) ? "" : parsed);
+                  }
+                }}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-[#D5D9E2] bg-white text-sm text-[#0F1523] placeholder-[#8C95A8] focus:outline-none focus:ring-2 focus:ring-[#6D28D9]/20 focus:border-[#6D28D9] transition"
               />
               <p className="text-[11px] text-[#6B7488]">
@@ -331,7 +341,15 @@ export default function CreateSLAPolicyPage() {
                 min={1}
                 required
                 value={resolutionTargetMinutes}
-                onChange={(e) => setResolutionTargetMinutes(Number(e.target.value))}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === "") {
+                    setResolutionTargetMinutes("");
+                  } else {
+                    const parsed = parseInt(val, 10);
+                    setResolutionTargetMinutes(isNaN(parsed) ? "" : parsed);
+                  }
+                }}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-[#D5D9E2] bg-white text-sm text-[#0F1523] placeholder-[#8C95A8] focus:outline-none focus:ring-2 focus:ring-[#6D28D9]/20 focus:border-[#6D28D9] transition"
               />
               <p className="text-[11px] text-[#6B7488]">

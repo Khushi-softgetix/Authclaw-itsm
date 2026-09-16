@@ -1,7 +1,7 @@
 """Add ITSM teams and team members schema.
 
-Revision ID: 048
-Revises: 047
+Revision ID: 052
+Revises: 051
 """
 
 from alembic import op
@@ -9,8 +9,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 
-revision = "048"
-down_revision = "047"
+revision = "052"
+down_revision = "051"
 branch_labels = None
 depends_on = None
 

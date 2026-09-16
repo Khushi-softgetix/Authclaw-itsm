@@ -54,17 +54,20 @@ def create_incident(
     t_id = UUID(tenant_id)
     role = _get_itsm_role(db, t_id, actor_id)
 
-    if not payload.urgency or str(payload.urgency).strip().upper() not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Urgency selection is required (High, Medium, or Low).",
-        )
-    payload.urgency = str(payload.urgency).strip().upper()
-
     if role == "REQUESTER":
+        if not payload.urgency or str(payload.urgency).strip().upper() not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Urgency selection is required (High, Medium, or Low).",
+            )
+        payload.urgency = str(payload.urgency).strip().upper()
         payload.assignee_id = None
         payload.assignment_group = None
         payload.is_major_incident = False
+    elif payload.urgency:
+        payload.urgency = str(payload.urgency).strip().upper()
+    else:
+        payload.urgency = "MEDIUM"
 
     res = IncidentService.create_incident(
         db=db,

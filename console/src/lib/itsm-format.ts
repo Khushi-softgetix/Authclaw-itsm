@@ -1,6 +1,10 @@
-export function formatDateTime(iso: string) {
+export function formatDateTime(iso?: string | null) {
+  if (!iso) return "—";
   try {
-    const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/.test(iso) ? iso : `${iso}Z`;
+    const str = String(iso);
+    const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/.test(str) ? str : `${str}Z`;
+    const d = new Date(normalized);
+    if (isNaN(d.getTime())) return str;
     return new Intl.DateTimeFormat("en-US", {
       timeZone: "Asia/Kolkata",
       year: "numeric",
@@ -9,9 +13,9 @@ export function formatDateTime(iso: string) {
       hour: "2-digit",
       minute: "2-digit",
       second: "2-digit",
-    }).format(new Date(normalized));
+    }).format(d);
   } catch {
-    return iso;
+    return String(iso || "—");
   }
 }
 

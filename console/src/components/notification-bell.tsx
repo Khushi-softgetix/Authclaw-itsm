@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Bell, CheckCheck, CircleAlert, CircleCheck, TriangleAlert } from "lucide-react";
 import { formatDateTime } from "@/lib/ui-format";
 
@@ -34,6 +35,8 @@ const severityIcon = {
 };
 
 export default function NotificationBell() {
+  const pathname = usePathname();
+  const isItsm = pathname.startsWith("/itsm");
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -43,12 +46,30 @@ export default function NotificationBell() {
       const response = await fetch("/api/notifications?limit=10", { cache: "no-store" });
       if (!response.ok) return;
       const data = (await response.json()) as NotificationResponse;
-      setItems(data.items || []);
-      setUnreadCount(data.unread_count || 0);
+      let rawItems = data.items || [];
+      if (isItsm) {
+        rawItems = rawItems.filter((item) => {
+          const typeLower = (item.type || "").toLowerCase();
+          const linkLower = (item.link || "").toLowerCase();
+          return !(
+            typeLower.includes("governance") ||
+            typeLower.includes("compliance") ||
+            typeLower.includes("audit") ||
+            typeLower.includes("remediation") ||
+            typeLower.includes("approval") ||
+            typeLower.includes("trust_center") ||
+            linkLower.startsWith("/compliance") ||
+            linkLower.startsWith("/approvals") ||
+            linkLower.startsWith("/audit")
+          );
+        });
+      }
+      setItems(rawItems);
+      setUnreadCount(rawItems.filter((i) => !i.read_at).length);
     } catch {
       // Header polling should never break the console shell.
     }
-  }, []);
+  }, [isItsm]);
 
   useEffect(() => {
     const initial = window.setTimeout(() => void load(), 0);
@@ -71,6 +92,8 @@ export default function NotificationBell() {
     setUnreadCount(0);
     await fetch("/api/notifications/read-all", { method: "POST" }).catch(() => undefined);
   };
+
+  const viewAllPath = isItsm ? "/itsm/notifications" : "/notifications";
 
   return (
     <div className="relative">
@@ -155,7 +178,7 @@ export default function NotificationBell() {
 
         <div className="border-t border-[#E6E9F0] p-2">
           <Link
-            href="/notifications"
+            href={viewAllPath}
             onClick={() => setOpen(false)}
             className="block rounded-lg px-3 py-2 text-center text-xs font-bold text-[#6D28D9] hover:bg-[#F5F7FA]"
           >

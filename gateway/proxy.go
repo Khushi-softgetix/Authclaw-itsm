@@ -177,11 +177,9 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	providerCredential, credentialErr := LoadProviderCredential(r.Context(), tenantID, provider)
 	if credentialErr != nil {
 		log.Printf("Provider credential load failed: %v", credentialErr)
-		queueNotification(tenantID, "", "gateway_api_key_issue", "warning", "Provider credential unavailable", "The saved provider credential could not be decrypted. Verify that backend and gateway use the same envelope key.", "/connect")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		w.Write([]byte(`{"error":"ProviderCredentialUnavailable","message":"Provider credential could not be loaded."}`))
-		EmitAuditEvent(&AuditEvent{
+		queueNotification(r.Context(), tenantID, "", "gateway_api_key_issue", "warning", "Provider credential unavailable", "The saved provider credential could not be decrypted. Verify that backend and gateway use the same envelope key.", "/connect")
+		writeGatewayError(w, http.StatusBadGateway, "ProviderCredentialUnavailable", "Provider credential could not be loaded.")
+		EmitAuditEvent(r.Context(), &AuditEvent{
 			ID: generateID(), RequestID: requestID, Timestamp: time.Now(),
 			TenantID: tenantID, Action: "block", DecisionReason: "Provider credential unavailable",
 			Provider: provider, RequestSize: int(r.ContentLength), ResponseStatus: http.StatusBadGateway, DurationMs: 0,
@@ -189,11 +187,9 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if tenantID != "" && requiresTenantProviderCredential(provider) && (providerCredential == nil || providerCredential.APIKey == "") {
-		queueNotification(tenantID, "", "gateway_api_key_issue", "warning", "Provider credential missing", "Save an active provider API key before sending gateway traffic.", "/connect")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadGateway)
-		w.Write([]byte(`{"error":"ProviderCredentialMissing","message":"Save an active provider API key before sending gateway traffic."}`))
-		EmitAuditEvent(&AuditEvent{
+		queueNotification(r.Context(), tenantID, "", "gateway_api_key_issue", "warning", "Provider credential missing", "Save an active provider API key before sending gateway traffic.", "/connect")
+		writeGatewayError(w, http.StatusBadGateway, "ProviderCredentialMissing", "Save an active provider API key before sending gateway traffic.")
+		EmitAuditEvent(r.Context(), &AuditEvent{
 			ID: generateID(), RequestID: requestID, Timestamp: time.Now(),
 			TenantID: tenantID, Action: "block", DecisionReason: "Provider credential missing",
 			Provider: provider, ResponseStatus: http.StatusBadGateway, DurationMs: 0,
@@ -222,10 +218,8 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err != nil && tenantID != "" && supportsSensitiveDataProtection(provider) {
 		log.Printf("[GATEWAY] request normalization failed request_id=%s provider=%s err=%v", requestID, provider, err)
 		RecordPolicyAction("fail_closed")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":"SensitiveDataInspectionFailed","message":"Request blocked: request body could not be inspected safely."}`))
-		EmitAuditEvent(&AuditEvent{
+		writeGatewayError(w, http.StatusBadRequest, "SensitiveDataInspectionFailed", "Request blocked: request body could not be inspected safely.")
+		EmitAuditEvent(r.Context(), &AuditEvent{
 			ID: generateID(), RequestID: requestID, Timestamp: time.Now(),
 			TenantID: tenantID, Action: "block",
 			DecisionReason: "Request normalization failed before sensitive-data inspection",
@@ -237,10 +231,8 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if routeErr := ValidateProviderRoute(provider, r, targetURLStr, model); routeErr != nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(fmt.Sprintf(`{"error":"ProviderRouteInvalid","message":"%s"}`, routeErr.Error())))
-		EmitAuditEvent(&AuditEvent{
+		writeGatewayError(w, http.StatusBadRequest, "ProviderRouteInvalid", routeErr.Error())
+		EmitAuditEvent(r.Context(), &AuditEvent{
 			ID: generateID(), RequestID: requestID, Timestamp: time.Now(),
 			TenantID: tenantID, Action: "block", DecisionReason: routeErr.Error(),
 			Provider: provider, Model: model, PromptCount: promptCount,
@@ -254,10 +246,8 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	config, policyID, policyLoadErr := LoadPolicyWithCache(r.Context(), tenantID)
 	if policyLoadErr != nil {
 		log.Printf("[POLICY-ERROR] Early policy load failed: %v", policyLoadErr)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(`{"error":"PolicyEvaluationFailed","message":"Request blocked: policy loading or parsing error"}`))
-		EmitAuditEvent(&AuditEvent{
+		writeGatewayError(w, http.StatusForbidden, "PolicyEvaluationFailed", "Request blocked: policy loading or parsing error")
+		EmitAuditEvent(r.Context(), &AuditEvent{
 			ID: generateID(), RequestID: requestID, Timestamp: time.Now(),
 			TenantID: tenantID, PolicyID: policyID, Action: "block",
 			DecisionReason: "Request blocked: policy loading or parsing error",
@@ -276,7 +266,7 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if blockMatchErr != nil {
 			log.Printf("Custom block rule evaluation failed: %v", blockMatchErr)
 			http.Error(w, "Request blocked: custom policy evaluation failed", http.StatusForbidden)
-			EmitAuditEvent(&AuditEvent{
+			EmitAuditEvent(r.Context(), &AuditEvent{
 				ID: generateID(), RequestID: requestID, Timestamp: time.Now(),
 				TenantID: tenantID, PolicyID: policyID, Action: "block",
 				DecisionReason: "Custom block policy evaluation failed", Provider: provider, Model: model,
@@ -288,11 +278,9 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if blockMatch != nil {
 			reason := PolicyRuleDecisionReason(blockMatch, "block")
 			RecordPolicyAction("block")
-			queueNotification(tenantID, "", "policy_violation_block", "critical", "Policy blocked request", reason, "/audit")
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			w.Write([]byte(fmt.Sprintf(`{"error":"PolicyBlocked","message":"%s"}`, reason)))
-			EmitAuditEventAsync(&AuditEvent{
+			queueNotification(r.Context(), tenantID, "", "policy_violation_block", "critical", "Policy blocked request", reason, "/audit")
+			writeGatewayError(w, http.StatusForbidden, "PolicyBlocked", reason)
+			EmitAuditEventAsync(r.Context(), &AuditEvent{
 				ID: generateID(), RequestID: requestID, Timestamp: time.Now(),
 				TenantID: tenantID, PolicyID: policyID, Action: "block",
 				DecisionReason: reason, Provider: provider, Model: model,
@@ -315,7 +303,7 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Custom warning rule evaluation failed: %v", warningMatchErr)
 			RecordPolicyAction("fail_closed")
 			http.Error(w, "Request blocked: warning policy evaluation failed", http.StatusForbidden)
-			EmitAuditEvent(&AuditEvent{
+			EmitAuditEvent(r.Context(), &AuditEvent{
 				ID: generateID(), RequestID: requestID, Timestamp: time.Now(),
 				TenantID: tenantID, PolicyID: policyID, Action: "block",
 				DecisionReason: "Warning policy evaluation failed", Provider: provider, Model: model,
@@ -332,8 +320,8 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			finalAllowReason = "Allowed with policy warning and redaction"
 			w.Header().Set("X-AuthClaw-Policy-Action", "warn")
 			w.Header().Set("X-AuthClaw-Policy-Warning", "true")
-			queueNotification(tenantID, "", "policy_violation_warn", "warning", "Policy warning applied", reason, "/audit")
-			EmitAuditEventAsync(&AuditEvent{
+			queueNotification(r.Context(), tenantID, "", "policy_violation_warn", "warning", "Policy warning applied", reason, "/audit")
+			EmitAuditEventAsync(r.Context(), &AuditEvent{
 				ID: generateID(), RequestID: requestID, Timestamp: time.Now(),
 				TenantID: tenantID, PolicyID: policyID, Action: "warn",
 				DecisionReason: reason, Provider: provider, Model: model,
@@ -349,7 +337,7 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if approvalMatchErr != nil {
 			log.Printf("HITL rule evaluation failed: %v", approvalMatchErr)
 			http.Error(w, "Request blocked: approval policy evaluation failed", http.StatusForbidden)
-			EmitAuditEvent(&AuditEvent{
+			EmitAuditEvent(r.Context(), &AuditEvent{
 				ID: generateID(), RequestID: requestID, Timestamp: time.Now(),
 				TenantID: tenantID, PolicyID: policyID, Action: "block",
 				DecisionReason: "HITL policy evaluation failed", Provider: provider, Model: model,
@@ -365,7 +353,7 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if approvalErr != nil {
 				log.Printf("Failed to create gateway approval: %v", approvalErr)
 				http.Error(w, "Request blocked: failed to create human approval", http.StatusForbidden)
-				EmitAuditEvent(&AuditEvent{
+				EmitAuditEvent(r.Context(), &AuditEvent{
 					ID: generateID(), RequestID: requestID, Timestamp: time.Now(),
 					TenantID: tenantID, PolicyID: policyID, Action: "block",
 					DecisionReason: "Failed to create HITL approval", Provider: provider, Model: model,
@@ -380,7 +368,7 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if waitErr != nil {
 				log.Printf("Gateway approval wait failed: %v", waitErr)
 				http.Error(w, "Request blocked: human approval wait failed", http.StatusForbidden)
-				EmitAuditEvent(&AuditEvent{
+				EmitAuditEvent(r.Context(), &AuditEvent{
 					ID: generateID(), RequestID: requestID, Timestamp: time.Now(),
 					TenantID: tenantID, PolicyID: policyID, Action: "block",
 					DecisionReason: "HITL approval wait failed", Provider: provider, Model: model,
@@ -390,10 +378,12 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if status != "APPROVED" {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusForbidden)
-				w.Write([]byte(fmt.Sprintf(`{"error":"ApprovalRequired","message":"Request blocked: HITL approval status is %s","approval_id":"%s"}`, status, approvalID)))
-				EmitAuditEvent(&AuditEvent{
+				writeJSON(w, http.StatusForbidden, gatewayErrorResponse{
+					Error:      "ApprovalRequired",
+					Message:    fmt.Sprintf("Request blocked: HITL approval status is %s", status),
+					ApprovalID: approvalID,
+				})
+				EmitAuditEvent(r.Context(), &AuditEvent{
 					ID: generateID(), RequestID: requestID, Timestamp: time.Now(),
 					TenantID: tenantID, PolicyID: policyID, Action: "block",
 					DecisionReason: fmt.Sprintf("HITL approval %s", status), Provider: provider, Model: model,
@@ -402,7 +392,7 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				})
 				return
 			}
-			EmitAuditEvent(&AuditEvent{
+			EmitAuditEvent(r.Context(), &AuditEvent{
 				ID: generateID(), RequestID: requestID, Timestamp: time.Now(),
 				TenantID: tenantID, PolicyID: policyID, Action: "approval_allow",
 				DecisionReason: "HITL approved: " + PolicyRuleDecisionReason(approvalMatch, "require_approval"),
@@ -434,7 +424,7 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					} else if !strings.Contains(strings.ToLower(finalAllowReason), "redact") {
 						finalAllowReason += " + redacted"
 					}
-					EmitAuditEventAsync(&AuditEvent{
+					EmitAuditEventAsync(r.Context(), &AuditEvent{
 						ID:                 generateID(),
 						RequestID:          requestID,
 						Timestamp:          time.Now(),
@@ -456,7 +446,7 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[REDACTION] status=rebuild_failed request_id=%s provider=%s err=%v", requestID, provider, rebuildErr)
 					RecordPolicyAction("fail_closed")
 					http.Error(w, "Request blocked: sanitized request could not be prepared", http.StatusForbidden)
-					EmitAuditEvent(&AuditEvent{
+					EmitAuditEvent(r.Context(), &AuditEvent{
 						ID: generateID(), RequestID: requestID, Timestamp: time.Now(),
 						TenantID: tenantID, PolicyID: policyID, Action: "block",
 						DecisionReason: "Sanitized request rebuild failed", Provider: provider, Model: model,
@@ -471,7 +461,7 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				log.Printf("[REDACTION] status=error duration_ms=%d request_id=%s provider=%s prompt_count=%d err=%v", redactDurationMs, requestID, provider, len(normalized.Prompts), redactErr)
 				RecordPolicyAction("fail_closed")
 				http.Error(w, "Request blocked: sensitive-data redaction failed", http.StatusForbidden)
-				EmitAuditEvent(&AuditEvent{
+				EmitAuditEvent(r.Context(), &AuditEvent{
 					ID: generateID(), RequestID: requestID, Timestamp: time.Now(),
 					TenantID: tenantID, PolicyID: policyID, Action: "block",
 					DecisionReason: "Sensitive-data redaction failed before provider egress",
@@ -504,10 +494,8 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if !allow {
 		RecordPolicyAction("block")
-		queueNotification(tenantID, "", "policy_violation_block", "critical", "Policy blocked request", reason, "/audit")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusForbidden)
-		w.Write([]byte(fmt.Sprintf(`{"error": "Forbidden", "message": "%s"}`, reason)))
+		queueNotification(r.Context(), tenantID, "", "policy_violation_block", "critical", "Policy blocked request", reason, "/audit")
+		writeGatewayError(w, http.StatusForbidden, "Forbidden", reason)
 
 		// Emit Block Audit Event
 		event := &AuditEvent{
@@ -525,17 +513,15 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			ResponseStatus: http.StatusForbidden,
 			DurationMs:     0,
 		}
-		EmitAuditEvent(event)
+		EmitAuditEvent(r.Context(), event)
 		return
 	}
 	// Runs AFTER OPA (which can also block on model whitelist).
 	// Checked here to prevent any AWS request when daily cap is exceeded.
 	if provider == ProviderBedrock {
 		if limitErr := CheckBedrockUsageLimits(r.Context(), tenantID); limitErr != nil {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusTooManyRequests)
-			w.Write([]byte(fmt.Sprintf(`{"error": "BedrockLimitExceeded", "message": "%s"}`, limitErr.Error())))
-			EmitAuditEvent(&AuditEvent{
+			writeGatewayError(w, http.StatusTooManyRequests, "BedrockLimitExceeded", limitErr.Error())
+			EmitAuditEvent(r.Context(), &AuditEvent{
 				ID: generateID(), RequestID: requestID, Timestamp: time.Now(),
 				TenantID: tenantID, PolicyID: policyID, Action: "block",
 				DecisionReason: limitErr.Error(), Provider: provider, Model: model,
@@ -557,9 +543,11 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxy.Transport = providerProxyTransport
 	proxy.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, proxyErr error) {
 		log.Printf("[PROXY] status=bad_gateway request_id=%s provider=%s target=%s err=%v", requestID, provider, target.String(), proxyErr)
-		rw.Header().Set("Content-Type", "application/json")
-		rw.WriteHeader(http.StatusBadGateway)
-		rw.Write([]byte(fmt.Sprintf(`{"error":"ProviderProxyError","message":"upstream request failed","provider":"%s"}`, provider)))
+		writeJSON(rw, http.StatusBadGateway, gatewayErrorResponse{
+			Error:    "ProviderProxyError",
+			Message:  "upstream request failed",
+			Provider: provider,
+		})
 	}
 
 	// Customize director to rewrite target host and request URL
@@ -606,8 +594,21 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// Outbound Completion Reversal
 	proxy.ModifyResponse = func(resp *http.Response) error {
-		if resp.StatusCode != http.StatusOK {
-			return nil
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+			return protectProviderErrorResponse(
+				resp,
+				int64(envBoundedInt("GATEWAY_RESPONSE_INSPECTION_MAX_BYTES", defaultProviderErrorInspectionBytes, 1024, 4*1024*1024)),
+				func(body []byte) ([]byte, error) {
+					if tenantID == "" {
+						return nil, fmt.Errorf("tenant context is unavailable")
+					}
+					protected, _, err := redactOutboundText(
+						r.Context(), tenantID, string(body), customRules,
+						GetRedactionRuntimeConfig(r.Context(), tenantID),
+					)
+					return []byte(protected), err
+				},
+			)
 		}
 
 		if len(tokenMap) == 0 && tenantID == "" {
@@ -670,7 +671,7 @@ func (p *ProxyServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		ResponseStatus: wrappedWriter.status,
 		DurationMs:     duration,
 	}
-	EmitAuditEventAsync(event)
+	EmitAuditEventAsync(r.Context(), event)
 	if provider == ProviderBedrock && wrappedWriter.status == http.StatusOK {
 		// Estimate tokens from prompt count (Bedrock response body already consumed)
 		// 4 chars ≈ 1 token — rough estimate for cost tracking

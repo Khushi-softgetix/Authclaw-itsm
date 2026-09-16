@@ -236,12 +236,14 @@ def test_client_cannot_supply_notice_version(client):
 def test_status_and_retention_routes_require_authentication(client):
     test_client, _ = client
 
+    list_response = test_client.get("/api/public/v1/access-requests")
     transition = test_client.patch(
         "/api/public/v1/access-requests/AR-TEST/status",
         params={"new_status": "APPROVED"},
     )
     retention = test_client.post("/api/public/v1/access-requests/retention/purge")
 
+    assert list_response.status_code == 401
     assert transition.status_code == 401
     assert retention.status_code == 401
 
@@ -272,12 +274,9 @@ def test_rapid_duplicate_submissions_use_existing_email_limiter(client, monkeypa
     class FakeRedis:
         counts = {}
 
-        def incr(self, key):
+        def eval(self, _script, _number_of_keys, key, _window_ms):
             self.counts[key] = self.counts.get(key, 0) + 1
-            return self.counts[key]
-
-        def expire(self, key, seconds):
-            return True
+            return [self.counts[key], 60_000]
 
     monkeypatch.setattr(onboarding, "_get_redis", lambda: FakeRedis())
     monkeypatch.setattr(
@@ -335,7 +334,7 @@ def test_redis_unavailable_fails_closed_without_pii(client, monkeypatch, caplog)
     response = test_client.post("/api/public/v1/access-requests", json=VALID_REQUEST)
 
     assert response.status_code == 503
-    assert response.json() == {"detail": "Unable to process request"}
+    assert response.json() == {"detail": "Internal server error"}
     assert db.added == []
     assert db.rollbacks == 1
     assert "redis host secret" not in caplog.text
@@ -357,7 +356,7 @@ def test_persistence_failure_is_generic_and_rolls_back(client, caplog):
     response = test_client.post("/api/public/v1/access-requests", json=VALID_REQUEST)
 
     assert response.status_code == 503
-    assert response.json() == {"detail": "Unable to process request"}
+    assert response.json() == {"detail": "Internal server error"}
     assert db.rollbacks == 1
     assert "ADA@EXAMPLE.COM" not in caplog.text
     assert "Analytical Engines" not in caplog.text

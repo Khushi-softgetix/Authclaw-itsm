@@ -9,8 +9,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 
-revision = "047"
-down_revision = "046"
+revision = "051"
+down_revision = "050"
 branch_labels = None
 depends_on = None
 
@@ -35,6 +35,7 @@ def upgrade() -> None:
 
     # Enforce RLS and grants
     op.execute(f"ALTER TABLE public.{_TABLE_NAME} ENABLE ROW LEVEL SECURITY;")
+    op.execute(f"ALTER TABLE public.{_TABLE_NAME} FORCE ROW LEVEL SECURITY;")
     op.execute(
         f"""
         CREATE POLICY tenant_isolation ON public.{_TABLE_NAME} FOR ALL

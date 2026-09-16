@@ -212,6 +212,8 @@ services:
       ENVELOPE_KEY: ${ENVELOPE_KEY:-YXV0aGNsYXctbG9jYWwtZmVybmV0LWtleS1jaGFuZ2U=}
       API_KEY_HASH_SECRET: ${API_KEY_HASH_SECRET:-authclaw-full-local-api-key-hash-secret}
       AUTHCLAW_LITE_DEMO_PASSWORD: ${AUTHCLAW_LITE_DEMO_PASSWORD:-AuthClawDemo!234}
+      AUTHCLAW_PLATFORM_ADMIN_EMAIL: ${AUTHCLAW_PLATFORM_ADMIN_EMAIL:-developer@authclaw.local}
+      AUTHCLAW_PLATFORM_ADMIN_PASSWORD: ${AUTHCLAW_PLATFORM_ADMIN_PASSWORD:-AuthClawDeveloper!234}
     command: ["python", "scripts/seed_authclaw_lite.py"]
     restart: "no"
 
@@ -257,7 +259,6 @@ services:
       APP_DATABASE_URL: postgresql+psycopg://${POSTGRES_APP_USER:-authclaw_app}:${POSTGRES_APP_PASSWORD:-authclaw_app}@postgres:5432/${POSTGRES_DB:-authclaw}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_APP_USER:-authclaw_app}:${POSTGRES_APP_PASSWORD:-authclaw_app}@postgres:5432/${POSTGRES_DB:-authclaw}
       AUTHCLAW_RUNTIME_DB_ROLE: ${POSTGRES_APP_USER:-authclaw_app}
-      AUTHCLAW_EXPECTED_DB_REVISION: ${AUTHCLAW_EXPECTED_DB_REVISION:-046}
       REDIS_URL: redis://redis:6379
       OPA_URL: http://opa:8181
       PRESIDIO_URL: http://presidio:3000
@@ -271,6 +272,11 @@ services:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-authclaw}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-authclaw}
       API_DEBUG: ${API_DEBUG:-false}
+      OIDC_BFF_EXCHANGE_SECRET: ${OIDC_BFF_EXCHANGE_SECRET:-}
+      WORKER_TOKEN_HMAC_KEY_V1: ${WORKER_TOKEN_HMAC_KEY_V1:-}
+      WORKER_TOKEN_HMAC_ACTIVE_VERSION: ${WORKER_TOKEN_HMAC_ACTIVE_VERSION:-v1}
+      WORKER_TOKEN_ISSUANCE_PAUSED: ${WORKER_TOKEN_ISSUANCE_PAUSED:-true}
+      WORKER_CLEANUP_ENABLED: ${WORKER_CLEANUP_ENABLED:-true}
       AWS_ENABLED: ${AWS_ENABLED:-false}
       BEDROCK_ENABLED: ${BEDROCK_ENABLED:-false}
       AWS_SECRETS_MANAGER_ENABLED: ${AWS_SECRETS_MANAGER_ENABLED:-false}
@@ -320,7 +326,7 @@ services:
       GATEWAY_ESTIMATED_COST_PER_1K_REQUESTS_USD: ${GATEWAY_ESTIMATED_COST_PER_1K_REQUESTS_USD:-1}
     ports:
       - "${BACKEND_PORT:-8000}:8000"
-    command: ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["python", "-m", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2).read()\""]
       interval: 10s
@@ -464,8 +470,9 @@ services:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER:-authclaw}
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-authclaw}
       AUDIT_CONSUMER_METRICS_PORT: "9108"
+      AUDIT_CONSUMER_METRICS_HOST: "0.0.0.0"
     ports:
-      - "${AUDIT_CONSUMER_METRICS_PORT:-9108}:9108"
+      - "127.0.0.1:${AUDIT_CONSUMER_METRICS_PORT:-9108}:9108"
     restart: on-failure
 
   console:
@@ -500,6 +507,8 @@ services:
       NEXT_PUBLIC_AUTHCLAW_DEMO_MODE: "false"
       NEXT_PUBLIC_ENABLE_EXPERIMENTAL_SURFACES: ${NEXT_PUBLIC_ENABLE_EXPERIMENTAL_SURFACES:-false}
       AUTHCLAW_COOKIE_SECURE: ${AUTHCLAW_COOKIE_SECURE:-true}
+      OIDC_BFF_EXCHANGE_SECRET: ${OIDC_BFF_EXCHANGE_SECRET:-}
+      AUTHCLAW_OIDC_LOGIN_PAUSED: ${AUTHCLAW_OIDC_LOGIN_PAUSED:-true}
       SESSION_SECRET: ${SESSION_SECRET:-authclaw-full-local-session-secret}
       SESSION_SECRET_V1: ${SESSION_SECRET_V1:-authclaw-full-local-session-secret}
       SESSION_SECRET_V2: ${SESSION_SECRET_V2:-authclaw-full-local-session-secret-v2}

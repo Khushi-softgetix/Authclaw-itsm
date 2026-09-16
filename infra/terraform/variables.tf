@@ -80,6 +80,22 @@ variable "container_images" {
   })
 }
 
+variable "service_cpu_architectures" {
+  description = "Per-service ECS CPU architecture overrides; unspecified services remain X86_64."
+  type        = map(string)
+  default     = {}
+
+  validation {
+    condition     = length(setsubtract(keys(var.service_cpu_architectures), ["agent", "backend", "gateway", "console", "audit_consumer"])) == 0
+    error_message = "service_cpu_architectures supports only agent, backend, gateway, console, and audit_consumer."
+  }
+
+  validation {
+    condition     = alltrue([for architecture in values(var.service_cpu_architectures) : contains(["ARM64", "X86_64"], architecture)])
+    error_message = "service_cpu_architectures values must be ARM64 or X86_64."
+  }
+}
+
 variable "require_immutable_images" {
   description = "Require every runtime image to use an immutable sha256 digest. Enable for controlled-beta deployments."
   type        = bool
@@ -97,6 +113,11 @@ variable "authclaw_env" {
   description = "Runtime AUTHCLAW_ENV value. Use production only after SMTP and HTTPS inputs are configured."
   type        = string
   default     = "staging"
+
+  validation {
+    condition     = contains(["ci", "shared-test", "staging", "stage", "production", "prod"], var.authclaw_env)
+    error_message = "authclaw_env must be an explicit shared-test, staging, or production environment for Terraform deployments."
+  }
 }
 
 variable "secret_key_version" {
@@ -362,7 +383,7 @@ variable "clickhouse_user" {
 }
 
 variable "clickhouse_password" {
-  description = "Optional ClickHouse password. Prefer passing via a secured tfvars source."
+  description = "ClickHouse account password, required when the shared audit consumer is enabled. Pass via a secured tfvars source."
   type        = string
   default     = ""
   sensitive   = true

@@ -10,10 +10,11 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.db.dependencies import get_db
 from app.api.v1.endpoints.onboarding import (
     OTP_MAX_ATTEMPTS,
     OTP_TTL_MINUTES,
@@ -21,18 +22,20 @@ from app.api.v1.endpoints.onboarding import (
     _deliver_otp,
     _enforce_onboarding_rate_limit,
     _generate_otp,
+    _get_redis,
     _next_resend_at,
     _otp_hash,
     _rate_limit_hash,
     _scopes_for_role,
 )
 from app.core.passwords import hash_password, validate_password, verify_password
+from app.core.bff_client_ip import authenticate_bff_client_ip
 from app.core.auth import get_tenant_db, hash_key as _api_key_hash, require_roles, require_scopes
 from app.db.models import APIKey, OnboardingEmailOTP, Tenant, TenantOIDCConfig, User, ITSMUserAccess
 from app.services.email_service import EmailDeliveryError
 
 from app.core.oidc import oidc_config
-from app.services import event_backbone, oidc_sso
+from app.services import event_backbone, oidc_sso, oidc_transactions
 
 router = APIRouter()
 logger = logging.getLogger("api.auth")
@@ -85,7 +88,7 @@ def _oidc_authentication_reason(exc: Exception) -> str:
 
 
 class PasswordLoginRequest(BaseModel):
-    email: EmailStr
+    email: str
     password: str
     tenant_name: str | None = None
 
@@ -97,9 +100,9 @@ class ProductAccessResponse(BaseModel):
 
 class PasswordLoginResponse(BaseModel):
     user_id: UUID
-    tenant_id: UUID
-    tenant_name: str
-    email: EmailStr
+    tenant_id: UUID | None = None
+    tenant_name: str | None = None
+    email: str
     role: str
     scopes: list[str]
     session_token: str
@@ -126,9 +129,10 @@ def _enforce_password_login_rate_limit(email: str, request: Request) -> None:
 
 class CurrentUserResponse(BaseModel):
     id: UUID
-    tenant_id: UUID
-    email: EmailStr
+    tenant_id: UUID | None = None
+    email: str
     role: str
+    platform_role: str
     roles: list[str]
     scopes: list[str]
     mfa_enabled: bool
@@ -176,6 +180,18 @@ class OIDCCallbackRequest(BaseModel):
     redirect_uri: str
 
 
+class OIDCTransactionStart(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    transaction_id: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    tenant_name: str | None = Field(default=None, max_length=255)
+
+
+class OIDCTransactionExchange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    transaction_id: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$")
+    code: str = Field(min_length=1, max_length=8192)
+
+
 class OIDCAdminConfigRequest(BaseModel):
     enabled: bool = False
     issuer: str
@@ -217,6 +233,18 @@ def _active_users_for_email(db, email: str, tenant_name: str | None = None):
     ).all()
 
 
+def _active_platform_admin_for_email(db, email: str):
+    return db.execute(
+        text(
+            """
+            SELECT platform_admin_id, email, password_hash, role, is_active
+              FROM authn.lookup_platform_password_identity(:email)
+            """
+        ),
+        {"email": email},
+    ).first()
+
+
 def _lookup_user_product_access(db, tenant_id: UUID, user_id: UUID) -> tuple[bool, bool, str | None]:
     try:
         row = db.execute(
@@ -252,20 +280,25 @@ def get_oidc_config(tenant_name: str | None = None):
     }
 
 
-@router.get("/oidc/start", response_model=OIDCStartResponse)
+@router.post("/oidc/start", response_model=OIDCStartResponse, dependencies=[Depends(oidc_transactions.authenticate_bff)])
 def start_oidc_login(
-    state: str = Query(..., min_length=24),
-    nonce: str = Query(..., min_length=24),
-    tenant_name: str | None = None,
+    payload: OIDCTransactionStart,
 ):
     db = OwnerSessionLocal()
     try:
-        _, config = oidc_sso.public_config(db, tenant_name)
+        tenant, config = oidc_sso.public_config(db, payload.tenant_name)
         if not config:
             return OIDCStartResponse(enabled=False)
+        if not tenant:
+            raise HTTPException(400, "Tenant name is required for SSO")
+        nonce = secrets.token_urlsafe(32)
+        record = {**oidc_transactions.binding(tenant, config),
+                  "tenant_name": tenant.name, "nonce": nonce,
+                  "created_at": datetime.now(timezone.utc).timestamp()}
+        oidc_transactions.register(_get_redis(), payload.transaction_id, record)
         return OIDCStartResponse(
             enabled=True,
-            authorization_url=oidc_sso.authorization_url(config, state, nonce),
+            authorization_url=oidc_sso.authorization_url(config, payload.transaction_id, nonce),
             issuer=config["issuer"],
             client_id=config["client_id"],
             redirect_uri=config["redirect_uri"],
@@ -281,25 +314,32 @@ def _oidc_callback_config(db, tenant_name: str | None):
     if public.get("source") == "tenant":
         if not tenant:
             raise HTTPException(status_code=400, detail="Tenant name is required for SSO")
-        config = db.query(TenantOIDCConfig).filter(
-            TenantOIDCConfig.tenant_id == tenant.id,
-            TenantOIDCConfig.status == "active",
-        ).first()
-        if not config:
-            raise HTTPException(status_code=404, detail="OIDC SSO is not active for this tenant")
-        return tenant, config
+        # The authentication lookup already restricts this to active tenant
+        # configurations. Before identity establishment, tenant RLS tables
+        # cannot be queried directly by the unauthenticated runtime session.
+        return tenant, public
     if not tenant:
         raise HTTPException(status_code=400, detail="Tenant name is required for environment OIDC mapping")
     return tenant, public
 
 
-@router.post("/oidc/callback", response_model=PasswordLoginResponse)
-def oidc_callback(payload: OIDCCallbackRequest, request: Request):
+@router.post("/oidc/callback", response_model=PasswordLoginResponse, dependencies=[Depends(oidc_transactions.authenticate_bff)])
+def exchange_oidc_transaction(payload: OIDCTransactionExchange, request: Request):
+    record = oidc_transactions.consume(_get_redis(), payload.transaction_id)
+    return oidc_callback(OIDCCallbackRequest(
+        code=payload.code, state=payload.transaction_id, nonce=record["nonce"],
+        tenant_name=record["tenant_name"], redirect_uri=record["redirect_uri"],
+    ), request, transaction=record)
+
+
+def oidc_callback(payload: OIDCCallbackRequest, request: Request, transaction: dict | None = None):
     db = OwnerSessionLocal()
     tenant = None
     request_id = request.headers.get("x-request-id", "")
     try:
         tenant, config = _oidc_callback_config(db, payload.tenant_name)
+        if transaction is not None:
+            oidc_transactions.validate_binding(transaction, oidc_transactions.binding(tenant, config))
         configured_redirect_uri = config["redirect_uri"] if isinstance(config, dict) else config.redirect_uri
         if payload.redirect_uri != configured_redirect_uri:
             _emit_oidc_audit(
@@ -433,12 +473,47 @@ def test_oidc_admin_config(request: Request, db: Session = Depends(get_tenant_db
     return oidc_sso.test_config(db, config)
 
 
-@router.post("/login", response_model=PasswordLoginResponse)
+@router.post("/login", response_model=PasswordLoginResponse, dependencies=[Depends(authenticate_bff_client_ip)])
 def password_login(payload: PasswordLoginRequest, request: Request):
     email = payload.email.strip().lower()
     _enforce_password_login_rate_limit(email, request)
     db = OwnerSessionLocal()
     try:
+        if payload.tenant_name is None:
+            platform_identity = _active_platform_admin_for_email(db, email)
+            if platform_identity and verify_password(payload.password, platform_identity.password_hash):
+                session_token = _generate_session_token()
+                now = datetime.now(timezone.utc)
+                db.execute(
+                    text(
+                        """
+                        SELECT authn.create_platform_session(
+                            :token_hash, :platform_admin_id, 'password',
+                            :expires_at, CAST(:metadata AS jsonb)
+                        )
+                        """
+                    ),
+                    {
+                        "token_hash": _api_key_hash(session_token),
+                        "platform_admin_id": str(platform_identity.platform_admin_id),
+                        "expires_at": now + timedelta(hours=24),
+                        "metadata": json.dumps({
+                            "ip": request.client.host if request.client else "",
+                            "user_agent": request.headers.get("user-agent", "")[:512],
+                        }),
+                    },
+                )
+                db.commit()
+                return PasswordLoginResponse(
+                    user_id=platform_identity.platform_admin_id,
+                    tenant_id=None,
+                    tenant_name=None,
+                    email=platform_identity.email,
+                    role="platform_admin",
+                    scopes=["platform.admin"],
+                    session_token=session_token,
+                )
+
         users = _active_users_for_email(db, email, payload.tenant_name)
 
         matches = [
@@ -520,7 +595,7 @@ def password_login(payload: PasswordLoginRequest, request: Request):
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
-def logout(request: Request, db: Session = Depends(get_tenant_db)):
+def logout(request: Request, db: Session = Depends(get_db)):
     """Revoke the current opaque console session."""
     if request.state.credential_kind == "session":
         db.execute(
@@ -528,12 +603,44 @@ def logout(request: Request, db: Session = Depends(get_tenant_db)):
             {"credential_hash": request.state.credential_hash},
         )
         db.commit()
+    if request.state.credential_kind == "platform_session":
+        db.execute(
+            text("SELECT authn.revoke_platform_session(:credential_hash)"),
+            {"credential_hash": request.state.credential_hash},
+        )
+        db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get("/me", response_model=CurrentUserResponse)
-def current_user(request: Request, db: Session = Depends(get_tenant_db)):
+def current_user(request: Request, db: Session = Depends(get_db)):
     """Return the API-key principal in the shape required by the operator console."""
+    if request.state.credential_kind == "platform_session":
+        platform_admin = db.execute(
+            text(
+                """
+                SELECT id, email, role, platform_role, scopes, is_active
+                  FROM authn.platform_admin_profile(:credential_hash)
+                """
+            ),
+            {"credential_hash": request.state.credential_hash},
+        ).first()
+        if not platform_admin:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+        return CurrentUserResponse(
+            id=platform_admin.id,
+            tenant_id=None,
+            email=platform_admin.email,
+            role="platform_admin",
+            platform_role=platform_admin.platform_role,
+            roles=["platform_admin"],
+            scopes=list(platform_admin.scopes or ["platform.admin"]),
+            mfa_enabled=False,
+            is_active=bool(platform_admin.is_active),
+        )
+
+    if request.state.tenant_id is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant-scoped credential required")
     user = (
         db.query(User)
         .filter(
@@ -553,6 +660,7 @@ def current_user(request: Request, db: Session = Depends(get_tenant_db)):
         tenant_id=user.tenant_id,
         email=user.email,
         role=role,
+        platform_role=str(user.platform_role),
         roles=[role],
         scopes=list(request.state.scopes),
         mfa_enabled=bool(user.mfa_enabled),

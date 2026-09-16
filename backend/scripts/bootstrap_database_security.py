@@ -13,6 +13,10 @@ from dataclasses import dataclass
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
+try:
+    from scripts import worker_maintenance_security
+except ModuleNotFoundError:
+    import worker_maintenance_security
 
 IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 BACKEND_RUNTIME_FUNCTIONS = {
@@ -27,18 +31,26 @@ AGENT_AUTH_DEFINER_ROLE = os.getenv(
 )
 AUTHN_RUNTIME_FUNCTIONS = {
     "bind_api_key_context",
+    "bind_platform_session_context",
     "bind_session_context",
     "consume_onboarding_invite_for_otp",
     "confirm_password_reset",
+    "create_platform_session",
+    "create_platform_tenant_owner_invite",
     "create_password_reset",
     "create_session",
     "create_tenant",
+    "create_tenant_as_platform_admin",
+    "current_platform_admin_id",
     "current_tenant_id",
+    "lookup_platform_password_identity",
     "lookup_password_identities",
     "lookup_itsm_user_access",
     "lookup_oidc_config",
     "issue_oidc_session",
+    "platform_admin_profile",
     "prepare_onboarding_invite_resend",
+    "revoke_platform_session",
     "revoke_session",
     "revoke_user_sessions",
     "set_password_reset_delivery",
@@ -264,6 +276,58 @@ def prepare_agent_security_objects_for_migration(conn, agent_migrator: Role) -> 
     for signature in signatures:
         conn.execute(text(f"ALTER FUNCTION {signature} OWNER TO {migrator}"))
 
+
+def prepare_existing_schema_objects_for_migration(conn, migrator: Role) -> None:
+    owner = conn.dialect.identifier_preparer.quote(migrator.name)
+    relations = conn.execute(
+        text(
+            """
+            SELECT format('%I.%I', schemaname, tablename)
+              FROM pg_tables
+             WHERE schemaname = :schema
+            UNION ALL
+            SELECT format('%I.%I', schemaname, viewname)
+              FROM pg_views
+             WHERE schemaname = :schema
+            UNION ALL
+            SELECT format('%I.%I', schemaname, matviewname)
+              FROM pg_matviews
+             WHERE schemaname = :schema
+            """
+        ),
+        {"schema": migrator.schema},
+    ).scalars()
+    for relation in relations:
+        conn.execute(text(f"ALTER TABLE {relation} OWNER TO {owner}"))
+
+    sequences = conn.execute(
+        text(
+            """
+            SELECT format('%I.%I', schemaname, sequencename)
+              FROM pg_sequences
+             WHERE schemaname = :schema
+            """
+        ),
+        {"schema": migrator.schema},
+    ).scalars()
+    for sequence in sequences:
+        conn.execute(text(f"ALTER SEQUENCE {sequence} OWNER TO {owner}"))
+
+    signatures = conn.execute(
+        text(
+            """
+            SELECT p.oid::regprocedure::text
+              FROM pg_proc p
+              JOIN pg_namespace n ON n.oid = p.pronamespace
+             WHERE n.nspname IN (:schema, 'authn')
+            """
+        ),
+        {"schema": migrator.schema},
+    ).scalars()
+    for signature in signatures:
+        conn.execute(text(f"ALTER FUNCTION {signature} OWNER TO {owner}"))
+
+
 def prepare(conn, database_name: str, roles: tuple[Role, Role, Role, Role]) -> None:
     quote = conn.dialect.identifier_preparer.quote
     database = quote(database_name)
@@ -282,6 +346,9 @@ def prepare(conn, database_name: str, roles: tuple[Role, Role, Role, Role]) -> N
                 f"ALTER ROLE {quote(role.name)} SET search_path = {quote(role.schema)}, pg_catalog"
             )
         )
+
+    # Schema ownership requires its login role even on a brand-new cluster.
+    worker_maintenance_security.prepare(conn, backend_migrator.name)
 
     conn.execute(
         text(
@@ -303,6 +370,7 @@ def prepare(conn, database_name: str, roles: tuple[Role, Role, Role, Role]) -> N
         text(f"GRANT USAGE, CREATE ON SCHEMA public TO {quote(backend_migrator.name)}")
     )
     conn.execute(text(f"GRANT USAGE ON SCHEMA public TO {quote(backend_runtime.name)}"))
+    prepare_existing_schema_objects_for_migration(conn, backend_migrator)
     conn.execute(
         text(
             f"CREATE SCHEMA IF NOT EXISTS authn "
@@ -386,6 +454,7 @@ def grant_backend_functions(conn, backend_runtime: Role) -> None:
 
 
 def secure_authentication_boundary(conn, backend_runtime: Role) -> None:
+    worker_maintenance_security.finalize(conn, configured_roles()[0].name, backend_runtime.name)
     quote = conn.dialect.identifier_preparer.quote
     definer = quote(AUTH_DEFINER_ROLE)
     runtime = quote(backend_runtime.name)
@@ -409,9 +478,19 @@ def secure_authentication_boundary(conn, backend_runtime: Role) -> None:
             f"TO {definer}"
         )
     )
+    conn.execute(text(f"GRANT INSERT ON public.tenants TO {definer}"))
+    conn.execute(
+        text(
+            f"GRANT SELECT ON authn.platform_admins, authn.platform_sessions, "
+            f"authn.context_secret TO {definer}; "
+            f"GRANT INSERT, UPDATE ON authn.platform_sessions TO {definer}; "
+            f"GRANT UPDATE ON authn.platform_admins TO {definer}"
+        )
+    )
     conn.execute(
         text(
             f"GRANT INSERT, UPDATE ON public.onboarding_email_otps TO {definer}; "
+            f"GRANT INSERT ON public.tenants TO {definer}; "
             f"GRANT UPDATE ON public.users "
             f"TO {definer}"
         )
@@ -421,7 +500,7 @@ def secure_authentication_boundary(conn, backend_runtime: Role) -> None:
     tables = conn.execute(
         text(
             "SELECT tablename FROM pg_tables WHERE schemaname = 'authn' "
-            "AND tablename IN ('context_secret', 'sessions')"
+            "AND tablename IN ('context_secret', 'sessions', 'platform_admins', 'platform_sessions')"
         )
     ).scalars()
     for table_name in tables:
@@ -439,17 +518,30 @@ def secure_authentication_boundary(conn, backend_runtime: Role) -> None:
     for signature, function_name in signatures:
         conn.execute(text(f"ALTER FUNCTION {signature} OWNER TO {definer}"))
         conn.execute(text(f"REVOKE ALL ON FUNCTION {signature} FROM PUBLIC"))
+        conn.execute(text(f"REVOKE ALL ON FUNCTION {signature} FROM {runtime}"))
         if function_name in AUTHN_RUNTIME_FUNCTIONS:
             conn.execute(text(f"GRANT EXECUTE ON FUNCTION {signature} TO {runtime}"))
 
-    for resolver_name in ("resolve_api_key", "resolve_trust_center_share"):
-        resolver = conn.execute(
-            text(f"SELECT to_regprocedure('public.{resolver_name}(text)')::text")
+    definer_functions = (
+        "resolve_api_key(text)",
+        "resolve_trust_center_share(text)",
+        "access_request_onboarding_started(text,timestamptz)",
+    )
+    for function_signature in definer_functions:
+        secured_function = conn.execute(
+            text(
+                "SELECT to_regprocedure("
+                f"'public.{function_signature}')::text"
+            )
         ).scalar_one_or_none()
-        if resolver:
-            conn.execute(text(f"ALTER FUNCTION {resolver} OWNER TO {definer}"))
-            conn.execute(text(f"REVOKE ALL ON FUNCTION {resolver} FROM PUBLIC"))
-            conn.execute(text(f"GRANT EXECUTE ON FUNCTION {resolver} TO {runtime}"))
+        if secured_function:
+            conn.execute(text(f"ALTER FUNCTION {secured_function} OWNER TO {definer}"))
+            conn.execute(
+                text(f"REVOKE ALL ON FUNCTION {secured_function} FROM PUBLIC")
+            )
+            conn.execute(
+                text(f"GRANT EXECUTE ON FUNCTION {secured_function} TO {runtime}")
+            )
 
     conn.execute(text("REVOKE ALL ON ALL TABLES IN SCHEMA authn FROM PUBLIC"))
     conn.execute(text(f"REVOKE ALL ON ALL TABLES IN SCHEMA authn FROM {runtime}"))
@@ -555,9 +647,31 @@ def finalize(conn, roles: tuple[Role, Role, Role, Role]) -> None:
         )
 
 
+def finalize_backend(conn, roles: tuple[Role, Role, Role, Role]) -> None:
+    """Finalize only the backend boundary for isolated backend deployments and CI."""
+    backend_migrator, backend_runtime, _, _ = roles
+    grant_runtime_objects(conn, backend_migrator, backend_runtime)
+    secure_owned_functions(
+        conn, backend_migrator.name, "public", (backend_runtime.name,)
+    )
+    grant_backend_functions(conn, backend_runtime)
+    secure_authentication_boundary(conn, backend_runtime)
+
+    quote = conn.dialect.identifier_preparer.quote
+    conn.execute(text(f"REVOKE ALL ON SCHEMA agent FROM {quote(backend_runtime.name)}"))
+    conn.execute(
+        text(
+            "REVOKE ALL ON ALL TABLES IN SCHEMA agent FROM "
+            f"{quote(backend_runtime.name)}"
+        )
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("phase", choices=("prepare", "finalize"))
+    parser.add_argument(
+        "phase", choices=("prepare", "finalize", "finalize-backend")
+    )
     args = parser.parse_args()
     database_url = normalize_database_url(
         os.getenv("BOOTSTRAP_DATABASE_URL")
@@ -575,6 +689,8 @@ def main() -> None:
         acquire_initialization_lock(conn)
         if args.phase == "prepare":
             prepare(conn, database_name, roles)
+        elif args.phase == "finalize-backend":
+            finalize_backend(conn, roles)
         else:
             finalize(conn, roles)
     print(f"Database security {args.phase} complete.")

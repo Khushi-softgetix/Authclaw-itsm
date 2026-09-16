@@ -49,6 +49,7 @@ interface ConsoleShellProps {
   tenantId: string;
   tenantName: string;
   userRole: string;
+  platformRole?: string;
   itsmRole?: string | null;
 }
 
@@ -90,17 +91,17 @@ const itsmNavigation: NavItem[] = [
   { name: "Reports & Audit", href: "/itsm/reports", icon: FileCheck, roles: readRoles },
 ];
 
-export default function ConsoleShell({ children, userEmail, tenantId, tenantName, userRole, itsmRole }: ConsoleShellProps) {
+export default function ConsoleShell({ children, userEmail, tenantId, tenantName, userRole, platformRole = "NONE", itsmRole }: ConsoleShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const normalizedRole = userRole?.toLowerCase() || "viewer";
-
+  const hasPlatformAccess = platformRole.toUpperCase() === "ADMIN";
   const isItsm = pathname.startsWith("/itsm");
   const displayedRole = isItsm
     ? (itsmRole && ITSM_ROLE_LABELS[itsmRole.toUpperCase()]) || itsmRole?.replace(/_/g, " ") || "Requester"
-    : normalizedRole;
+    : (hasPlatformAccess ? "platform admin" : normalizedRole);
   const activeNavigationList = isItsm ? itsmNavigation : navigation;
   const allowedNavigation = activeNavigationList.filter((item) => item.roles.includes(normalizedRole));
 

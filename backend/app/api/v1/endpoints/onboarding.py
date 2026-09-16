@@ -8,8 +8,11 @@ import os
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import redis
+from redis.backoff import NoBackoff
+from redis.retry import Retry
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -37,6 +40,7 @@ from app.schemas.models import (
 )
 from app.services.email_service import EmailDeliveryError, demo_otp_visible, send_otp_email
 from app.services import event_backbone
+from app.services.abuse_controls import atomic_increment
 from app.services.legal_acceptance import validate_legal_acceptance
 
 router = APIRouter()
@@ -105,6 +109,14 @@ def _emit_invitation_audit(
         logger.warning("Could not emit invitation audit event for action=%s: %s", action, exc)
 
 
+def _invitation_audit_snapshot(invitation: OnboardingEmailOTP):
+    return SimpleNamespace(
+        id=invitation.id,
+        purpose=invitation.purpose,
+        tenant_id=invitation.tenant_id,
+    )
+
+
 def _invalid_invitation() -> HTTPException:
     return HTTPException(status_code=400, detail=INVALID_INVITATION_DETAIL)
 
@@ -130,9 +142,6 @@ def _rate_limit_hash(value: str) -> str:
 
 
 def _client_ip(request: Request) -> str:
-    forwarded_for = request.headers.get("x-forwarded-for", "")
-    if forwarded_for:
-        return forwarded_for.split(",", 1)[0].strip()
     if request.client:
         return request.client.host
     return "unknown"
@@ -144,7 +153,14 @@ def _get_redis() -> redis.Redis:
         redis_url = os.getenv("REDIS_URL", "redis://localhost:6379")
         if redis_url and not redis_url.startswith(("redis://", "rediss://")):
             redis_url = f"redis://{redis_url}"
-        _redis_client = redis.from_url(redis_url, decode_responses=True)
+        _redis_client = redis.from_url(
+            redis_url,
+            decode_responses=True,
+            socket_connect_timeout=1.0,
+            socket_timeout=1.0,
+            retry_on_timeout=False,
+            retry=Retry(NoBackoff(), 0),
+        )
     return _redis_client
 
 
@@ -153,15 +169,20 @@ def _enforce_onboarding_rate_limit(key: str, limit: int, window_seconds: int, me
         return
     try:
         client = _get_redis()
-        count = client.incr(key)
-        if count == 1:
-            client.expire(key, window_seconds)
+        count, _ttl_ms = atomic_increment(client, key, window_seconds)
     except redis.RedisError as exc:
-        logger.warning("Rate limiter unavailable")
-        if os.getenv("AUTHCLAW_ENV", "").lower() == "production":
-            raise HTTPException(status_code=503, detail="Rate limiter unavailable. Request blocked for safety.") from exc
-        return
+        ambiguous = isinstance(exc, redis.TimeoutError)
+        event_backbone.increment_metric(
+            "rate_limiter_ambiguous_total" if ambiguous else "rate_limiter_unavailable_total"
+        )
+        logger.warning("[RATE_LIMIT_AUDIT] outcome=unavailable ambiguous=%s", ambiguous)
+        raise HTTPException(
+            status_code=503,
+            detail="Rate limiter unavailable. Request blocked for safety.",
+        ) from exc
     if count > limit:
+        event_backbone.increment_metric("rate_limiter_throttled_total")
+        logger.info("[RATE_LIMIT_AUDIT] outcome=throttled")
         raise HTTPException(status_code=429, detail=message)
 
 
@@ -491,11 +512,12 @@ def verify(payload: OnboardingVerifyRequest, request: Request):
         if expires_at.tzinfo is None:
             expires_at = expires_at.replace(tzinfo=timezone.utc)
         if expires_at < now:
+            invitation_audit = _invitation_audit_snapshot(signup_row)
             signup_row.status = "expired"
             db.commit()
-            _emit_invitation_audit(signup_row, "InviteExpired", "invitation_expired", request_id, 400)
+            _emit_invitation_audit(invitation_audit, "InviteExpired", "invitation_expired", request_id, 400)
             _emit_invitation_audit(
-                signup_row,
+                invitation_audit,
                 "InviteRedemptionFailed",
                 "invitation_expired",
                 request_id,
@@ -517,9 +539,10 @@ def verify(payload: OnboardingVerifyRequest, request: Request):
             hmac.compare_digest(signup_row.otp_hash, _otp_hash(signup_row.email, payload.otp, secret))
             for secret in get_session_key_ring()[1].values()
         ):
+            invitation_audit = _invitation_audit_snapshot(signup_row)
             db.commit()
             _emit_invitation_audit(
-                signup_row,
+                invitation_audit,
                 "InviteRedemptionFailed",
                 "invalid_verification_code",
                 request_id,
@@ -599,12 +622,12 @@ def verify(payload: OnboardingVerifyRequest, request: Request):
             db.add(api_key)
             db.flush()
             session_token = _generate_session_token()
+            invitation_audit = _invitation_audit_snapshot(signup_row)
             tenant_id = tenant.id
             tenant_name = tenant.name
             user_id = user.id
             user_email = user.email
             user_role = user.role
-
             db.execute(
                 text(
                     """
@@ -625,13 +648,12 @@ def verify(payload: OnboardingVerifyRequest, request: Request):
             signup_row.status = "verified"
             signup_row.verified_at = now
             signup_row.api_key_id = api_key.id
-            _emit_invitation_audit(signup_row, "InviteRedeemed", "invitation_redeemed", request_id, 200)
-
             status_row = db.query(OnboardingStatus).filter(OnboardingStatus.tenant_id == tenant_id).first()
             if not status_row:
                 status_row = OnboardingStatus(
                     tenant_id=tenant_id,
                     user_id=user_id,
+                    signup_id=signup_row.id,
                     email_verified=True,
                     tenant_created=True,
                     api_key_issued=True,
@@ -642,11 +664,11 @@ def verify(payload: OnboardingVerifyRequest, request: Request):
                     current_step="connect_provider",
                 )
                 db.add(status_row)
-
-            checklist_data = _checklist(status_row)
-            db.commit()
-
+                db.flush()
+            checklist = _checklist(status_row)
             powershell, curl = _snippets(raw_api_key, gateway_url)
+            db.commit()
+            _emit_invitation_audit(invitation_audit, "InviteRedeemed", "invitation_redeemed", request_id, 200)
             return OnboardingVerifyResponse(
                 tenant_id=tenant_id,
                 tenant_name=tenant_name,
@@ -659,7 +681,7 @@ def verify(payload: OnboardingVerifyRequest, request: Request):
                 gateway_url=gateway_url,
                 provider=DEFAULT_PROVIDER,
                 model=DEFAULT_MODEL,
-                checklist=checklist_data,
+                checklist=checklist,
                 powershell_snippet=powershell,
                 curl_snippet=curl,
             )

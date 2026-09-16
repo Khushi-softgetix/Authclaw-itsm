@@ -70,6 +70,10 @@ export function proxy(request: NextRequest) {
   const session = Boolean(sessionCookie?.startsWith("acl_session_"));
 
   // 3. Handle redirects
+  if (!session && path.startsWith("/developer")) {
+    return NextResponse.redirect(new URL("/login?developer=1", request.url));
+  }
+
   if (!session && !isPublicPath) {
     if (path.startsWith("/itsm")) {
       return NextResponse.redirect(new URL("/itsm/login", request.url));
@@ -94,7 +98,7 @@ export function proxy(request: NextRequest) {
   }
 
   if (session && path === "/login") {
-    if (!hasAccessError) {
+    if (request.nextUrl.searchParams.get("developer") !== "1" && !hasAccessError) {
       // Redirect authenticated user away from Governance login
       const returnTo =
         request.nextUrl.searchParams.get("returnTo") ||

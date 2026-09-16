@@ -9,8 +9,8 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 
-revision = "043"
-down_revision = "042"
+revision = "047"
+down_revision = "046"
 branch_labels = None
 depends_on = None
 

@@ -2,16 +2,16 @@ export type BffMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export type BffBody = "none" | "json" | "optional-json";
 
 const ALLOWED: Record<BffMethod, RegExp> = {
-  GET: /^(users(?:\/invites|\/me\/security)?|usage-limits|tenants\/current|red-team|provider-credentials|notifications|gateways|evidence(?:\/[^/]+)?|findings(?:\/summary\/dashboard|\/[^/]+)?|ephemeral-workers\/(?:tokens|connectors)|compliance-scores(?:\/history|\/[^/]+)?|api-keys|approvals|itsm\/incidents(?:\/[^/]+)?(?:\/activities)?|itsm\/admin\/(?:users(?:\/[^/]+)?|teams(?:\/[^/]+)?|services(?:\/[^/]+)?|configuration-items(?:\/[^/]+)?|service-catalog(?:\/[^/]+)?|business-calendars(?:\/[^/]+)?|sla-policies(?:\/[^/]+)?|settings))$/,
-  POST: /^(users|users\/invite|users\/me\/mfa\/(?:setup|disable)|red-team|provider-credentials|provider-credentials\/[^/]+\/rotate|policies\/(?:validate|simulate|rollback)|policies\/[^/]+\/activate|notifications\/(?:read-all|[^/]+\/read)|gateways|ephemeral-workers\/tokens(?:\/[^/]+\/revoke)?|api-keys|api-keys\/[^/]+\/rotate|data-subject-requests(?:\/[^/]+\/(?:verify|approve|export|delete))?|workflows\/[^/]+\/(?:approve|reject|remediate)|approvals\/[^/]+\/(?:approve|reject)|itsm\/incidents|itsm\/incidents\/[^/]+\/(?:status|assign|activities)|itsm\/admin\/(?:users\/(?:invite|create)|users\/[^/]+\/(?:access|deactivate)|teams(?:\/[^/]+\/members)?|services|configuration-items|service-catalog|business-calendars|sla-policies))$/,
+  GET: /^(users(?:\/invites|\/me\/security)?|usage-limits|tenants\/current|red-team|provider-credentials|notifications|gateways|evidence(?:\/[^/]+)?|findings(?:\/summary\/dashboard|\/[^/]+)?|ephemeral-workers\/(?:tokens|connectors)|compliance-scores(?:\/history|\/[^/]+)?|api-keys|approvals|access-requests|itsm\/incidents(?:\/[^/]+)?(?:\/activities)?|itsm\/admin\/(?:users(?:\/[^/]+)?|teams(?:\/[^/]+)?|services(?:\/[^/]+)?|configuration-items(?:\/[^/]+)?|service-catalog(?:\/[^/]+)?|business-calendars(?:\/[^/]+)?|sla-policies(?:\/[^/]+)?|settings))$/,
+  POST: /^(users|users\/invite|users\/me\/mfa\/(?:setup|disable)|tenants|red-team|provider-credentials|provider-credentials\/[^/]+\/rotate|policies\/(?:validate|simulate|rollback)|policies\/[^/]+\/activate|notifications\/(?:read-all|[^/]+\/read)|gateways|ephemeral-workers\/tokens(?:\/[^/]+\/revoke)?|api-keys|api-keys\/[^/]+\/rotate|data-subject-requests(?:\/[^/]+\/(?:verify|approve|export|delete))?|workflows\/[^/]+\/(?:approve|reject|remediate)|approvals\/[^/]+\/(?:approve|reject)|itsm\/incidents|itsm\/incidents\/[^/]+\/(?:status|assign|activities)|itsm\/admin\/(?:users\/(?:invite|create)|users\/[^/]+\/(?:access|deactivate)|teams(?:\/[^/]+\/members)?|services|configuration-items|service-catalog|business-calendars|sla-policies))$/,
   PUT: /^(gateways\/[^/]+|itsm\/admin\/users\/[^/]+\/access)$/,
-  PATCH: /^(tenants\/current\/status|findings\/[^/]+\/status|itsm\/incidents\/[^/]+|itsm\/admin\/(?:teams\/[^/]+|services\/[^/]+|configuration-items\/[^/]+|service-catalog\/[^/]+|business-calendars\/[^/]+|sla-policies\/[^/]+))$/,
+  PATCH: /^(tenants\/current\/status|findings\/[^/]+\/status|access-requests\/[^/]+\/status|itsm\/incidents\/[^/]+|itsm\/admin\/(?:teams\/[^/]+|services\/[^/]+|configuration-items\/[^/]+|service-catalog\/[^/]+|business-calendars\/[^/]+|sla-policies\/[^/]+))$/,
   DELETE: /^(users\/(?:invites\/[^/]+|(?!me$|invite$|invites$)[^/]+)|provider-credentials\/[^/]+|gateways\/[^/]+|api-keys\/[^/]+|itsm\/admin\/(?:teams\/[^/]+\/members\/[^/]+|users\/[^/]+))$/,
 };
 
 const NO_BODY_POST = /^(users\/me\/mfa\/setup|notifications\/(?:read-all|[^/]+\/read)|policies\/[^/]+\/activate|ephemeral-workers\/tokens\/[^/]+\/revoke|workflows\/[^/]+\/(?:reject|remediate)|approvals\/[^/]+\/reject|itsm\/admin\/users\/[^/]+\/deactivate)$/;
 const OPTIONAL_BODY_POST = /^(workflows|approvals)\/[^/]+\/approve$/;
-const CREATED = /^(users|provider-credentials|red-team|gateways|ephemeral-workers\/tokens|api-keys(?:\/[^/]+\/rotate)?|itsm\/incidents|itsm\/incidents\/[^/]+\/activities|itsm\/admin\/(?:users\/(?:invite|create)|teams(?:\/[^/]+\/members)?|services|configuration-items|service-catalog|business-calendars|sla-policies))$/;
+const CREATED = /^(users|tenants|provider-credentials|red-team|gateways|ephemeral-workers\/tokens|api-keys(?:\/[^/]+\/rotate)?|itsm\/incidents|itsm\/incidents\/[^/]+\/activities|itsm\/admin\/(?:users\/(?:invite|create)|teams(?:\/[^/]+\/members)?|services|configuration-items|service-catalog|business-calendars|sla-policies))$/;
 
 export function resolveBffRoute(method: BffMethod, path: string) {
   if (!ALLOWED[method].test(path)) return null;
@@ -19,6 +19,8 @@ export function resolveBffRoute(method: BffMethod, path: string) {
   let backendPath = `/v1/${path}`;
   if (path === "approvals" || path.startsWith("approvals/")) {
     backendPath = `/v1/workflows/${path}`;
+  } else if (path === "access-requests" || path.startsWith("access-requests/")) {
+    backendPath = `/api/public/v1/${path}`;
   } else if (method === "POST" && path === "red-team") {
     backendPath = "/v1/red-team/runs";
   } else if (path === "compliance-scores/history") {

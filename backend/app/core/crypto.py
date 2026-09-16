@@ -1,11 +1,8 @@
 """Cryptographic utilities for token and secret encryption."""
 import base64
 import os
-import hashlib
 import requests
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.backends import default_backend
 
 SECRET_ENVELOPE_PREFIX = "authclaw-secret-v1:"
 SECRET_ENVELOPE_V2_PREFIX = "authclaw-secret-v2:"
@@ -162,51 +159,6 @@ def secret_management_status() -> dict:
     }
 
 
-def decrypt_deterministic(ciphertext_str: str) -> str:
-    """Decrypts legacy deterministic redaction/provider ciphertext."""
-    key = get_encryption_key()
-    try:
-        data = base64.b64decode(ciphertext_str)
-        if len(data) < 16:
-            raise ValueError("Ciphertext too short")
-        iv = data[:16]
-        ciphertext = data[16:]
-
-        cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-        decryptor = cipher.decryptor()
-        padded_plaintext = decryptor.update(ciphertext) + decryptor.finalize()
-
-        # PKCS7 unpadding
-        padding_len = padded_plaintext[-1]
-        if padding_len < 1 or padding_len > 16:
-            raise ValueError("Invalid padding length")
-        
-        # Verify padding bytes
-        for b in padded_plaintext[-padding_len:]:
-            if b != padding_len:
-                raise ValueError("Invalid padding content")
-
-        return padded_plaintext[:-padding_len].decode("utf-8")
-    except Exception as e:
-        raise ValueError(f"Failed to decrypt value: {str(e)}")
-
-
-def _pkcs7_pad(data: bytes) -> bytes:
-    padding = 16 - (len(data) % 16)
-    return data + bytes([padding]) * padding
-
-
-def encrypt_deterministic(plaintext: str) -> str:
-    """Encrypts legacy AES-CBC ciphertext for compatibility tests only."""
-    key = get_encryption_key()
-    plaintext_bytes = plaintext.encode("utf-8")
-    iv = hashlib.sha256(plaintext_bytes + key).digest()[:16]
-    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-    encryptor = cipher.encryptor()
-    ciphertext = encryptor.update(_pkcs7_pad(plaintext_bytes)) + encryptor.finalize()
-    return base64.b64encode(iv + ciphertext).decode("utf-8")
-
-
 def encrypt_secret(plaintext: str) -> str:
     """Encrypts provider/API secrets with randomized, versioned AES-GCM envelope encryption."""
     provider = get_secret_provider()
@@ -219,15 +171,17 @@ def encrypt_secret(plaintext: str) -> str:
 
 
 def decrypt_secret(ciphertext_str: str) -> str:
-    """Decrypts randomized provider/API secrets, falling back for legacy rows."""
+    """Decrypt authenticated AES-GCM envelopes only; legacy formats fail closed."""
     if ciphertext_str.startswith(SECRET_ENVELOPE_V2_PREFIX):
         parts = ciphertext_str[len(SECRET_ENVELOPE_V2_PREFIX):].split(":", 2)
         if len(parts) != 3:
             raise ValueError("Invalid v2 secret envelope")
         provider, version, payload = parts
+        if provider not in SUPPORTED_SECRET_PROVIDERS or not version:
+            raise ValueError("Invalid v2 secret envelope")
         try:
-            data = base64.b64decode(payload)
-            if len(data) <= 12:
+            data = base64.b64decode(payload, validate=True)
+            if len(data) < 28:
                 raise ValueError("Ciphertext too short")
             nonce = data[:12]
             ciphertext = data[12:]
@@ -237,12 +191,12 @@ def decrypt_secret(ciphertext_str: str) -> str:
             raise ValueError(f"Failed to decrypt v2 secret: {str(e)}")
 
     if not ciphertext_str.startswith(SECRET_ENVELOPE_PREFIX):
-        return decrypt_deterministic(ciphertext_str)
+        raise ValueError("Unsupported secret envelope format")
 
     payload = ciphertext_str[len(SECRET_ENVELOPE_PREFIX):]
     try:
-        data = base64.b64decode(payload)
-        if len(data) <= 12:
+        data = base64.b64decode(payload, validate=True)
+        if len(data) < 28:
             raise ValueError("Ciphertext too short")
         nonce = data[:12]
         ciphertext = data[12:]

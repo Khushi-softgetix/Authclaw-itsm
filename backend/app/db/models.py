@@ -148,6 +148,22 @@ class Tenant(Base):
     )
 
 
+class PlatformAdmin(Base):
+    """Tenantless AuthClaw developer administrator."""
+    __tablename__ = "platform_admins"
+    __table_args__ = {"schema": "authn"}
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    email = Column(String(255), nullable=False, unique=True)
+    password_hash = Column(String(255), nullable=False)
+    display_name = Column(String(255), nullable=False, default="AuthClaw Developer")
+    role = Column(String(50), nullable=False, default="ADMIN")
+    is_active = Column(Boolean, nullable=False, default=True)
+    last_login = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class User(Base):
     """User model with tenant isolation"""
     __tablename__ = "users"
@@ -792,6 +808,8 @@ class EphemeralWorkerToken(Base):
     permission_boundary = Column(JSON, nullable=False, default=dict)
     token_hash = Column(String(64), nullable=False, unique=True)
     token_prefix = Column(String(32), nullable=False)
+    hash_algorithm = Column(String(32), nullable=False, server_default="sha256")
+    hash_key_version = Column(String(16), nullable=True)
     status = Column(String(50), nullable=False, default="active")
     issued_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     issued_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
@@ -1059,7 +1077,6 @@ class TrustCenterAccessLog(Base):
         Index("idx_trust_access_tenant", "tenant_id", "accessed_at"),
         Index("idx_trust_access_share", "share_id"),
     )
-
 
 # =============================================================================
 # ITSM DOMAIN MODELS (MVP -> V1 -> V1.5 -> V2)
@@ -1996,7 +2013,6 @@ class ITSMTeamMember(Base):
         Index("idx_itsm_team_members_user", "tenant_id", "user_id"),
     )
 
-
 class ITSMIncidentSavedView(Base):
     """User-owned, tenant-scoped operational queue view."""
     __tablename__ = "itsm_incident_saved_views"
@@ -2016,5 +2032,3 @@ class ITSMIncidentSavedView(Base):
         UniqueConstraint("tenant_id", "user_id", "name", name="uq_itsm_saved_view_user_name"),
         Index("idx_itsm_saved_views_user", "tenant_id", "user_id"),
     )
-
-

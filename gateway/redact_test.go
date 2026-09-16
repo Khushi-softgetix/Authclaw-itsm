@@ -601,12 +601,8 @@ func TestSecretEnvelopeEncryptionIsRandomizedAndBackwardCompatible(t *testing.T)
 	if err != nil {
 		t.Fatalf("EncryptDeterministic failed: %v", err)
 	}
-	plaintext, err := DecryptSecret(legacy)
-	if err != nil {
-		t.Fatalf("DecryptSecret legacy fallback failed: %v", err)
-	}
-	if plaintext != "legacy-provider-secret" {
-		t.Fatalf("unexpected legacy plaintext %q", plaintext)
+	if _, err := DecryptSecret(legacy); err == nil {
+		t.Fatal("runtime must reject legacy ciphertext")
 	}
 }
 
@@ -672,6 +668,17 @@ func TestValidateEnvelopeKeyConfigRejectsMissingRedactionSaltInProduction(t *tes
 	err := ValidateEnvelopeKeyConfig()
 	if err == nil || !strings.Contains(err.Error(), "REDACTION_HASH_SALT") {
 		t.Fatalf("expected missing production redaction salt to be rejected, got %v", err)
+	}
+}
+
+func TestValidateEnvelopeKeyConfigRejectsDemoStagingKey(t *testing.T) {
+	t.Setenv("AUTHCLAW_ENV", "staging")
+	t.Setenv("AUTHCLAW_SECRET_KEY_VERSION", "v1")
+	t.Setenv("ENVELOPE_KEY", "demo-local-envelope-key-change-me")
+	t.Setenv("ENCRYPTION_KEY", "")
+
+	if err := ValidateEnvelopeKeyConfig(); err == nil {
+		t.Fatal("expected staging demo envelope key to be rejected")
 	}
 }
 

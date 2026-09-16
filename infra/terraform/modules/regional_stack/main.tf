@@ -78,6 +78,14 @@ locals {
 
   common_environment = [
     { name = "AUTHCLAW_ENV", value = var.authclaw_env },
+    { name = "AUTHCLAW_FORWARDED_HEADER_MODE", value = var.forwarded_header_mode },
+    { name = "AUTHCLAW_FORWARDED_FOR_MAX_HOPS", value = "8" },
+    { name = "AUTHCLAW_TRUSTED_PROXY_CIDRS", value = join(",", values(aws_subnet.public)[*].cidr_block) },
+    { name = "MFA_FAILURE_THRESHOLD", value = "5" },
+    { name = "MFA_ATTEMPT_WINDOW_SECONDS", value = "300" },
+    { name = "MFA_BASE_COOLDOWN_SECONDS", value = "30" },
+    { name = "MFA_MAX_COOLDOWN_SECONDS", value = "300" },
+    { name = "MFA_ESCALATING_COOLDOWN_ENABLED", value = "true" },
     { name = "AUTHCLAW_REQUIRE_SERVICE_TLS", value = tostring(var.authclaw_env == "production") },
     { name = "AUTHCLAW_SECRET_PROVIDER", value = "env" },
     { name = "AUTHCLAW_SECRET_KEY_VERSION", value = var.secret_key_version },
@@ -292,6 +300,17 @@ resource "aws_security_group" "app" {
   vpc_id      = aws_vpc.main.id
 
   dynamic "ingress" {
+    for_each = toset([8000, 8001, 8080])
+    content {
+      description     = "Console outbound API and health-check calls"
+      from_port       = ingress.value
+      to_port         = ingress.value
+      protocol        = "tcp"
+      security_groups = [aws_security_group.console_ingress.id]
+    }
+  }
+
+  dynamic "ingress" {
     for_each = local.public_services
     content {
       from_port       = ingress.value.container_port
@@ -306,6 +325,16 @@ resource "aws_security_group" "app" {
     content {
       from_port = ingress.value.container_port
       to_port   = ingress.value.container_port
+      protocol  = "tcp"
+      self      = true
+    }
+  }
+
+  dynamic "ingress" {
+    for_each = var.enable_audit_consumer ? [1] : []
+    content {
+      from_port = 9108
+      to_port   = 9108
       protocol  = "tcp"
       self      = true
     }
@@ -334,7 +363,7 @@ resource "aws_security_group" "vpc_endpoints" {
     from_port       = 443
     to_port         = 443
     protocol        = "tcp"
-    security_groups = [aws_security_group.app.id]
+    security_groups = [aws_security_group.app.id, aws_security_group.console_ingress.id]
   }
 
   tags = merge(var.tags, { Name = "${var.name}-vpc-endpoints" })
@@ -784,6 +813,9 @@ resource "aws_iam_role_policy" "task_secrets" {
           aws_secretsmanager_secret.agent_migration_database_url.arn,
           aws_secretsmanager_secret.agent_database_url.arn,
           aws_secretsmanager_secret.internal_service.arn,
+          aws_secretsmanager_secret.bff_client_ip.arn,
+          aws_secretsmanager_secret.oidc_bff_exchange.arn,
+          aws_secretsmanager_secret.worker_token_hmac.arn,
           aws_secretsmanager_secret.agent_encryption.arn,
           aws_secretsmanager_secret.agent_redaction.arn,
           aws_kms_key.main.arn
@@ -801,6 +833,8 @@ resource "aws_lb" "main" {
   security_groups            = [aws_security_group.alb.id]
   subnets                    = values(aws_subnet.public)[*].id
   drop_invalid_header_fields = true
+  xff_header_processing_mode = "append"
+  enable_xff_client_port     = false
   tags                       = var.tags
 }
 
@@ -842,6 +876,30 @@ resource "aws_lb_listener" "service" {
 
 locals {
   database_jobs = {
+    worker_preflight = {
+      image       = var.container_images.backend
+      command     = ["python", "scripts/verify_worker_lifecycle.py"]
+      environment = [{ name = "WORKER_TOKEN_HMAC_ACTIVE_VERSION", value = "v1" }]
+      secrets = [
+        { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.bootstrap_database_url.arn },
+        { name = "WORKER_TOKEN_HMAC_KEY_V1", valueFrom = aws_secretsmanager_secret.worker_token_hmac.arn }
+      ]
+    }
+    crypto_preflight = {
+      image   = var.container_images.backend
+      command = ["python", "scripts/verify_secret_retirement.py"]
+      environment = [
+        { name = "AUTHCLAW_ENV", value = var.authclaw_env },
+        { name = "AUTHCLAW_SECRET_PROVIDER", value = "env" },
+        { name = "AUTHCLAW_SECRET_KEY_VERSION", value = var.secret_key_version }
+      ]
+      secrets = [
+        { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.bootstrap_database_url.arn },
+        { name = "ENVELOPE_KEY", valueFrom = aws_secretsmanager_secret.envelope.arn },
+        { name = "ENVELOPE_KEY_V1", valueFrom = aws_secretsmanager_secret.envelope.arn },
+        { name = "ENVELOPE_KEY_V2", valueFrom = aws_secretsmanager_secret.envelope_v2.arn }
+      ]
+    }
     bootstrap_prepare = {
       image   = var.container_images.backend
       command = ["python", "scripts/bootstrap_database_security.py", "prepare"]
@@ -928,6 +986,11 @@ resource "aws_ecs_task_definition" "database_job" {
   memory                   = var.service_memory
   execution_role_arn       = aws_iam_role.task_execution.arn
 
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = lookup(var.service_cpu_architectures, each.key == "agent_migrations" ? "agent" : "backend", "X86_64")
+  }
+
   container_definitions = jsonencode([{
     name        = each.key
     image       = each.value.image
@@ -958,6 +1021,11 @@ resource "aws_ecs_task_definition" "service" {
   execution_role_arn       = aws_iam_role.task_execution.arn
   task_role_arn            = lookup(local.audit_sqs_task_role_arns, each.key, null)
 
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = lookup(var.service_cpu_architectures, each.key, "X86_64")
+  }
+
   container_definitions = jsonencode([
     merge({
       name      = each.key
@@ -969,11 +1037,21 @@ resource "aws_ecs_task_definition" "service" {
       }]
       environment = concat(
         local.common_environment,
+        each.key == "console" ? [
+          { name = "AUTHCLAW_BFF_CLIENT_IP_ENABLED", value = tostring(var.bff_client_ip_signing_enabled) },
+          { name = "AUTHCLAW_OIDC_LOGIN_PAUSED", value = tostring(var.oidc_login_paused) },
+          { name = "API_URL", value = local.api_base_url },
+          { name = "AUTHCLAW_CONSOLE_ALB_INGRESS_ONLY", value = "true" }
+        ] : [],
         contains(tolist(local.audit_sqs_producer_services), each.key) ? local.audit_sqs_producer_environment : [],
         each.key == "gateway" ? [
           { name = "REDACTION_RUNTIME_CONFIG_CACHE_TTL_MS", value = "60000" }
         ] : [],
         each.key == "backend" ? [
+          { name = "WORKER_TOKEN_HMAC_ACTIVE_VERSION", value = "v1" },
+          { name = "WORKER_TOKEN_ISSUANCE_PAUSED", value = tostring(var.worker_token_issuance_paused) },
+          { name = "WORKER_CLEANUP_ENABLED", value = "true" },
+          { name = "AUTHCLAW_BFF_CLIENT_IP_ENABLED", value = tostring(var.bff_client_ip_enabled) },
           { name = "AUTHCLAW_RUNTIME_DB_ROLE", value = "authclaw_app" }
         ] : [],
         each.key == "agent" ? [
@@ -982,6 +1060,13 @@ resource "aws_ecs_task_definition" "service" {
         ] : []
       )
       secrets = concat(
+        each.key == "backend" ? [
+          { name = "WORKER_TOKEN_HMAC_KEY_V1", valueFrom = aws_secretsmanager_secret.worker_token_hmac.arn }
+        ] : [],
+        contains(["console", "backend"], each.key) ? [
+          { name = "BFF_CLIENT_IP_SECRET", valueFrom = aws_secretsmanager_secret.bff_client_ip.arn },
+          { name = "OIDC_BFF_EXCHANGE_SECRET", valueFrom = aws_secretsmanager_secret.oidc_bff_exchange.arn }
+        ] : [],
         contains(["backend", "gateway", "console"], each.key) ? [
           { name = "DATABASE_URL", valueFrom = each.key == "backend" ? aws_secretsmanager_secret.backend_database_url.arn : aws_secretsmanager_secret.app_database_url.arn },
           { name = "JWT_SECRET", valueFrom = var.jwt_key_version == "v2" ? aws_secretsmanager_secret.jwt_v2.arn : aws_secretsmanager_secret.jwt.arn },
@@ -1033,6 +1118,10 @@ resource "aws_ecs_task_definition" "service" {
 
   lifecycle {
     precondition {
+      condition     = !var.bff_client_ip_signing_enabled || var.bff_client_ip_enabled
+      error_message = "Enable backend client-identity verification before console signing."
+    }
+    precondition {
       condition = var.authclaw_env != "production" || alltrue([
         startswith(local.internal_agent_url, "https://"),
         local.internal_opa_url == "http://127.0.0.1:8181",
@@ -1053,6 +1142,11 @@ resource "aws_ecs_task_definition" "gateway_with_sidecars" {
   cpu                      = var.gateway_sidecar_task_cpu
   memory                   = var.gateway_sidecar_task_memory
   execution_role_arn       = aws_iam_role.task_execution.arn
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = lookup(var.service_cpu_architectures, "gateway", "X86_64")
+  }
 
   container_definitions = jsonencode([
     {
@@ -1170,6 +1264,11 @@ resource "aws_ecs_task_definition" "backend_with_presidio" {
   memory                   = var.backend_sidecar_task_memory
   execution_role_arn       = aws_iam_role.task_execution.arn
 
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = lookup(var.service_cpu_architectures, "backend", "X86_64")
+  }
+
   container_definitions = jsonencode([
     {
       name              = "backend"
@@ -1183,9 +1282,16 @@ resource "aws_ecs_task_definition" "backend_with_presidio" {
         protocol      = "tcp"
       }]
       environment = concat(local.common_environment, [
+        { name = "AUTHCLAW_BFF_CLIENT_IP_ENABLED", value = tostring(var.bff_client_ip_enabled) },
+        { name = "WORKER_TOKEN_HMAC_ACTIVE_VERSION", value = "v1" },
+        { name = "WORKER_TOKEN_ISSUANCE_PAUSED", value = tostring(var.worker_token_issuance_paused) },
+        { name = "WORKER_CLEANUP_ENABLED", value = "true" },
         { name = "AGENT_AUDIT_STREAM_TRANSPORT", value = "kafka" }
       ])
-      secrets = [
+      secrets = concat([
+        { name = "BFF_CLIENT_IP_SECRET", valueFrom = aws_secretsmanager_secret.bff_client_ip.arn },
+        { name = "WORKER_TOKEN_HMAC_KEY_V1", valueFrom = aws_secretsmanager_secret.worker_token_hmac.arn },
+        { name = "OIDC_BFF_EXCHANGE_SECRET", valueFrom = aws_secretsmanager_secret.oidc_bff_exchange.arn },
         { name = "DATABASE_URL", valueFrom = aws_secretsmanager_secret.backend_database_url.arn },
         { name = "JWT_SECRET", valueFrom = var.jwt_key_version == "v2" ? aws_secretsmanager_secret.jwt_v2.arn : aws_secretsmanager_secret.jwt.arn },
         { name = "JWT_SECRET_V1", valueFrom = aws_secretsmanager_secret.jwt.arn },
@@ -1196,7 +1302,9 @@ resource "aws_ecs_task_definition" "backend_with_presidio" {
         { name = "ENVELOPE_KEY", valueFrom = aws_secretsmanager_secret.envelope.arn },
         { name = "ENVELOPE_KEY_V1", valueFrom = aws_secretsmanager_secret.envelope.arn },
         { name = "ENVELOPE_KEY_V2", valueFrom = aws_secretsmanager_secret.envelope_v2.arn }
-      ]
+        ], var.clickhouse_password != "" ? [
+        { name = "CLICKHOUSE_PASSWORD", valueFrom = aws_secretsmanager_secret.clickhouse_password[0].arn }
+      ] : [])
       dependsOn = [{ containerName = "presidio", condition = "HEALTHY" }]
       healthCheck = {
         command     = ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)\""]
@@ -1256,6 +1364,11 @@ resource "aws_ecs_task_definition" "agent_with_opa" {
   cpu                      = var.agent_sidecar_task_cpu
   memory                   = var.agent_sidecar_task_memory
   execution_role_arn       = aws_iam_role.task_execution.arn
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = lookup(var.service_cpu_architectures, "agent", "X86_64")
+  }
 
   container_definitions = jsonencode([
     {
@@ -1343,7 +1456,7 @@ resource "aws_ecs_service" "public" {
 
   network_configuration {
     subnets          = values(aws_subnet.private)[*].id
-    security_groups  = [aws_security_group.app.id]
+    security_groups  = each.key == "console" ? [aws_security_group.console_ingress.id] : [aws_security_group.app.id]
     assign_public_ip = false
   }
 
@@ -1394,6 +1507,22 @@ resource "aws_ecs_task_definition" "audit_consumer" {
   execution_role_arn       = aws_iam_role.task_execution.arn
   task_role_arn            = lookup(local.audit_sqs_task_role_arns, "audit_consumer", null)
 
+  lifecycle {
+    precondition {
+      condition = (
+        trimspace(var.clickhouse_password) != "" &&
+        lower(var.clickhouse_password) != "authclaw" &&
+        !strcontains(lower(var.clickhouse_password), "change-me")
+      )
+      error_message = "clickhouse_password must be a non-default secret when enable_audit_consumer is true."
+    }
+  }
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = lookup(var.service_cpu_architectures, "audit_consumer", "X86_64")
+  }
+
   container_definitions = jsonencode([
     {
       name      = "audit_consumer"
@@ -1403,6 +1532,7 @@ resource "aws_ecs_task_definition" "audit_consumer" {
         { name = "KAFKA_TOPICS", value = "gateway.traffic,audit.events" },
         { name = "KAFKA_DLQ_TOPIC", value = "audit.deadletter" },
         { name = "AUDIT_CONSUMER_METRICS_PORT", value = "9108" },
+        { name = "AUDIT_CONSUMER_METRICS_HOST", value = "0.0.0.0" },
         { name = "CLICKHOUSE_HOST", value = var.clickhouse_host },
         { name = "CLICKHOUSE_PORT", value = tostring(var.clickhouse_port) },
         { name = "CLICKHOUSE_DB", value = var.clickhouse_db },

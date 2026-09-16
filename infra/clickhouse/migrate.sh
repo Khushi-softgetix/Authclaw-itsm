@@ -14,6 +14,14 @@ query() {
   "${client[@]}" --format TSVRaw --query "$1"
 }
 
+for i in {1..30}; do
+  if "${client[@]}" --query "SELECT 1" >/dev/null 2>&1; then
+    break
+  fi
+  echo "Waiting for ClickHouse native port 9000..."
+  sleep 1
+done
+
 "${client[@]}" --multiquery < "${schema_dir}/init.sql"
 
 required_columns="$(query "

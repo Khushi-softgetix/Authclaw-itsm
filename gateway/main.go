@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -11,18 +12,38 @@ import (
 	"github.com/joho/godotenv"
 )
 
+var buildTarget = "unknown"
+
 func HealthHandler(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":            "healthy",
-		"service":           "authclaw-gateway",
-		"audit_fail_closed": auditFailClosedEnabled(),
-		"audit_outbox_path": auditOutboxPath(),
+		"status":  "healthy",
+		"service": "authclaw-gateway",
 	})
 }
 
+func NewGatewayRouter(proxy http.Handler) http.Handler {
+	r := chi.NewRouter()
+	if envBool("GATEWAY_HTTP_LOGGER_ENABLED", true) {
+		r.Use(middleware.Logger)
+	}
+	r.Use(middleware.Recoverer)
+	r.Get("/health", HealthHandler)
+	r.Route("/v1", func(r chi.Router) {
+		r.Use(AuthMiddleware)
+		r.Use(RateLimitMiddleware)
+		r.Handle("/*", proxy)
+	})
+	return r
+}
+
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--version" {
+		fmt.Printf("authclaw-gateway %s\n", buildTarget)
+		return
+	}
+
 	// Try to load .env.local from parent directory
 	_ = godotenv.Load("../.env.local")
 
@@ -31,6 +52,18 @@ func main() {
 	}
 	if err := ValidateServiceTLSConfig(); err != nil {
 		log.Fatalf("Invalid service TLS configuration: %v", err)
+	}
+	if err := ValidateEnvironmentConfig(); err != nil {
+		log.Fatalf("Invalid environment configuration: %v", err)
+	}
+	if err := ValidateAuthCacheConfig(); err != nil {
+		log.Fatalf("Invalid authentication cache configuration: %v", err)
+	}
+	if err := ValidateAuthSecretConfig(); err != nil {
+		log.Fatalf("Invalid authentication secret configuration: %v", err)
+	}
+	if _, err := newClientIPResolverFromEnv(); err != nil {
+		log.Fatalf("Invalid trusted proxy configuration: %v", err)
 	}
 
 	// Initialize database
@@ -42,25 +75,7 @@ func main() {
 	}
 	defer CloseAuditTransport()
 
-	r := chi.NewRouter()
-
-	// Standard middleware
-	if envBool("GATEWAY_HTTP_LOGGER_ENABLED", true) {
-		r.Use(middleware.Logger)
-	}
-	r.Use(middleware.Recoverer)
-
-	// Basic health check endpoint
-	r.Get("/health", HealthHandler)
-	r.Get("/metrics", KafkaMetricsHandler)
-
-	// Setup LLM provider reverse proxy
-	proxy := NewProxyServer()
-	r.Route("/v1", func(r chi.Router) {
-		r.Use(AuthMiddleware)
-		r.Use(RateLimitMiddleware)
-		r.HandleFunc("/*", proxy.ServeHTTP)
-	})
+	r := NewGatewayRouter(NewProxyServer())
 
 	port := os.Getenv("PORT")
 	if port == "" {

@@ -27,7 +27,12 @@ from tests.db_safety import destructive_test_urls
 owner_db_url, db_url = destructive_test_urls()
 owner_engine = create_engine(owner_db_url, echo=False, poolclass=StaticPool)
 engine = create_engine(db_url, echo=False, poolclass=StaticPool)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, expire_on_commit=False)
+OwnerTestingSessionLocal = sessionmaker(
+    autocommit=False, autoflush=False, bind=owner_engine, expire_on_commit=False
+)
+AppTestingSessionLocal = sessionmaker(
+    autocommit=False, autoflush=False, bind=engine, expire_on_commit=False
+)
 
 
 @pytest.fixture(scope="module")
@@ -48,7 +53,9 @@ def db_session() -> Session:
         conn.execute(text("TRUNCATE TABLE data_subject_requests, access_request_history, access_requests, audit_log_metadata, pending_approvals, redaction_tokens, gateway_configs, policies, api_keys, users, tenants CASCADE;"))
         conn.commit()
         
-    db = TestingSessionLocal()
+    # Seed and inspect fixtures through the owner connection. Runtime requests below
+    # still use the restricted application role and its signed RLS context.
+    db = OwnerTestingSessionLocal()
     try:
         yield db
     finally:
@@ -61,7 +68,7 @@ def db_session() -> Session:
 def client(db_session: Session) -> TestClient:
     """FastAPI TestClient with overridden get_db dependency to enforce RLS"""
     def override_get_db():
-        db = TestingSessionLocal()
+        db = AppTestingSessionLocal()
         try:
             yield db
         finally:
@@ -80,7 +87,10 @@ def test_public_health(client: TestClient):
     health = response.json()
     assert health["status"] == "healthy"
     assert health["service"] == "authclaw-backend"
-    assert "secret_management" in health
+    assert set(health) == {"status", "service"}
+
+    metrics_response = client.get("/metrics")
+    assert metrics_response.status_code == status.HTTP_401_UNAUTHORIZED
 
     # Verify OpenAPI documentation loads successfully
     openapi_resp = client.get("/openapi.json")
@@ -117,7 +127,7 @@ def test_authentication_gates(client: TestClient):
     # 3. Invalid API key value
     response = client.get("/v1/audit-logs", headers={"Authorization": "Bearer badkey"})
     assert response.status_code == status.HTTP_401_UNAUTHORIZED
-    assert "Invalid or expired API Key" in response.json()["detail"]
+    assert "Invalid or expired credential" in response.json()["detail"]
 
 
 def test_data_subject_request_lifecycle_authorization_and_isolation(
@@ -492,7 +502,10 @@ def test_public_access_request_persists_server_owned_fields(
     assert record.status == "PENDING"
     history = (
         db_session.query(AccessRequestHistory)
-        .filter(AccessRequestHistory.access_request_id == record.id)
+        .filter(
+            AccessRequestHistory.access_request_id == record.id,
+            AccessRequestHistory.event_type == "CREATED",
+        )
         .one()
     )
     assert history.event_type == "CREATED"
@@ -614,10 +627,17 @@ def test_tenant_creation_and_isolation(client: TestClient, db_session: Session):
     db_session.add(tenant_b)
     db_session.commit()
 
-    # Seed Owner User & System API Key with 'admin' scope for Tenant A to call POST /tenants
+    # A legacy tenant admin must not gain platform access through API-key scopes.
     admin_user_id = uuid4()
     db_session.execute(text(f"SET app.current_tenant_id = '{tenant_a_id}'"))
-    admin_user = User(id=admin_user_id, tenant_id=tenant_a_id, email="admin@tenantA.com", role="owner", is_active=True)
+    admin_user = User(
+        id=admin_user_id,
+        tenant_id=tenant_a_id,
+        email="admin@tenantA.com",
+        role="owner",
+        platform_role="ADMIN",
+        is_active=True,
+    )
     db_session.add(admin_user)
     db_session.commit()
 
@@ -628,7 +648,7 @@ def test_tenant_creation_and_isolation(client: TestClient, db_session: Session):
         tenant_id=tenant_a_id,
         key_hash=admin_hash,
         name="Admin Key",
-        scopes=["admin", "read", "write"],
+        scopes=["admin", "read", "write", "platform.admin"],
         is_active=True,
         created_by=admin_user_id
     )
@@ -669,8 +689,45 @@ def test_tenant_creation_and_isolation(client: TestClient, db_session: Session):
     response = client.post("/v1/tenants", json={"name": "Tenant C", "tier": "starter"}, headers=headers_b)
     assert response.status_code == status.HTTP_403_FORBIDDEN
 
-    # Request as Tenant A owner (admin scope) -> 201 Created
+    # Even a tenant owner with legacy ADMIN/platform.admin claims is denied.
     response = client.post("/v1/tenants", json={"name": "Tenant C", "tier": "pro"}, headers=headers_admin)
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    platform_admin_id = uuid4()
+    platform_token = f"acl_session_{uuid4().hex}"
+    with owner_engine.begin() as connection:
+        connection.execute(
+            text("""
+                INSERT INTO authn.platform_admins (id, email, password_hash)
+                VALUES (:id, :email, 'unusable-test-password')
+            """),
+            {"id": platform_admin_id, "email": f"{platform_admin_id}@platform.test"},
+        )
+        connection.execute(
+            text("""
+                INSERT INTO authn.platform_sessions (
+                    id, token_hash, platform_admin_id, authentication_method, expires_at
+                ) VALUES (:id, :token_hash, :admin_id, 'password', :expires_at)
+            """),
+            {
+                "id": uuid4(),
+                "token_hash": hash_key(platform_token),
+                "admin_id": platform_admin_id,
+                "expires_at": datetime.now(timezone.utc) + timedelta(minutes=15),
+            },
+        )
+    try:
+        response = client.post(
+            "/v1/tenants",
+            json={"name": "Tenant C", "tier": "pro"},
+            headers={"Authorization": f"Bearer {platform_token}"},
+        )
+    finally:
+        with owner_engine.begin() as connection:
+            connection.execute(
+                text("DELETE FROM authn.platform_admins WHERE id = :id"),
+                {"id": platform_admin_id},
+            )
     assert response.status_code == status.HTTP_201_CREATED
     assert response.json()["name"] == "Tenant C"
     assert response.json()["tier"] == "pro"
@@ -741,31 +798,12 @@ def test_tenant_creation_and_isolation(client: TestClient, db_session: Session):
     # -------------------------------------------------------------------------
     # 6. Test GET /redaction/{id}/tokenization-map with dynamic decryption
     # -------------------------------------------------------------------------
-    # Seed a token value for Tenant A: plaintext is "John Doe", encrypted is "iv + encrypted"
-    # To mock matching deterministic decryption in Go gateway, we'll use a valid encrypted token
-    # Let's import the Go decryption key default "authclaw-default-32-byte-key-12"
-    # Decrypting will be tested against the backend crypto decrypt logic.
-    # We encrypt using Python's equivalent logic for test verification:
-    from app.core.crypto import get_encryption_key
-    from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-    from cryptography.hazmat.backends import default_backend
+    # Current runtime token maps contain authenticated AES-GCM envelopes.
+    # Historical CBC upgrade/rejection is exercised by the retirement suites.
+    from app.core.crypto import encrypt_secret
     import hashlib
 
-    # Deterministic Encryption Mock
-    plaintext = "John Doe"
-    key = get_encryption_key()
-    pad_len = 16 - (len(plaintext) % 16)
-    padded = plaintext.encode("utf-8") + bytes([pad_len] * pad_len)
-    
-    h = hashlib.sha256()
-    h.update(plaintext.encode("utf-8"))
-    h.update(key)
-    iv = h.digest()[:16]
-    
-    cipher = Cipher(algorithms.AES(key), modes.CBC(iv), backend=default_backend())
-    encryptor = cipher.encryptor()
-    ciphertext = encryptor.update(padded) + encryptor.finalize()
-    encrypted_base64 = base64.b64encode(iv + ciphertext).decode("utf-8")
+    encrypted_base64 = encrypt_secret("John Doe")
 
     token_hash = hashlib.sha256("[REDACTED_PERSON_abc]".encode("utf-8")).hexdigest()
     

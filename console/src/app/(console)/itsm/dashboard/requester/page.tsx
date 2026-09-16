@@ -71,11 +71,11 @@ export default function RequesterDashboardPage() {
         </div>
         <div className="flex items-center gap-3 shrink-0">
           <Link
-            href="/itsm/incidents"
+            href="/itsm/incidents/new"
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white text-[#1E40AF] font-bold text-xs hover:bg-blue-50 transition shadow-sm"
           >
             <Plus className="w-4 h-4" />
-            <span>Report an Incident</span>
+            <span>Report an Issue</span>
           </Link>
           <a
             href="#knowledge"
@@ -137,7 +137,7 @@ export default function RequesterDashboardPage() {
         </h2>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <Link
-            href="/itsm/incidents"
+            href="/itsm/incidents/new"
             className="flex items-start gap-3 p-4 rounded-xl border border-[#E6E9F0] hover:border-[#2563EB] hover:bg-[#F8FAFC] transition group"
           >
             <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
@@ -150,7 +150,7 @@ export default function RequesterDashboardPage() {
           </Link>
 
           <Link
-            href="/itsm/incidents"
+            href="/itsm/incidents/new"
             className="flex items-start gap-3 p-4 rounded-xl border border-[#E6E9F0] hover:border-[#7C3AED] hover:bg-[#F8FAFC] transition group"
           >
             <div className="w-9 h-9 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
@@ -163,7 +163,7 @@ export default function RequesterDashboardPage() {
           </Link>
 
           <Link
-            href="/itsm/incidents"
+            href="/itsm/incidents/new"
             className="flex items-start gap-3 p-4 rounded-xl border border-[#E6E9F0] hover:border-[#10B981] hover:bg-[#F8FAFC] transition group"
           >
             <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
@@ -176,7 +176,7 @@ export default function RequesterDashboardPage() {
           </Link>
 
           <Link
-            href="/itsm/incidents"
+            href="/itsm/incidents/new"
             className="flex items-start gap-3 p-4 rounded-xl border border-[#E6E9F0] hover:border-[#D97706] hover:bg-[#F8FAFC] transition group"
           >
             <div className="w-9 h-9 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
@@ -195,26 +195,34 @@ export default function RequesterDashboardPage() {
         {/* Left 2 Cols: My Active Tickets */}
         <div className="lg:col-span-2 bg-white rounded-2xl border border-[#E6E9F0] shadow-sm p-6 space-y-4">
           <div className="flex items-center justify-between">
-            <h2 className="text-base font-bold text-[#0E1726]">My Recent Incidents &amp; Tickets</h2>
-            <Link
-              href="/itsm/incidents"
-              className="text-xs font-semibold text-[#2563EB] hover:text-[#1D4ED8] flex items-center gap-1"
-            >
-              <span>View All</span>
-              <ArrowRight className="w-3.5 h-3.5" />
-            </Link>
+            <h2 className="text-base font-bold text-[#0E1726]">My Incidents</h2>
+            <div className="flex items-center gap-3">
+              <Link
+                href="/itsm/incidents"
+                className="text-xs font-semibold text-[#475069] hover:text-[#0E1726]"
+              >
+                View All
+              </Link>
+              <Link
+                href="/itsm/incidents/new"
+                className="text-xs font-semibold text-[#6D28D9] hover:text-[#5B21B6] flex items-center gap-1"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Report an Issue</span>
+              </Link>
+            </div>
           </div>
 
           {loading ? (
-            <div className="py-12 text-center text-xs text-[#6B7488]">Loading your tickets...</div>
+            <div className="py-12 text-center text-xs text-[#6B7488]">Loading your incidents...</div>
           ) : incidents.length === 0 ? (
             <div className="py-12 text-center space-y-3">
-              <div className="w-10 h-10 rounded-full bg-blue-50 text-[#2563EB] flex items-center justify-center mx-auto">
+              <div className="w-10 h-10 rounded-full bg-purple-50 text-[#6D28D9] flex items-center justify-center mx-auto">
                 <CheckCircle2 className="w-5 h-5" />
               </div>
               <p className="text-xs font-semibold text-[#0E1726]">You have no active incidents</p>
               <p className="text-xs text-[#6B7488] max-w-sm mx-auto">
-                Everything looks healthy. If you experience an issue, click &quot;Report an Incident&quot; above.
+                Everything looks healthy. If you experience an issue, click &quot;Report an Issue&quot; above.
               </p>
             </div>
           ) : (
@@ -222,23 +230,23 @@ export default function RequesterDashboardPage() {
               <table className="w-full text-left text-xs">
                 <thead>
                   <tr className="border-b border-[#F0F2F6] text-[#8C95A8] font-bold uppercase tracking-wider">
-                    <th className="pb-3">Ticket ID</th>
-                    <th className="pb-3">Title</th>
+                    <th className="pb-3">Incident #</th>
+                    <th className="pb-3">Title / Problem</th>
                     <th className="pb-3">Status</th>
                     <th className="pb-3">Priority</th>
-                    <th className="pb-3">Updated</th>
+                    <th className="pb-3">Created / Updated</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#F0F2F6]">
-                  {incidents.slice(0, 5).map((inc) => (
+                  {incidents.map((inc) => (
                     <tr key={inc.id} className="hover:bg-[#F9FAFB] transition">
-                      <td className="py-3 font-mono font-bold text-[#2563EB]">
+                      <td className="py-3 font-mono font-bold text-[#6D28D9]">
                         <Link href={`/itsm/incidents/${inc.id}`} className="hover:underline">
                           {inc.ticket_number}
                         </Link>
                       </td>
-                      <td className="py-3 font-medium text-[#0E1726] max-w-[200px] truncate">
-                        <Link href={`/itsm/incidents/${inc.id}`} className="hover:underline">
+                      <td className="py-3 font-medium text-[#0E1726] max-w-[240px] truncate">
+                        <Link href={`/itsm/incidents/${inc.id}`} className="hover:text-[#6D28D9]">
                           {inc.title}
                         </Link>
                       </td>
@@ -249,7 +257,7 @@ export default function RequesterDashboardPage() {
                         <IncidentPriorityBadge priority={inc.priority} />
                       </td>
                       <td className="py-3 text-[#6B7488]">
-                        {formatDateTime(inc.updated_at)}
+                        {formatDateTime(inc.updated_at || inc.created_at)}
                       </td>
                     </tr>
                   ))}
@@ -263,7 +271,10 @@ export default function RequesterDashboardPage() {
         <div id="knowledge" className="bg-white rounded-2xl border border-[#E6E9F0] shadow-sm p-6 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-bold text-[#0E1726]">Self-Service Knowledge</h2>
-            <BookOpen className="w-4 h-4 text-[#6B7488]" />
+            <Link href="/itsm/knowledge" className="text-xs font-semibold text-[#6D28D9] hover:underline flex items-center gap-1">
+              <span>View All KB</span>
+              <BookOpen className="w-3.5 h-3.5" />
+            </Link>
           </div>
           <div className="relative">
             <Search className="w-3.5 h-3.5 text-[#8C95A8] absolute left-3 top-1/2 -translate-y-1/2" />
@@ -305,16 +316,17 @@ export default function RequesterDashboardPage() {
                   item.title.toLowerCase().includes(searchKnowledge.toLowerCase())
               )
               .map((kb, idx) => (
-                <div
+                <Link
                   key={idx}
-                  className="p-3 rounded-xl border border-[#F0F2F6] hover:border-[#CBD5E1] hover:bg-[#F8FAFC] transition cursor-pointer"
+                  href="/itsm/knowledge"
+                  className="block p-3 rounded-xl border border-[#F0F2F6] hover:border-[#CBD5E1] hover:bg-[#F8FAFC] transition cursor-pointer"
                 >
                   <div className="flex items-center justify-between text-[10px] text-[#8C95A8] mb-1">
                     <span className="font-semibold text-[#2563EB]">{kb.category}</span>
                     <span>{kb.views}</span>
                   </div>
                   <h4 className="text-xs font-semibold text-[#0E1726]">{kb.title}</h4>
-                </div>
+                </Link>
               ))}
           </div>
         </div>

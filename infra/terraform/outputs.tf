@@ -1,6 +1,16 @@
+output "crypto_preflight" {
+  value = {
+    cluster               = module.primary.ecs_cluster_name
+    task_definition       = module.primary.database_job_task_definition_arns["crypto_preflight"]
+    task_definitions      = module.primary.database_job_task_definition_arns
+    network_configuration = module.primary.database_job_network_configuration
+  }
+}
+
 output "primary" {
   value = {
     region                             = var.primary_region
+    client_identity                    = module.primary.client_identity
     alb_dns_name                       = module.primary.alb_dns_name
     ecs_cluster_name                   = module.primary.ecs_cluster_name
     ecs_service_names                  = module.primary.ecs_service_names
@@ -37,6 +47,7 @@ output "primary" {
 output "secondary" {
   value = var.enable_secondary ? {
     region                             = var.secondary_region
+    client_identity                    = module.secondary[0].client_identity
     alb_dns_name                       = module.secondary[0].alb_dns_name
     ecs_cluster_name                   = module.secondary[0].ecs_cluster_name
     ecs_service_names                  = module.secondary[0].ecs_service_names

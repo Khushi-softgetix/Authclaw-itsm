@@ -30,8 +30,12 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
   const principal = await response.json();
   const userEmail = principal.email;
   const tenantId = principal.tenant_id;
+  if (!tenantId && String(principal.platform_role || "NONE").toUpperCase() === "ADMIN") {
+    redirect("/developer");
+  }
   const tenantName = "Current Tenant";
   const userRole = principal.role;
+  const platformRole = principal.platform_role || "NONE";
   const itsmRole = principal.itsm_role || null;
   const productAccess = principal.product_access || { governance: true, itsm: false };
 
@@ -82,6 +86,7 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
       tenantId={tenantId}
       tenantName={tenantName}
       userRole={userRole}
+      platformRole={platformRole}
       itsmRole={itsmRole}
     >
       {children}

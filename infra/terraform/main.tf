@@ -9,7 +9,11 @@ locals {
 }
 
 module "primary" {
-  source = "./modules/regional_stack"
+  source                       = "./modules/regional_stack"
+  oidc_bff_exchange_secret     = random_password.oidc_bff_exchange.result
+  worker_token_hmac_secret     = random_password.worker_token_hmac.result
+  worker_token_issuance_paused = var.worker_token_issuance_paused
+  oidc_login_paused            = var.oidc_login_paused
 
   providers = {
     aws = aws.primary
@@ -23,6 +27,7 @@ module "primary" {
   nat_gateway_mode                     = var.nat_gateway_mode
   enable_private_aws_endpoints         = var.enable_private_aws_endpoints
   container_images                     = var.container_images
+  service_cpu_architectures            = var.service_cpu_architectures
   desired_count                        = var.desired_count_primary
   gateway_sidecar_task_cpu             = var.gateway_sidecar_task_cpu
   gateway_sidecar_task_memory          = var.gateway_sidecar_task_memory
@@ -33,6 +38,10 @@ module "primary" {
   is_primary                           = true
   create_db_replica                    = false
   authclaw_env                         = var.authclaw_env
+  forwarded_header_mode                = var.forwarded_header_mode
+  bff_client_ip_enabled                = var.bff_client_ip_enabled
+  bff_client_ip_signing_enabled        = var.bff_client_ip_signing_enabled
+  bff_client_ip_secret                 = random_password.bff_client_ip.result
   secret_key_version                   = var.secret_key_version
   jwt_key_version                      = var.jwt_key_version
   session_key_version                  = var.session_key_version
@@ -65,8 +74,12 @@ module "primary" {
 }
 
 module "secondary" {
-  count  = var.enable_secondary ? 1 : 0
-  source = "./modules/regional_stack"
+  count                        = var.enable_secondary ? 1 : 0
+  source                       = "./modules/regional_stack"
+  oidc_bff_exchange_secret     = random_password.oidc_bff_exchange.result
+  worker_token_hmac_secret     = random_password.worker_token_hmac.result
+  worker_token_issuance_paused = var.worker_token_issuance_paused
+  oidc_login_paused            = var.oidc_login_paused
 
   providers = {
     aws = aws.secondary
@@ -80,6 +93,7 @@ module "secondary" {
   nat_gateway_mode                     = var.nat_gateway_mode
   enable_private_aws_endpoints         = var.enable_private_aws_endpoints
   container_images                     = var.container_images
+  service_cpu_architectures            = var.service_cpu_architectures
   desired_count                        = var.desired_count_secondary
   gateway_sidecar_task_cpu             = var.gateway_sidecar_task_cpu
   gateway_sidecar_task_memory          = var.gateway_sidecar_task_memory
@@ -90,6 +104,10 @@ module "secondary" {
   is_primary                           = false
   create_db_replica                    = var.enable_cross_region_db_replica
   authclaw_env                         = var.authclaw_env
+  forwarded_header_mode                = var.forwarded_header_mode
+  bff_client_ip_enabled                = var.bff_client_ip_enabled
+  bff_client_ip_signing_enabled        = var.bff_client_ip_signing_enabled
+  bff_client_ip_secret                 = random_password.bff_client_ip.result
   secret_key_version                   = var.secret_key_version
   jwt_key_version                      = var.jwt_key_version
   session_key_version                  = var.session_key_version

@@ -1,5 +1,5 @@
 import React from "react";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 export default async function ItsmLayout({ children }: { children: React.ReactNode }) {
@@ -23,6 +23,34 @@ export default async function ItsmLayout({ children }: { children: React.ReactNo
 
   if (!hasItsmAccess) {
     redirect("/itsm/login?error=access_denied");
+  }
+
+  const itsmRole = (
+    principal.itsm_role ||
+    (principal.platform_role === "SUPER_ADMIN" ? "PLATFORM_ADMINISTRATOR" : "REQUESTER")
+  ).toUpperCase();
+
+  const headerList = await headers();
+  const currentPath = headerList.get("x-authclaw-pathname") || "";
+
+  if (itsmRole === "REQUESTER" && currentPath) {
+    const isAllowedRequesterPath =
+      currentPath === "/itsm/incidents" ||
+      currentPath.startsWith("/itsm/incidents/") ||
+      currentPath === "/itsm/services" ||
+      currentPath.startsWith("/itsm/services/") ||
+      currentPath === "/itsm/knowledge" ||
+      currentPath.startsWith("/itsm/knowledge/") ||
+      currentPath === "/itsm/notifications" ||
+      currentPath.startsWith("/itsm/notifications/") ||
+      currentPath === "/itsm/profile" ||
+      currentPath.startsWith("/itsm/profile/") ||
+      currentPath.startsWith("/itsm/dashboard") ||
+      currentPath === "/itsm";
+
+    if (!isAllowedRequesterPath) {
+      redirect("/itsm/dashboard/requester");
+    }
   }
 
   return <>{children}</>;

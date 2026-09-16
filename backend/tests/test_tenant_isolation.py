@@ -11,9 +11,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import pytest
 from alembic.config import Config
 from alembic.script import ScriptDirectory
-import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import sessionmaker
@@ -27,6 +27,11 @@ from tests.db_safety import destructive_test_urls
 _owner_engine = None
 _app_engine = None
 _testing_session_local = None
+
+
+def _migration_head() -> str:
+    config = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
+    return ScriptDirectory.from_config(config).get_current_head()
 
 
 @dataclass(frozen=True)
@@ -125,11 +130,12 @@ def isolation() -> IsolationHarness:
     owner_engine, app_engine, testing_session_local = _engines()
     with owner_engine.begin() as conn:
         revision = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        config = Config()
-        config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
-        heads = ScriptDirectory.from_config(config).get_heads()
-        if revision not in heads:
-            pytest.fail(f"tenant isolation tests require a current migration head {heads!r}, found {revision!r}")
+        expected_revision = _migration_head()
+        if revision != expected_revision:
+            pytest.fail(
+                "tenant isolation tests require migration head "
+                f"{expected_revision!r}, found {revision!r}"
+            )
         conn.execute(text("TRUNCATE TABLE public.tenants CASCADE"))
     return IsolationHarness(owner_engine, app_engine, testing_session_local)
 

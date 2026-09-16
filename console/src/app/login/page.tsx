@@ -53,12 +53,16 @@ export default function LoginPage() {
         return;
       }
 
-      const searchParams = new URLSearchParams(window.location.search);
-      const returnTo =
-        searchParams.get("returnTo") || searchParams.get("redirect") || "/overview";
-      const safeRedirect =
-        returnTo.startsWith("/") && !returnTo.startsWith("//") && !returnTo.startsWith("/itsm") ? returnTo : "/overview";
-      router.push(safeRedirect);
+      if (data.user?.role === "platform_admin") {
+        router.push("/developer");
+      } else {
+        const searchParams = new URLSearchParams(window.location.search);
+        const returnTo =
+          searchParams.get("returnTo") || searchParams.get("redirect") || "/overview";
+        const safeRedirect =
+          returnTo.startsWith("/") && !returnTo.startsWith("//") && !returnTo.startsWith("/itsm") ? returnTo : "/overview";
+        router.push(safeRedirect);
+      }
       router.refresh();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "An unexpected error occurred");

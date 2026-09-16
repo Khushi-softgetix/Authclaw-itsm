@@ -692,6 +692,16 @@ func isProductionEnv() bool {
 	return env == "production" || env == "prod"
 }
 
+func isSharedEnv() bool {
+	env := strings.ToLower(strings.TrimSpace(os.Getenv("AUTHCLAW_ENV")))
+	switch env {
+	case "ci", "shared-test", "staging", "stage", "production", "prod":
+		return true
+	default:
+		return false
+	}
+}
+
 func configuredEnvelopeKey() string {
 	keyStr := os.Getenv("ENCRYPTION_KEY")
 	if keyStr == "" {
@@ -725,12 +735,12 @@ func envVersionedEnvelopeKey(version string) string {
 }
 
 func ValidateEnvelopeKeyConfig() error {
-	if !isProductionEnv() {
+	if !isSharedEnv() {
 		return nil
 	}
 	provider := secretProvider()
 	version := secretKeyVersion()
-	if os.Getenv("AUTHCLAW_SECRET_KEY_VERSION") == "" {
+	if isProductionEnv() && os.Getenv("AUTHCLAW_SECRET_KEY_VERSION") == "" {
 		return fmt.Errorf("AUTHCLAW_SECRET_KEY_VERSION must be set in production")
 	}
 	if provider != "env" {
@@ -738,14 +748,14 @@ func ValidateEnvelopeKeyConfig() error {
 	}
 	keyStr := envVersionedEnvelopeKey(version)
 	if keyStr == "" || keyStr == "authclaw-default-32-byte-key-12" || strings.HasPrefix(keyStr, "demo-") || strings.Contains(keyStr, "change-me") {
-		return fmt.Errorf("ENVELOPE_KEY or ENCRYPTION_KEY must be set to a non-demo value in production")
+		return fmt.Errorf("ENVELOPE_KEY or ENCRYPTION_KEY must be set to a non-demo value in shared environments")
 	}
 	if len([]byte(keyStr)) < 32 {
-		return fmt.Errorf("ENVELOPE_KEY or ENCRYPTION_KEY must be at least 32 bytes in production")
+		return fmt.Errorf("ENVELOPE_KEY or ENCRYPTION_KEY must be at least 32 bytes in shared environments")
 	}
 	redactionSalt := strings.TrimSpace(os.Getenv("REDACTION_HASH_SALT"))
 	if redactionSalt == "" || redactionSalt == defaultRedactionHashSalt || strings.Contains(redactionSalt, "change-me") {
-		return fmt.Errorf("REDACTION_HASH_SALT must be set to a non-demo secret in production")
+		return fmt.Errorf("REDACTION_HASH_SALT must be set to a non-demo secret in shared environments")
 	}
 	return nil
 }
@@ -811,89 +821,6 @@ func secretEnvelopeKey(provider, version string) ([]byte, error) {
 	return normalizeEnvelopeKey(envVersionedEnvelopeKey(version)), nil
 }
 
-func pkcs7Pad(data []byte, blockSize int) []byte {
-	padding := blockSize - (len(data) % blockSize)
-	padText := bytes.Repeat([]byte{byte(padding)}, padding)
-	return append(data, padText...)
-}
-
-func pkcs7Unpad(data []byte) ([]byte, error) {
-	length := len(data)
-	if length == 0 {
-		return nil, fmt.Errorf("empty data")
-	}
-	padding := int(data[length-1])
-	if padding < 1 || padding > 16 {
-		return nil, fmt.Errorf("invalid padding")
-	}
-	for i := length - padding; i < length; i++ {
-		if int(data[i]) != padding {
-			return nil, fmt.Errorf("invalid padding content")
-		}
-	}
-	return data[:length-padding], nil
-}
-
-// EncryptDeterministic constructs legacy AES-CBC ciphertext for migration tests only.
-func EncryptDeterministic(plaintext string) (string, error) {
-	if encryptionKey == nil {
-		initEncryptionKey()
-	}
-	block, err := aes.NewCipher(encryptionKey)
-	if err != nil {
-		return "", err
-	}
-	padded := pkcs7Pad([]byte(plaintext), aes.BlockSize)
-
-	h := sha256.New()
-	h.Write([]byte(plaintext))
-	h.Write(encryptionKey)
-	iv := h.Sum(nil)[:aes.BlockSize]
-
-	ciphertext := make([]byte, len(padded))
-	mode := cipher.NewCBCEncrypter(block, iv)
-	mode.CryptBlocks(ciphertext, padded)
-
-	combined := append(iv, ciphertext...)
-	return base64.StdEncoding.EncodeToString(combined), nil
-}
-
-// DecryptDeterministic remains read-only compatibility for rolling deployments.
-func DecryptDeterministic(ciphertextStr string) (string, error) {
-	if encryptionKey == nil {
-		initEncryptionKey()
-	}
-	data, err := base64.StdEncoding.DecodeString(ciphertextStr)
-	if err != nil {
-		return "", err
-	}
-	if len(data) < aes.BlockSize {
-		return "", fmt.Errorf("ciphertext too short")
-	}
-	iv := data[:aes.BlockSize]
-	ciphertext := data[aes.BlockSize:]
-
-	block, err := aes.NewCipher(encryptionKey)
-	if err != nil {
-		return "", err
-	}
-
-	if len(ciphertext)%aes.BlockSize != 0 {
-		return "", fmt.Errorf("ciphertext block size invalid")
-	}
-
-	decrypted := make([]byte, len(ciphertext))
-	mode := cipher.NewCBCDecrypter(block, iv)
-	mode.CryptBlocks(decrypted, ciphertext)
-
-	unpadded, err := pkcs7Unpad(decrypted)
-	if err != nil {
-		return "", err
-	}
-
-	return string(unpadded), nil
-}
-
 func redactionBlindIndex(tenantID, plaintext string) string {
 	derived := hmac.New(sha256.New, []byte(redactionHashSalt()))
 	derived.Write([]byte("authclaw-redaction-blind-index-v1"))
@@ -932,7 +859,7 @@ func DecryptSecret(ciphertextStr string) (string, error) {
 	if strings.HasPrefix(ciphertextStr, secretEnvelopeV2Prefix) {
 		envelope := strings.TrimPrefix(ciphertextStr, secretEnvelopeV2Prefix)
 		parts := strings.SplitN(envelope, ":", 3)
-		if len(parts) != 3 {
+		if len(parts) != 3 || parts[0] == "" || parts[1] == "" {
 			return "", fmt.Errorf("invalid v2 secret envelope")
 		}
 		provider, version, payload := parts[0], parts[1], parts[2]
@@ -964,7 +891,7 @@ func DecryptSecret(ciphertextStr string) (string, error) {
 		return string(plaintext), nil
 	}
 	if !strings.HasPrefix(ciphertextStr, secretEnvelopePrefix) {
-		return DecryptDeterministic(ciphertextStr)
+		return "", fmt.Errorf("unsupported secret envelope format")
 	}
 	if encryptionKey == nil {
 		initEncryptionKey()

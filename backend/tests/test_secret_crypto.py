@@ -7,11 +7,42 @@ import pytest
 from app.core.crypto import (
     _vault_key_material,
     decrypt_secret,
-    encrypt_deterministic,
     encrypt_secret,
     secret_management_status,
 )
 from app.core.startup_checks import validate_production_environment
+from tests.legacy_crypto_fixture import encrypt_deterministic
+
+
+def test_python_gateway_shared_aes_gcm_vector(monkeypatch):
+    monkeypatch.setenv("AUTHCLAW_SECRET_PROVIDER", "env")
+    monkeypatch.setenv("AUTHCLAW_SECRET_KEY_VERSION", "v7")
+    monkeypatch.setenv("ENVELOPE_KEY_V7", "test-envelope-key-material-32-bytes!!")
+    monkeypatch.setenv("ENVELOPE_KEY", "test-envelope-key-material-32-bytes!!")
+    monkeypatch.delenv("ENCRYPTION_KEY", raising=False)
+    monkeypatch.setattr("app.core.crypto.os.urandom", lambda n: bytes(range(n)))
+    vector = "authclaw-secret-v2:env:v7:AAECAwQFBgcICQoLfg77cQzhaxHPBVah3UEx1MbA1dIqCVyxukG74cXQlchpvK/oTDA="
+    assert encrypt_secret("shared-provider-secret") == vector
+    assert decrypt_secret(vector) == "shared-provider-secret"
+    assert decrypt_secret(vector.replace("authclaw-secret-v2:env:v7:", "authclaw-secret-v1:")) == "shared-provider-secret"
+
+
+@pytest.mark.parametrize("value", ["", "unknown:payload", "authclaw-secret-v2::v1:AAAA", "authclaw-secret-v2:env::AAAA", "authclaw-secret-v2:env:v1:!invalid!", "authclaw-secret-v1:AAAA"])
+def test_runtime_rejects_unknown_or_corrupt_envelopes(value):
+    with pytest.raises(ValueError):
+        decrypt_secret(value)
+
+
+def test_missing_referenced_key_fails_closed(monkeypatch):
+    monkeypatch.setenv("AUTHCLAW_SECRET_PROVIDER", "env")
+    monkeypatch.setenv("AUTHCLAW_SECRET_KEY_VERSION", "v8")
+    monkeypatch.setenv("ENVELOPE_KEY_V8", "distinct-test-version-eight-secret")
+    ciphertext = encrypt_secret("retained-secret")
+    monkeypatch.delenv("ENVELOPE_KEY_V8")
+    monkeypatch.delenv("ENVELOPE_KEY", raising=False)
+    monkeypatch.delenv("ENCRYPTION_KEY", raising=False)
+    with pytest.raises(ValueError):
+        decrypt_secret(ciphertext)
 
 
 def test_provider_secret_encryption_is_randomized_and_round_trips(monkeypatch):
@@ -30,14 +61,15 @@ def test_provider_secret_encryption_is_randomized_and_round_trips(monkeypatch):
     assert decrypt_secret(second) == "sk-provider-secret"
 
 
-def test_provider_secret_decrypt_supports_legacy_deterministic_rows(monkeypatch):
+def test_provider_secret_decrypt_rejects_legacy_deterministic_rows(monkeypatch):
     monkeypatch.setenv("ENVELOPE_KEY", "test-envelope-key-material-32-bytes!!")
     monkeypatch.delenv("ENCRYPTION_KEY", raising=False)
 
     legacy = encrypt_deterministic("legacy-provider-secret")
 
     assert not legacy.startswith("authclaw-secret-v1:")
-    assert decrypt_secret(legacy) == "legacy-provider-secret"
+    with pytest.raises(ValueError):
+        decrypt_secret(legacy)
 
 
 def test_provider_secret_decrypt_supports_v1_rows(monkeypatch):
@@ -158,6 +190,7 @@ def test_managed_field_ciphertext_rejects_tampering(monkeypatch):
 
 def test_service_tls_boundary_rejects_plaintext_internal_urls(monkeypatch):
     monkeypatch.setenv("AUTHCLAW_ENV", "staging")
+    _set_shared_environment_secrets(monkeypatch)
     monkeypatch.setenv("AUTHCLAW_REQUIRE_SERVICE_TLS", "true")
     monkeypatch.setenv("GATEWAY_INTERNAL_URL", "https://gateway.internal")
     monkeypatch.setenv("OPA_URL", "http://opa.internal")
@@ -171,6 +204,7 @@ def test_service_tls_boundary_rejects_plaintext_internal_urls(monkeypatch):
 
 def test_service_tls_boundary_accepts_task_local_sidecars(monkeypatch):
     monkeypatch.setenv("AUTHCLAW_ENV", "staging")
+    _set_shared_environment_secrets(monkeypatch)
     monkeypatch.setenv("AUTHCLAW_REQUIRE_SERVICE_TLS", "true")
     monkeypatch.setenv("GATEWAY_INTERNAL_URL", "https://gateway.internal")
     monkeypatch.setenv("OPA_URL", "http://127.0.0.1:8181")
@@ -182,6 +216,7 @@ def test_service_tls_boundary_accepts_task_local_sidecars(monkeypatch):
 @pytest.mark.parametrize("invalid_url", ["https://", "https:///opa", "not-a-url"])
 def test_service_tls_boundary_rejects_malformed_https_urls(monkeypatch, invalid_url):
     monkeypatch.setenv("AUTHCLAW_ENV", "staging")
+    _set_shared_environment_secrets(monkeypatch)
     monkeypatch.setenv("AUTHCLAW_REQUIRE_SERVICE_TLS", "true")
     monkeypatch.setenv("GATEWAY_INTERNAL_URL", invalid_url)
     monkeypatch.setenv("OPA_URL", "https://opa.internal")
@@ -211,4 +246,67 @@ def test_production_kms_provider_requires_key_identifier(monkeypatch):
     with pytest.raises(RuntimeError) as exc:
         validate_production_environment()
 
+    assert "AUTHCLAW_AWS_KMS_KEY_ID" in str(exc.value)
+def _set_shared_environment_secrets(monkeypatch):
+    monkeypatch.setenv("JWT_SECRET", "shared-jwt-secret-material-32-bytes")
+    monkeypatch.setenv("SESSION_SECRET", "shared-session-secret-material-32")
+    monkeypatch.setenv("AUTHCLAW_SECRET_PROVIDER", "env")
+    monkeypatch.setenv("AUTHCLAW_SECRET_KEY_VERSION", "v1")
+    monkeypatch.setenv("ENVELOPE_KEY", "shared-envelope-secret-material-32")
+    monkeypatch.setenv("DEMO_OTP_VISIBLE", "false")
+
+
+def test_staging_rejects_silent_demo_secrets(monkeypatch):
+    monkeypatch.setenv("AUTHCLAW_ENV", "staging")
+    monkeypatch.setenv("JWT_SECRET", "dev-secret-change-in-production")
+    monkeypatch.setenv("SESSION_SECRET", "change-this-demo-session-secret")
+    monkeypatch.setenv("AUTHCLAW_SECRET_PROVIDER", "env")
+    monkeypatch.setenv("ENVELOPE_KEY", "authclaw-default-32-byte-key-12")
+    monkeypatch.setenv("AUTHCLAW_REQUIRE_SERVICE_TLS", "false")
+
+    with pytest.raises(RuntimeError, match="shared environments"):
+        validate_production_environment()
+
+
+def test_staging_rejects_published_local_compose_defaults(monkeypatch):
+    monkeypatch.setenv("AUTHCLAW_ENV", "staging")
+    monkeypatch.setenv("JWT_SECRET", "authclaw-full-local-jwt-secret-change-me")
+    monkeypatch.setenv("SESSION_SECRET", "authclaw-full-local-session-secret")
+    monkeypatch.setenv("AUTHCLAW_SECRET_PROVIDER", "env")
+    monkeypatch.setenv("ENVELOPE_KEY", "YXV0aGNsYXctbG9jYWwtZmVybmV0LWtleS1jaGFuZ2U=")
+    monkeypatch.setenv("AUTHCLAW_REQUIRE_SERVICE_TLS", "false")
+
+    with pytest.raises(RuntimeError, match="shared environments"):
+        validate_production_environment()
+
+
+def test_unknown_environment_is_rejected(monkeypatch):
+    monkeypatch.setenv("AUTHCLAW_ENV", "production-us")
+    with pytest.raises(RuntimeError, match="AUTHCLAW_ENV"):
+        validate_production_environment()
+
+
+def test_shared_backend_clickhouse_requires_non_default_password(monkeypatch):
+    monkeypatch.setenv("AUTHCLAW_ENV", "staging")
+    _set_shared_environment_secrets(monkeypatch)
+    monkeypatch.setenv("CLICKHOUSE_HOST", "clickhouse.internal")
+    monkeypatch.setenv("CLICKHOUSE_PASSWORD", "authclaw")
+
+    with pytest.raises(RuntimeError, match="CLICKHOUSE_PASSWORD"):
+        validate_production_environment()
+
+
+def test_staging_kms_provider_requires_wrapped_key_and_identifier(monkeypatch):
+    monkeypatch.setenv("AUTHCLAW_ENV", "staging")
+    _set_shared_environment_secrets(monkeypatch)
+    monkeypatch.setenv("AUTHCLAW_SECRET_PROVIDER", "aws_kms")
+    monkeypatch.delenv("AWS_KMS_ENCRYPTED_DATA_KEY", raising=False)
+    monkeypatch.delenv("KMS_ENCRYPTED_DATA_KEY", raising=False)
+    monkeypatch.delenv("AUTHCLAW_AWS_KMS_KEY_ID", raising=False)
+    monkeypatch.delenv("AWS_KMS_KEY_ID", raising=False)
+
+    with pytest.raises(RuntimeError) as exc:
+        validate_production_environment()
+
+    assert "AWS_KMS_ENCRYPTED_DATA_KEY" in str(exc.value)
     assert "AUTHCLAW_AWS_KMS_KEY_ID" in str(exc.value)

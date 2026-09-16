@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -63,30 +61,8 @@ func loadGatewayRateLimitConfig() gatewayRateLimitConfig {
 	}
 }
 
-func fixedWindowRateLimit(ctx context.Context, key string, limit int, ttl time.Duration) (bool, int64, error) {
-	if limit <= 0 {
-		return false, 0, nil
-	}
-	if RedisClient == nil {
-		InitRedis()
-	}
-	pipe := RedisClient.Pipeline()
-	incr := pipe.Incr(ctx, key)
-	pipe.Expire(ctx, key, ttl)
-	if _, err := pipe.Exec(ctx); err != nil {
-		return false, 0, err
-	}
-	count := incr.Val()
-	return count > int64(limit), count, nil
-}
-
 func writeRateLimitError(w http.ResponseWriter, status int, code string, message string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{
-		"error":   code,
-		"message": message,
-	})
+	writeGatewayError(w, status, code, message)
 }
 
 func RateLimitMiddleware(next http.Handler) http.Handler {
@@ -114,7 +90,7 @@ func RateLimitMiddleware(next http.Handler) http.Handler {
 		}
 
 		now := time.Now().UTC()
-		keyPrefix := fmt.Sprintf("gateway_limit:%s:%s", tenantID, apiKeyHash[:16])
+		keyPrefix := fmt.Sprintf("authclaw:gateway-limit:v2:{%s:%s}", tenantID, apiKeyHash[:16])
 		checks := []struct {
 			name    string
 			key     string
@@ -149,7 +125,7 @@ func RateLimitMiddleware(next http.Handler) http.Handler {
 			exceeded, _, err := fixedWindowRateLimit(r.Context(), check.key, check.limit, check.ttl)
 			if err != nil {
 				writeRateLimitError(w, http.StatusServiceUnavailable, "RateLimitUnavailable", "Rate limiter unavailable. Request blocked for safety.")
-				EmitAuditEvent(&AuditEvent{
+				EmitAuditEvent(r.Context(), &AuditEvent{
 					ID: generateID(), RequestID: requestID, Timestamp: time.Now(),
 					TenantID: tenantID, Action: "block", DecisionReason: "Rate limiter unavailable",
 					ResponseStatus: http.StatusServiceUnavailable, DurationMs: 0,
@@ -158,7 +134,7 @@ func RateLimitMiddleware(next http.Handler) http.Handler {
 			}
 			if exceeded {
 				writeRateLimitError(w, http.StatusTooManyRequests, "RateLimitExceeded", check.message)
-				EmitAuditEvent(&AuditEvent{
+				EmitAuditEvent(r.Context(), &AuditEvent{
 					ID: generateID(), RequestID: requestID, Timestamp: time.Now(),
 					TenantID: tenantID, Action: "block", DecisionReason: "Rate limit exceeded: " + check.name,
 					ResponseStatus: http.StatusTooManyRequests, DurationMs: 0,

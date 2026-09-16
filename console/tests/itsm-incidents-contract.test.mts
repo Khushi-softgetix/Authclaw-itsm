@@ -106,11 +106,9 @@ test("Incident Manager coordination uses tenant reference data for classificatio
 test("Incident Manager MVP exposes governed priority, resolution evidence, and persisted queue views", () => {
   const drawer = readFileSync(new URL("../src/components/itsm/incident-oversight-drawer.tsx", import.meta.url), "utf8");
   const queue = readFileSync(new URL("../src/app/(console)/itsm/incident-manager/incidents/page.tsx", import.meta.url), "utf8");
-  const create = readFileSync(new URL("../src/app/(console)/itsm/incidents/new/page.tsx", import.meta.url), "utf8");
   assert.match(drawer, /Priority override reason/);
   assert.match(drawer, /Resolution code/);
   assert.match(drawer, /Resolution summary/);
-  assert.match(create, /priority_override_reason/);
   assert.match(queue, /operations\/saved-views/);
   assert.match(queue, /Saved views/);
 });

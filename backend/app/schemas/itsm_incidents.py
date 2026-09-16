@@ -17,7 +17,7 @@ class IncidentCreateRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=512, description="Short incident summary")
     description: str = Field(..., min_length=1, description="Full description of the degradation or outage")
     impact: str = Field(default="MEDIUM", description="LOW, MEDIUM, HIGH, CRITICAL")
-    urgency: str = Field(default="MEDIUM", description="LOW, MEDIUM, HIGH, CRITICAL")
+    urgency: Optional[str] = Field(default=None, description="LOW, MEDIUM, HIGH, CRITICAL")
     priority: Optional[str] = Field(default=None, description="P1, P2, P3, P4 (auto-derived if omitted)")
     priority_override_reason: Optional[str] = Field(default=None, max_length=1000)
     service_id: Optional[UUID] = Field(default=None, description="Affected service ID")

@@ -4,15 +4,14 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-  Building,
-  ChevronDown,
-  Flame,
+  LayoutDashboard,
+  ListFilter,
   LogOut,
   Menu,
+  Radio,
   ShieldAlert,
   X,
 } from "lucide-react";
-import NotificationBell from "@/components/notification-bell";
 
 interface IncidentManagerShellProps {
   children: React.ReactNode;
@@ -26,15 +25,15 @@ interface IncidentManagerShellProps {
 export default function IncidentManagerShell({
   children,
   userEmail,
-  tenantId,
-  tenantName,
-  userRole,
-  itsmRole,
 }: IncidentManagerShellProps) {
   const pathname = usePathname();
   const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
+  const navItems = [
+    { href: "/itsm/incident-manager", label: "Overview", icon: LayoutDashboard, exact: true },
+    { href: "/itsm/incident-manager/incidents", label: "Incident Queue", icon: ListFilter },
+    { href: "/itsm/incident-manager/major-incidents", label: "Major incident command", icon: Radio },
+  ];
 
   const handleLogout = async () => {
     try {
@@ -53,41 +52,42 @@ export default function IncidentManagerShell({
           Workspace
         </p>
         <div className="space-y-1">
-          <Link
-            href="/itsm/incident-manager"
-            onClick={onClick}
-            className={`flex items-center gap-2.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
-              pathname === "/itsm/incident-manager"
-                ? "bg-[#FEF2F2] text-[#DC2626]"
-                : "text-[#475069] hover:bg-[#F5F7FA] hover:text-[#0E1726]"
-            }`}
-          >
-            <Flame className="w-4 h-4 text-[#DC2626]" />
-            <span>Incident Manager</span>
-          </Link>
+          {navItems.map(({ href, label, icon: Icon, exact }) => {
+            const active = exact ? pathname === href : pathname.startsWith(href);
+            return (
+              <Link key={href} href={href} onClick={onClick} aria-current={active ? "page" : undefined}
+                className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-150 ${active ? "border-l-2 border-[#6D28D9] bg-[#F1ECFE] text-[#6D28D9]" : "text-[#475069] hover:bg-[#F5F7FA] hover:text-[#0E1726]"}`}>
+                <Icon className={`h-4 w-4 ${active ? "text-[#6D28D9]" : "text-[#6B7488]"}`} />
+                <span>{label}</span>
+              </Link>
+            );
+          })}
         </div>
       </div>
     </div>
   );
 
   return (
-    <div className="min-h-screen bg-[#FBFAF9] text-[#0E1726] flex">
+    <div className="authclaw-console flex min-h-screen flex-col bg-[#FBFAF9] font-sans text-[#0E1726]">
+      <header className="m-3 flex items-center justify-between rounded-[20px] border border-[#E6E9F0] bg-white px-4 py-3 shadow-[0_1px_2px_rgba(11,31,63,.05),0_12px_30px_-12px_rgba(11,31,63,.18)] md:hidden">
+        <Link href="/itsm/incident-manager" className="flex items-center gap-2.5">
+          <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[#6D28D9] shadow-[0_8px_20px_-8px_rgba(109,40,217,.6)]">
+            <ShieldAlert className="h-4 w-4 text-white" />
+          </span>
+          <span className="text-sm font-bold">AuthClaw ITSM</span>
+        </Link>
+        <button type="button" onClick={() => setMobileMenuOpen(true)} className="rounded-lg p-2 text-[#475069] hover:bg-[#F5F7FA]" aria-label="Open navigation"><Menu className="h-5 w-5" /></button>
+      </header>
+      <div className="relative flex flex-1">
       {/* Desktop Left Sidebar */}
-      <aside className="hidden md:flex w-64 flex-col fixed inset-y-0 z-30 bg-white border-r border-[#E6E9F0]">
+      <aside className="sticky top-4 z-30 m-4 mr-0 hidden h-[calc(100vh-2rem)] w-64 flex-col overflow-hidden rounded-[20px] border border-[#E6E9F0] bg-white shadow-[0_1px_2px_rgba(11,31,63,.05),0_12px_30px_-12px_rgba(11,31,63,.18)] md:flex">
         {/* Brand Header */}
         <div className="h-16 px-6 flex items-center gap-3 border-b border-[#E6E9F0]">
           <Link href="/itsm/incident-manager" className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-[#DC2626] to-[#991B1B] flex items-center justify-center text-white shadow-xs">
+            <div className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[#6D28D9] text-white shadow-[0_8px_20px_-8px_rgba(109,40,217,.6)]">
               <ShieldAlert className="w-4 h-4" />
             </div>
-            <div>
-              <div className="text-xs font-bold tracking-tight text-[#0E1726]">
-                AuthClaw ITSM
-              </div>
-              <div className="text-[10px] font-medium text-[#DC2626]">
-                Incident Manager Portal
-              </div>
-            </div>
+            <div className="text-base font-bold tracking-wide text-[#0E1726]">AuthClaw ITSM</div>
           </Link>
         </div>
 
@@ -96,109 +96,25 @@ export default function IncidentManagerShell({
           {navLinks()}
         </div>
 
-        {/* Sidebar Footer / Tenant & Identity */}
-        <div className="p-4 border-t border-[#E6E9F0] bg-[#FAFAFA]">
-          <div className="flex items-center gap-2.5 px-2 py-1.5">
-            <div className="w-7 h-7 rounded-full bg-[#FEF2F2] text-[#DC2626] flex items-center justify-center text-[11px] font-bold border border-[#FECACA]">
+        {/* Sidebar Footer / Identity */}
+        <div className="border-t border-[#E6E9F0] bg-[#F5F7FA] p-4">
+          <div className="flex items-center gap-2.5 rounded-[12px] border border-[#DDD6FE] bg-white px-3 py-2.5 shadow-sm">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#C4B5FD] bg-[#F1ECFE] text-[10px] font-bold text-[#6D28D9]">
               IM
             </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-xs font-semibold text-[#0E1726] truncate">
-                {userEmail}
-              </p>
-              <p className="text-[10px] text-[#DC2626] font-medium truncate">
-                Incident Manager
-              </p>
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-xs font-semibold text-[#0E1726]" title={userEmail}>{userEmail}</p>
+              <p className="text-[10px] font-medium text-[#6D28D9]">Incident Manager</p>
             </div>
+            <button type="button" onClick={handleLogout} className="rounded-lg p-2 text-[#6B7488] transition hover:bg-[#F1ECFE] hover:text-[#5B21B6]" aria-label="Log out" title="Log out">
+              <LogOut className="h-4 w-4" />
+            </button>
           </div>
         </div>
       </aside>
 
       {/* Main Content Area */}
-      <div className="flex-1 md:pl-64 flex flex-col min-w-0">
-        {/* Top Header */}
-        <header className="h-16 sticky top-0 z-20 bg-white/95 backdrop-blur-md border-b border-[#E6E9F0] px-4 md:px-8 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => setMobileMenuOpen(true)}
-              className="md:hidden p-2 rounded-lg text-[#475069] hover:bg-[#F5F7FA] hover:text-[#0E1726]"
-              aria-label="Open mobile menu"
-            >
-              <Menu className="w-5 h-5" />
-            </button>
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-semibold px-2.5 py-1 rounded-md bg-[#FEF2F2] text-[#DC2626] border border-[#FECACA]">
-                Incident Manager
-              </span>
-              <span className="text-xs text-[#6B7488]">/</span>
-              <span className="text-xs font-medium text-[#0E1726]">Workspace</span>
-            </div>
-          </div>
-
-          {/* Right Header Utilities */}
-          <div className="flex items-center gap-3">
-            <NotificationBell />
-
-            {/* Profile Dropdown */}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setProfileDropdownOpen((prev) => !prev)}
-                className="flex items-center gap-2 pl-2 pr-1.5 py-1.5 rounded-lg hover:bg-[#F5F7FA] transition-colors text-left"
-              >
-                <div className="w-7 h-7 rounded-full bg-[#FEF2F2] text-[#DC2626] flex items-center justify-center text-xs font-bold border border-[#FECACA]">
-                  IM
-                </div>
-                <div className="hidden sm:block text-left">
-                  <div className="text-xs font-semibold text-[#0E1726] leading-tight truncate max-w-[140px]">
-                    {userEmail}
-                  </div>
-                  <div className="text-[10px] text-[#DC2626] font-medium leading-tight">
-                    Incident Manager
-                  </div>
-                </div>
-                <ChevronDown className="w-3.5 h-3.5 text-[#6B7488]" />
-              </button>
-
-              {profileDropdownOpen && (
-                <>
-                  <div
-                    className="fixed inset-0 z-40"
-                    onClick={() => setProfileDropdownOpen(false)}
-                  />
-                  <div className="absolute right-0 mt-1.5 w-60 rounded-xl bg-white border border-[#E6E9F0] shadow-lg py-2 z-50">
-                    <div className="px-3.5 py-2 border-b border-[#E6E9F0]">
-                      <p className="text-xs font-semibold text-[#0E1726] truncate">
-                        {userEmail}
-                      </p>
-                      <p className="text-[10px] text-[#DC2626] font-medium mt-0.5">
-                        Incident Manager
-                      </p>
-                      <div className="flex items-center gap-1.5 mt-2 text-[10px] text-[#6B7488]">
-                        <Building className="w-3 h-3 text-[#8E97A8]" />
-                        <span className="truncate">{tenantName}</span>
-                      </div>
-                    </div>
-                    <div className="pt-1">
-                      <button
-                        onClick={() => {
-                          setProfileDropdownOpen(false);
-                          handleLogout();
-                        }}
-                        className="w-full flex items-center gap-2 px-3.5 py-2 text-xs text-red-600 hover:bg-red-50 transition-colors"
-                      >
-                        <LogOut className="w-3.5 h-3.5" />
-                        <span>Log out</span>
-                      </button>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-        </header>
-
+      <div className="flex min-w-0 flex-1 flex-col bg-[#FBFAF9]">
         {/* Mobile Navigation Drawer */}
         {mobileMenuOpen && (
           <div className="fixed inset-0 z-50 md:hidden flex">
@@ -209,8 +125,8 @@ export default function IncidentManagerShell({
             <div className="relative w-64 bg-white flex flex-col h-full z-10 border-r border-[#E6E9F0]">
               <div className="h-16 px-5 flex items-center justify-between border-b border-[#E6E9F0]">
                 <div className="flex items-center gap-2">
-                  <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-[#DC2626] to-[#991B1B] flex items-center justify-center text-white font-bold text-xs">
-                    IM
+                  <div className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[#6D28D9] text-white">
+                    <ShieldAlert className="h-4 w-4" />
                   </div>
                   <span className="text-xs font-bold text-[#0E1726]">Incident Manager</span>
                 </div>
@@ -224,12 +140,20 @@ export default function IncidentManagerShell({
               <div className="flex-1 overflow-y-auto px-4 py-4">
                 {navLinks(() => setMobileMenuOpen(false))}
               </div>
+              <div className="border-t border-[#E6E9F0] bg-[#F5F7FA] p-4">
+                <div className="flex items-center gap-2.5 rounded-[12px] border border-[#DDD6FE] bg-white px-3 py-2.5">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-[#C4B5FD] bg-[#F1ECFE] text-[10px] font-bold text-[#6D28D9]">IM</div>
+                  <div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold text-[#0E1726]">{userEmail}</p><p className="text-[10px] font-medium text-[#6D28D9]">Incident Manager</p></div>
+                  <button type="button" onClick={handleLogout} className="rounded-lg p-2 text-[#6B7488] hover:bg-[#F1ECFE] hover:text-[#5B21B6]" aria-label="Log out"><LogOut className="h-4 w-4" /></button>
+                </div>
+              </div>
             </div>
           </div>
         )}
 
         {/* Workspace Body */}
-        <main className="flex-1 p-6 md:p-8">{children}</main>
+        <main className="flex-1 px-4 py-6 sm:px-6 md:px-8 md:py-8">{children}</main>
+      </div>
       </div>
     </div>
   );

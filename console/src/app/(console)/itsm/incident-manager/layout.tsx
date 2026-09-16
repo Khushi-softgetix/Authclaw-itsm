@@ -1,6 +1,12 @@
 import React from "react";
+import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+
+export const metadata: Metadata = {
+  title: "Incident Manager | AuthClaw ITSM",
+  description: "Incident Manager operational workspace in AuthClaw ITSM.",
+};
 
 export default async function IncidentManagerLayout({
   children,
@@ -35,8 +41,8 @@ export default async function IncidentManagerLayout({
     redirect("/itsm/login?error=access_denied");
   }
 
-  // 2. Server-side guard: Only INCIDENT_MANAGER (and SERVICE_LEAD for internal compatibility) is allowed
-  if (itsmRole !== "INCIDENT_MANAGER" && itsmRole !== "SERVICE_LEAD") {
+  // 2. Server-side guard mirrors the backend Incident Manager authorization.
+  if (itsmRole !== "INCIDENT_MANAGER") {
     redirect("/itsm/incidents?error=incident_manager_required");
   }
 

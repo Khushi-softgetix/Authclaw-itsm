@@ -5,10 +5,10 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
-from app.core.auth import get_current_tenant, get_tenant_db
+from app.core.auth import ensure_itsm_role, get_current_tenant, get_tenant_db, require_itsm_roles
 from app.schemas.itsm_incidents import (
     IncidentActivityCreateRequest,
     IncidentActivityResponse,
@@ -17,10 +17,147 @@ from app.schemas.itsm_incidents import (
     IncidentResponse,
     IncidentStatusUpdateRequest,
     IncidentUpdateRequest,
+    IncidentOperationsDashboardResponse,
+    IncidentOperationsQueueResponse,
+    IncidentOperationsReferenceDataResponse,
+    MajorIncidentParticipantResponse,
+    MajorIncidentDeclareRequest, MajorIncidentResponse, MajorIncidentUpdateRequest,
+    IncidentSavedViewCreateRequest, IncidentSavedViewResponse,
 )
 from app.services.itsm_incident_service import IncidentService
+from app.services.itsm_incident_operations import (
+    OPEN_STATUSES,
+    build_operations_dashboard,
+    evaluate_incident_operations,
+)
 
 router = APIRouter()
+
+
+@router.get("/operations/saved-views", response_model=list[IncidentSavedViewResponse])
+def list_incident_saved_views(request: Request, db: Session = Depends(get_tenant_db), tenant_id: str = Depends(get_current_tenant), _incident_manager: None = require_itsm_roles(["INCIDENT_MANAGER"])):
+    return IncidentService.list_saved_views(db, UUID(tenant_id), UUID(str(request.state.user_id)))
+
+
+@router.post("/operations/saved-views", response_model=IncidentSavedViewResponse, status_code=status.HTTP_201_CREATED)
+def save_incident_view(payload: IncidentSavedViewCreateRequest, request: Request, db: Session = Depends(get_tenant_db), tenant_id: str = Depends(get_current_tenant), _incident_manager: None = require_itsm_roles(["INCIDENT_MANAGER"])):
+    return IncidentService.create_saved_view(db, UUID(tenant_id), UUID(str(request.state.user_id)), payload)
+
+
+@router.delete("/operations/saved-views/{view_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_incident_saved_view(view_id: UUID, request: Request, db: Session = Depends(get_tenant_db), tenant_id: str = Depends(get_current_tenant), _incident_manager: None = require_itsm_roles(["INCIDENT_MANAGER"])):
+    IncidentService.delete_saved_view(db, UUID(tenant_id), UUID(str(request.state.user_id)), view_id)
+
+
+@router.get(
+    "/operations/reference-data",
+    response_model=IncidentOperationsReferenceDataResponse,
+    summary="Incident Manager coordination reference data",
+)
+def incident_manager_reference_data(
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+    _incident_manager: None = require_itsm_roles(["INCIDENT_MANAGER"]),
+):
+    return IncidentService.get_incident_reference_data(db, UUID(tenant_id))
+
+
+@router.get(
+    "/operations/participants",
+    response_model=list[MajorIncidentParticipantResponse],
+    summary="List eligible Major Incident command participants",
+)
+def incident_manager_command_participants(
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+    _incident_manager: None = require_itsm_roles(["INCIDENT_MANAGER"]),
+):
+    return IncidentService.list_major_command_participants(db, UUID(tenant_id), commanders_only=True)
+
+
+@router.get(
+    "/operations/queue",
+    response_model=IncidentOperationsQueueResponse,
+    summary="Incident Manager operational queue",
+)
+def incident_manager_operations_queue(
+    status_filter: Optional[str] = Query(default=None, alias="status"),
+    priority: Optional[str] = Query(default=None),
+    attention: Optional[str] = Query(
+        default=None,
+        description="WATCH, PRIORITY, SLA_AT_RISK, SLA_BREACHED, or STUCK",
+    ),
+    assignment_group: Optional[str] = Query(default=None),
+    assignee_id: Optional[UUID] = Query(default=None),
+    unassigned: bool = Query(default=False, description="Only incidents without an individual assignee"),
+    search: Optional[str] = Query(default=None),
+    command_scope: bool = Query(default=False),
+    sort_by: str = Query(default="priority", pattern="^(priority|sla_due|updated)$"),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+    _incident_manager: None = require_itsm_roles(["INCIDENT_MANAGER"]),
+):
+    tenant_uuid = UUID(tenant_id)
+    if unassigned and assignee_id:
+        raise HTTPException(status_code=422, detail="assignee_id and unassigned cannot be combined")
+    incident_ids = None
+    if attention:
+        normalized_attention = attention.strip().upper()
+        dashboard = build_operations_dashboard(db, tenant_uuid)
+        attention_sources = {
+            "WATCH": dashboard["escalation_watch"],
+            "PRIORITY": dashboard["priority_watch"],
+            "SLA_AT_RISK": dashboard["sla_at_risk"],
+            "SLA_BREACHED": dashboard["sla_breached"],
+            "STUCK": dashboard["stuck"],
+        }
+        if normalized_attention not in attention_sources:
+            raise HTTPException(status_code=422, detail="Unsupported attention filter")
+        incident_ids = {
+            UUID(str(item["incident_id"]))
+            for item in attention_sources[normalized_attention]
+        }
+
+    incidents, total = IncidentService.list_incident_operations_queue(
+        db,
+        tenant_uuid,
+        status_filter=status_filter,
+        priority=priority,
+        assignment_group=assignment_group,
+        assignee_id=assignee_id,
+        unassigned_only=unassigned,
+        search=search,
+        incident_ids=incident_ids,
+        command_scope=command_scope,
+        sort_by=sort_by,
+        offset=offset,
+        limit=limit,
+    )
+    open_incidents = [ticket for ticket in incidents if ticket.status in OPEN_STATUSES]
+    operations = {
+        UUID(str(item["incident_id"])): item
+        for item in evaluate_incident_operations(db, tenant_uuid, open_incidents)
+    }
+    return {
+        "items": [
+            {"incident": ticket, "operations": operations.get(ticket.id)}
+            for ticket in incidents
+        ],
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+    }
+
+
+@router.get("/operations/dashboard", response_model=IncidentOperationsDashboardResponse, summary="Incident Manager operational dashboard")
+def incident_manager_dashboard(
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+    _incident_manager: None = require_itsm_roles(["INCIDENT_MANAGER"]),
+):
+    return build_operations_dashboard(db, UUID(tenant_id))
 
 
 @router.post(
@@ -114,6 +251,8 @@ def update_incident(
     db: Session = Depends(get_tenant_db),
     tenant_id: str = Depends(get_current_tenant),
 ):
+    if any(getattr(payload, field) is not None for field in ("priority", "assignee_id", "assignment_group", "is_major_incident")):
+        ensure_itsm_role(request, db, ["INCIDENT_MANAGER"])
     actor_id = request.state.user_id
     return IncidentService.update_incident(
         db=db,
@@ -159,6 +298,7 @@ def assign_incident(
     request: Request,
     db: Session = Depends(get_tenant_db),
     tenant_id: str = Depends(get_current_tenant),
+    _incident_manager: None = require_itsm_roles(["INCIDENT_MANAGER"]),
 ):
     actor_id = request.state.user_id
     return IncidentService.assign_incident(
@@ -168,6 +308,21 @@ def assign_incident(
         actor_id=UUID(str(actor_id)),
         payload=payload,
     )
+
+
+@router.post("/{incident_id}/major-incident", response_model=MajorIncidentResponse, status_code=status.HTTP_201_CREATED, summary="Declare a major incident")
+def declare_major_incident(incident_id: UUID, payload: MajorIncidentDeclareRequest, request: Request, db: Session = Depends(get_tenant_db), tenant_id: str = Depends(get_current_tenant), _incident_manager: None = require_itsm_roles(["INCIDENT_MANAGER"])):
+    return IncidentService.declare_major_incident(db, UUID(tenant_id), incident_id, UUID(str(request.state.user_id)), payload)
+
+
+@router.get("/{incident_id}/major-incident", response_model=MajorIncidentResponse, summary="Read major incident command details")
+def get_major_incident(incident_id: UUID, db: Session = Depends(get_tenant_db), tenant_id: str = Depends(get_current_tenant), _incident_manager: None = require_itsm_roles(["INCIDENT_MANAGER"])):
+    return IncidentService.get_major_incident(db, UUID(tenant_id), incident_id)
+
+
+@router.patch("/{incident_id}/major-incident", response_model=MajorIncidentResponse, summary="Update major incident command details")
+def update_major_incident(incident_id: UUID, payload: MajorIncidentUpdateRequest, request: Request, db: Session = Depends(get_tenant_db), tenant_id: str = Depends(get_current_tenant), _incident_manager: None = require_itsm_roles(["INCIDENT_MANAGER"])):
+    return IncidentService.update_major_incident(db, UUID(tenant_id), incident_id, UUID(str(request.state.user_id)), payload)
 
 
 @router.post(

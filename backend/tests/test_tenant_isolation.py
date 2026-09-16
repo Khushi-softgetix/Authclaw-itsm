@@ -8,8 +8,11 @@ transaction is authenticated with a real opaque session registered in authn.
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from uuid import UUID, uuid4
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.exc import DBAPIError
@@ -122,8 +125,11 @@ def isolation() -> IsolationHarness:
     owner_engine, app_engine, testing_session_local = _engines()
     with owner_engine.begin() as conn:
         revision = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()
-        if revision != "041":
-            pytest.fail(f"tenant isolation tests require migration 041, found {revision!r}")
+        config = Config()
+        config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
+        heads = ScriptDirectory.from_config(config).get_heads()
+        if revision not in heads:
+            pytest.fail(f"tenant isolation tests require a current migration head {heads!r}, found {revision!r}")
         conn.execute(text("TRUNCATE TABLE public.tenants CASCADE"))
     return IsolationHarness(owner_engine, app_engine, testing_session_local)
 

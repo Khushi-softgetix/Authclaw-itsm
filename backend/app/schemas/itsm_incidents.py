@@ -1,10 +1,10 @@
 """Pydantic schemas for ITSM Incident Management."""
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Any, Optional
-from uuid import UUID
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from datetime import datetime, timezone
+from typing import Any, Literal, Optional
+from uuid import UUID, uuid4
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 VALID_IMPACTS = {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
@@ -19,7 +19,9 @@ class IncidentCreateRequest(BaseModel):
     impact: str = Field(default="MEDIUM", description="LOW, MEDIUM, HIGH, CRITICAL")
     urgency: str = Field(default="MEDIUM", description="LOW, MEDIUM, HIGH, CRITICAL")
     priority: Optional[str] = Field(default=None, description="P1, P2, P3, P4 (auto-derived if omitted)")
+    priority_override_reason: Optional[str] = Field(default=None, max_length=1000)
     service_id: Optional[UUID] = Field(default=None, description="Affected service ID")
+    configuration_item_id: Optional[UUID] = Field(default=None, description="Affected configuration item ID")
     category_id: Optional[UUID] = Field(default=None, description="Category hierarchy ID")
     category: str = Field(default="GENERAL", max_length=100, description="Top-level category code or label")
     subcategory: Optional[str] = Field(default=None, max_length=100, description="Subcategory code or label")
@@ -27,6 +29,14 @@ class IncidentCreateRequest(BaseModel):
     assignment_group: Optional[str] = Field(default=None, max_length=100, description="Assigned team/rotation")
     is_major_incident: bool = Field(default=False, description="Whether this is flagged as a major incident")
     source_channel: str = Field(default="PORTAL", max_length=50, description="PORTAL, API, EMAIL, AGENT, PHONE")
+
+    @field_validator("impact", "urgency")
+    @classmethod
+    def validate_classification(cls, value: str) -> str:
+        value = value.strip().upper()
+        if value not in VALID_IMPACTS:
+            raise ValueError("Must be LOW, MEDIUM, HIGH, or CRITICAL")
+        return value
 
     model_config = ConfigDict(extra="forbid")
 
@@ -37,13 +47,22 @@ class IncidentUpdateRequest(BaseModel):
     impact: Optional[str] = None
     urgency: Optional[str] = None
     priority: Optional[str] = None
+    priority_override_reason: Optional[str] = Field(default=None, max_length=1000)
     service_id: Optional[UUID] = None
+    configuration_item_id: Optional[UUID] = None
     category_id: Optional[UUID] = None
     category: Optional[str] = Field(default=None, max_length=100)
     subcategory: Optional[str] = Field(default=None, max_length=100)
     assignee_id: Optional[UUID] = None
     assignment_group: Optional[str] = Field(default=None, max_length=100)
     is_major_incident: Optional[bool] = None
+
+    @field_validator("impact", "urgency")
+    @classmethod
+    def validate_classification(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        return IncidentCreateRequest.validate_classification(value)
 
     model_config = ConfigDict(extra="forbid")
 
@@ -62,6 +81,129 @@ class IncidentAssignRequest(BaseModel):
     assignment_group: Optional[str] = Field(default=None, max_length=100, description="Assigned operational group")
 
     model_config = ConfigDict(extra="forbid")
+
+
+class MajorIncidentRestorationCheckpoint(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    title: str = Field(..., min_length=1, max_length=255)
+    owner_id: Optional[UUID] = None
+    target_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    note: Optional[str] = Field(default=None, max_length=2000)
+    model_config = ConfigDict(extra="forbid")
+
+
+class MajorIncidentDecision(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    summary: str = Field(..., min_length=1, max_length=2000)
+    owner_id: Optional[UUID] = None
+    context: Optional[str] = Field(default=None, max_length=2000)
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    model_config = ConfigDict(extra="forbid")
+
+
+class MajorIncidentTask(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    title: str = Field(..., min_length=1, max_length=255)
+    owner_id: Optional[UUID] = None
+    due_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    note: Optional[str] = Field(default=None, max_length=2000)
+    model_config = ConfigDict(extra="forbid")
+
+
+class MajorIncidentStakeholder(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    name: str = Field(..., min_length=1, max_length=255)
+    role: Optional[str] = Field(default=None, max_length=255)
+    contact: Optional[str] = Field(default=None, max_length=512)
+    model_config = ConfigDict(extra="forbid")
+
+
+class MajorIncidentCommunication(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    audience: str = Field(..., min_length=1, max_length=255)
+    channel: str = Field(..., min_length=1, max_length=255)
+    message: str = Field(..., min_length=1, max_length=4000)
+    approver_id: Optional[UUID] = None
+    status: Literal["DRAFT", "APPROVED", "COMMUNICATED"] = "DRAFT"
+    recorded_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    model_config = ConfigDict(extra="forbid")
+
+
+class MajorIncidentParticipantResponse(BaseModel):
+    id: UUID
+    email: str
+
+
+class IncidentReferenceItem(BaseModel):
+    id: UUID
+    name: str
+    code: Optional[str] = None
+    parent_id: Optional[UUID] = None
+    service_id: Optional[UUID] = None
+    status: Optional[str] = None
+
+
+class IncidentOperationsReferenceDataResponse(BaseModel):
+    users: list[MajorIncidentParticipantResponse]
+    commanders: list[MajorIncidentParticipantResponse] = Field(default_factory=list)
+    teams: list[IncidentReferenceItem]
+    services: list[IncidentReferenceItem]
+    configuration_items: list[IncidentReferenceItem]
+    categories: list[IncidentReferenceItem]
+
+
+class MajorIncidentDeclareRequest(BaseModel):
+    incident_commander_id: Optional[UUID] = None
+    communication_lead_id: Optional[UUID] = None
+    bridge_url: Optional[str] = Field(default=None, max_length=1024)
+    communication_channel: Optional[str] = Field(default=None, max_length=255)
+    impacted_business_units: list[str] = Field(default_factory=list)
+    affected_service_ids: list[UUID] = Field(default_factory=list, max_length=100)
+    affected_configuration_item_ids: list[UUID] = Field(default_factory=list, max_length=100)
+    customer_impact_description: Optional[str] = None
+    executive_summary: Optional[str] = None
+    restoration_checkpoints: list[MajorIncidentRestorationCheckpoint] = Field(default_factory=list, max_length=100)
+    command_decisions: list[MajorIncidentDecision] = Field(default_factory=list, max_length=100)
+    command_tasks: list[MajorIncidentTask] = Field(default_factory=list, max_length=100)
+    stakeholders: list[MajorIncidentStakeholder] = Field(default_factory=list, max_length=100)
+    command_communications: list[MajorIncidentCommunication] = Field(default_factory=list, max_length=100)
+    model_config = ConfigDict(extra="forbid")
+
+
+class MajorIncidentUpdateRequest(MajorIncidentDeclareRequest):
+    postmortem_status: Optional[Literal["PENDING", "IN_PROGRESS", "COMPLETE"]] = None
+    postmortem_url: Optional[str] = Field(default=None, max_length=1024)
+
+
+class MajorIncidentResponse(BaseModel):
+    id: UUID
+    tenant_id: UUID
+    ticket_id: UUID
+    incident_commander_id: Optional[UUID] = None
+    communication_lead_id: Optional[UUID] = None
+    bridge_url: Optional[str] = None
+    communication_channel: Optional[str] = None
+    declared_at: datetime
+    declared_by_id: UUID
+    postmortem_status: str
+    postmortem_url: Optional[str] = None
+    resolved_at: Optional[datetime] = None
+    closed_at: Optional[datetime] = None
+    executive_summary: Optional[str] = None
+    impacted_business_units: list[str] = Field(default_factory=list)
+    affected_service_ids: list[UUID] = Field(default_factory=list)
+    affected_configuration_item_ids: list[UUID] = Field(default_factory=list)
+    customer_impact_description: Optional[str] = None
+    restoration_checkpoints: list[MajorIncidentRestorationCheckpoint] = Field(default_factory=list)
+    command_decisions: list[MajorIncidentDecision] = Field(default_factory=list)
+    command_tasks: list[MajorIncidentTask] = Field(default_factory=list)
+    stakeholders: list[MajorIncidentStakeholder] = Field(default_factory=list)
+    command_communications: list[MajorIncidentCommunication] = Field(default_factory=list)
+    created_at: datetime
+    updated_at: datetime
+    model_config = ConfigDict(from_attributes=True)
 
 
 class IncidentActivityCreateRequest(BaseModel):
@@ -127,6 +269,7 @@ class IncidentResponse(BaseModel):
     assignee_id: Optional[UUID] = None
     assignment_group: Optional[str] = None
     service_id: Optional[UUID] = None
+    configuration_item_id: Optional[UUID] = None
     category_id: Optional[UUID] = None
     category: str
     subcategory: Optional[str] = None
@@ -137,6 +280,8 @@ class IncidentResponse(BaseModel):
     sla_resolution_due_at: Optional[datetime] = None
     sla_resolution_met_at: Optional[datetime] = None
     sla_status: str
+    sla_paused_at: Optional[datetime] = None
+    sla_accumulated_pause_seconds: int = 0
     resolution_code: Optional[str] = None
     resolution_summary: Optional[str] = None
     resolved_at: Optional[datetime] = None
@@ -145,4 +290,92 @@ class IncidentResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    model_config = ConfigDict(from_attributes=True)
+
+
+class IncidentOperationsSLA(BaseModel):
+    status: Literal["NO_SLA", "WITHIN_SLA", "AT_RISK", "BREACHED"]
+    remaining_seconds: Optional[float] = None
+
+
+class IncidentOperationsItem(BaseModel):
+    incident_id: UUID
+    ticket_number: str
+    title: str
+    priority: str
+    status: str
+    assignment_group: Optional[str] = None
+    assignee_id: Optional[UUID] = None
+    assignee_email: Optional[str] = None
+    last_activity_at: Optional[datetime] = None
+    idle_seconds: Optional[float] = None
+    sla: IncidentOperationsSLA
+    attention_reasons: list[Literal["HIGH_PRIORITY", "SLA_AT_RISK", "SLA_BREACHED", "STUCK_IDLE"]]
+    watch: Literal["REQUIRES_ATTENTION", "NONE"]
+
+
+class IncidentWorkloadEntry(BaseModel):
+    key: str
+    label: str
+    open_incidents: int
+    p1_p2: int
+    sla_at_risk: int
+    sla_breached: int
+    stuck: int
+
+
+class IncidentOperationsWorkload(BaseModel):
+    by_assignment_group: dict[str, int]
+    by_assignee: dict[str, int]
+    assignment_groups: list[IncidentWorkloadEntry]
+    assignees: list[IncidentWorkloadEntry]
+
+
+class IncidentOperationsDashboardResponse(BaseModel):
+    summary: dict[str, int]
+    priority_watch: list[IncidentOperationsItem]
+    sla_at_risk: list[IncidentOperationsItem]
+    sla_breached: list[IncidentOperationsItem]
+    stuck: list[IncidentOperationsItem]
+    escalation_watch: list[IncidentOperationsItem]
+    workload: IncidentOperationsWorkload
+    policy: dict[str, Any]
+
+
+class IncidentOperationsQueueItem(BaseModel):
+    incident: IncidentResponse
+    operations: Optional[IncidentOperationsItem] = None
+
+
+class IncidentOperationsQueueResponse(BaseModel):
+    items: list[IncidentOperationsQueueItem]
+    total: int
+    offset: int
+    limit: int
+
+
+class IncidentSavedViewFilters(BaseModel):
+    search: Optional[str] = Field(default=None, max_length=512)
+    status: Optional[str] = None
+    priority: Optional[str] = None
+    attention: Optional[Literal["WATCH", "PRIORITY", "SLA_AT_RISK", "SLA_BREACHED", "STUCK"]] = None
+    assignment_group: Optional[str] = Field(default=None, max_length=255)
+    assignee_id: Optional[UUID] = None
+    unassigned: bool = False
+    sort_by: Literal["priority", "sla_due", "updated"] = "priority"
+    model_config = ConfigDict(extra="forbid")
+
+
+class IncidentSavedViewCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    filters: IncidentSavedViewFilters
+    model_config = ConfigDict(extra="forbid")
+
+
+class IncidentSavedViewResponse(BaseModel):
+    id: UUID
+    name: str
+    filters: IncidentSavedViewFilters
+    created_at: datetime
+    updated_at: datetime
     model_config = ConfigDict(from_attributes=True)

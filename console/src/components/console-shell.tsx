@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  Bell,
   BookOpen,
   Building,
   Cable,
@@ -25,6 +26,7 @@ import {
   ShieldCheck,
   Sliders,
   Ticket,
+  User,
   Users,
   X,
 } from "lucide-react";
@@ -99,10 +101,25 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
   const normalizedRole = userRole?.toLowerCase() || "viewer";
   const hasPlatformAccess = platformRole.toUpperCase() === "ADMIN";
   const isItsm = pathname.startsWith("/itsm");
+  const effectiveItsmRole = (
+    itsmRole || (platformRole === "SUPER_ADMIN" ? "PLATFORM_ADMINISTRATOR" : "REQUESTER")
+  ).toUpperCase();
   const displayedRole = isItsm
     ? (itsmRole && ITSM_ROLE_LABELS[itsmRole.toUpperCase()]) || itsmRole?.replace(/_/g, " ") || "Requester"
     : (hasPlatformAccess ? "platform admin" : normalizedRole);
-  const activeNavigationList = isItsm ? itsmNavigation : navigation;
+
+  const activeNavigationList = isItsm
+    ? effectiveItsmRole === "REQUESTER"
+      ? [
+          { name: "Dashboard", href: "/itsm/dashboard", icon: LayoutDashboard, roles: readRoles },
+          { name: "My Tickets", href: "/itsm/incidents", icon: Ticket, roles: readRoles },
+          { name: "Report an Issue", href: "/itsm/incidents/new", icon: ClipboardCheck, roles: readRoles },
+          { name: "Service Catalog", href: "/itsm/services", icon: Layers, roles: readRoles },
+          { name: "Knowledge Base", href: "/itsm/knowledge", icon: BookOpen, roles: readRoles },
+          { name: "Notifications", href: "/itsm/notifications", icon: Bell, roles: readRoles },
+        ]
+      : itsmNavigation
+    : navigation;
   const allowedNavigation = activeNavigationList.filter((item) => item.roles.includes(normalizedRole));
 
   const handleLogout = async () => {
@@ -121,9 +138,13 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
     ? pathname.startsWith("/itsm/dashboard")
       ? "Dashboard"
       : pathname === "/itsm/incidents/new"
-      ? "Create Incident"
+      ? "Report an Issue"
       : pathname.startsWith("/itsm/incidents/")
       ? "Incident Details"
+      : pathname === "/itsm/notifications"
+      ? "Notifications"
+      : pathname === "/itsm/profile"
+      ? "Profile"
       : itsmNavigation.find((item) => pathname === item.href || pathname.startsWith(item.href))?.name || "ITSM"
     : navigation.find((item) => pathname === item.href)?.name || "Overview";
 
@@ -165,7 +186,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
               {isItsm ? "AuthClaw ITSM" : "AuthClaw"}
             </span>
             <span className="block text-[10px] uppercase tracking-wider text-[#6B7488]">
-              {isItsm ? "Service Management" : "Governance Layer"}
+              {isItsm ? "ITSM" : "Governance Layer"}
             </span>
           </div>
         </div>
@@ -192,7 +213,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
                 {isItsm ? "AuthClaw ITSM" : "AuthClaw"}
               </span>
               <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
-                {isItsm ? "Service Management" : "AI Governance Layer"}
+                {isItsm ? "ITSM" : "AI Governance Layer"}
               </span>
             </div>
           </div>
@@ -212,7 +233,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
 
         <div
           className={`fixed inset-0 z-50 flex transition-all duration-200 md:hidden ${
-            mobileMenuOpen ? "pointer-events-auto opacity-100" : "pointer-events-none opacity-0"
+            mobileMenuOpen ? "opacity-100 pointer-events-auto" : "opacity-0 pointer-events-none"
           }`}
         >
             <div className="fixed inset-0 bg-black/30 backdrop-blur-sm" onClick={() => setMobileMenuOpen(false)} />
@@ -231,7 +252,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
                       {isItsm ? "AuthClaw ITSM" : "AuthClaw"}
                     </span>
                     <span className="block text-[10px] font-semibold text-[#6B7488]">
-                      {isItsm ? "Service Management" : "Governance"}
+                      {isItsm ? "ITSM" : "Governance"}
                     </span>
                   </div>
                 </div>
@@ -299,6 +320,16 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
                       <p className="text-xs text-[#475069] truncate font-medium mt-0.5">{userEmail}</p>
                       <p className="text-[10px] text-[#6B7488] capitalize mt-0.5">{displayedRole}</p>
                     </div>
+                    {isItsm && (
+                      <Link
+                        href="/itsm/profile"
+                        onClick={() => setProfileDropdownOpen(false)}
+                        className="w-full flex items-center gap-2 px-4 py-2 text-left text-xs font-semibold text-[#475069] hover:bg-[#F5F7FA] hover:text-[#0E1726] border-b border-[#E6E9F0] transition-colors duration-150"
+                      >
+                        <User className="w-3.5 h-3.5 text-[#6D28D9]" />
+                        <span>My Profile</span>
+                      </Link>
+                    )}
                     <button
                       onClick={handleLogout}
                       className="w-full flex items-center gap-2 px-4 py-2.5 text-left text-sm text-red-400 hover:bg-red-500/5 hover:text-red-300 transition-colors duration-150"

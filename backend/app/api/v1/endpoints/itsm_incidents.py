@@ -5,7 +5,8 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_tenant, get_tenant_db
@@ -23,6 +24,19 @@ from app.services.itsm_incident_service import IncidentService
 router = APIRouter()
 
 
+def _get_itsm_role(db: Session, tenant_id: UUID, user_id: UUID) -> str:
+    try:
+        row = db.execute(
+            text("SELECT itsm_role FROM authn.lookup_itsm_user_access(:tenant_id, :user_id)"),
+            {"tenant_id": str(tenant_id), "user_id": str(user_id)},
+        ).first()
+        if row and row.itsm_role:
+            return str(row.itsm_role).upper()
+    except Exception:
+        pass
+    return "ADMIN"
+
+
 @router.post(
     "",
     response_model=IncidentResponse,
@@ -36,13 +50,43 @@ def create_incident(
     db: Session = Depends(get_tenant_db),
     tenant_id: str = Depends(get_current_tenant),
 ):
-    actor_id = request.state.user_id
-    return IncidentService.create_incident(
+    actor_id = UUID(str(request.state.user_id))
+    t_id = UUID(tenant_id)
+    role = _get_itsm_role(db, t_id, actor_id)
+
+    if not payload.urgency or str(payload.urgency).strip().upper() not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Urgency selection is required (High, Medium, or Low).",
+        )
+    payload.urgency = str(payload.urgency).strip().upper()
+
+    if role == "REQUESTER":
+        payload.assignee_id = None
+        payload.assignment_group = None
+        payload.is_major_incident = False
+
+    res = IncidentService.create_incident(
         db=db,
-        tenant_id=UUID(tenant_id),
-        actor_id=UUID(str(actor_id)),
+        tenant_id=t_id,
+        actor_id=actor_id,
         payload=payload,
     )
+    try:
+        from app.services.notifications import create_notification
+        create_notification(
+            db=db,
+            tenant_id=t_id,
+            user_id=actor_id,
+            type="itsm.incident.created",
+            severity="info",
+            title=f"Incident Created: {res.ticket_number}",
+            body=f"Your ticket '{res.title}' has been logged.",
+            link=f"/itsm/incidents/{res.id}",
+        )
+    except Exception:
+        pass
+    return res
 
 
 @router.get(
@@ -52,6 +96,7 @@ def create_incident(
     description="Retrieve paginated incidents for the current tenant with flexible filtering and text search.",
 )
 def list_incidents(
+    request: Request,
     status: Optional[str] = Query(default=None, description="Filter by status (e.g. NEW, IN_PROGRESS, RESOLVED)"),
     priority: Optional[str] = Query(default=None, description="Filter by priority (e.g. P1, P2, P3, P4)"),
     service_id: Optional[UUID] = Query(default=None, description="Filter by affected service ID"),
@@ -66,9 +111,16 @@ def list_incidents(
     db: Session = Depends(get_tenant_db),
     tenant_id: str = Depends(get_current_tenant),
 ):
+    actor_id = UUID(str(request.state.user_id))
+    t_id = UUID(tenant_id)
+    role = _get_itsm_role(db, t_id, actor_id)
+
+    if role == "REQUESTER":
+        requester_id = actor_id
+
     return IncidentService.list_incidents(
         db=db,
-        tenant_id=UUID(tenant_id),
+        tenant_id=t_id,
         status=status,
         priority=priority,
         service_id=service_id,
@@ -91,14 +143,24 @@ def list_incidents(
 )
 def get_incident(
     incident_id: UUID,
+    request: Request,
     db: Session = Depends(get_tenant_db),
     tenant_id: str = Depends(get_current_tenant),
 ):
-    return IncidentService.get_incident(
+    actor_id = UUID(str(request.state.user_id))
+    t_id = UUID(tenant_id)
+    role = _get_itsm_role(db, t_id, actor_id)
+
+    incident = IncidentService.get_incident(
         db=db,
-        tenant_id=UUID(tenant_id),
+        tenant_id=t_id,
         incident_id=incident_id,
     )
+
+    if role == "REQUESTER" and str(incident.requester_id) != str(actor_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
+
+    return incident
 
 
 @router.patch(
@@ -114,12 +176,21 @@ def update_incident(
     db: Session = Depends(get_tenant_db),
     tenant_id: str = Depends(get_current_tenant),
 ):
-    actor_id = request.state.user_id
+    actor_id = UUID(str(request.state.user_id))
+    t_id = UUID(tenant_id)
+    role = _get_itsm_role(db, t_id, actor_id)
+
+    if role == "REQUESTER":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Requesters are not permitted to modify operational incident details",
+        )
+
     return IncidentService.update_incident(
         db=db,
-        tenant_id=UUID(tenant_id),
+        tenant_id=t_id,
         incident_id=incident_id,
-        actor_id=UUID(str(actor_id)),
+        actor_id=actor_id,
         payload=payload,
     )
 
@@ -137,12 +208,21 @@ def change_incident_status(
     db: Session = Depends(get_tenant_db),
     tenant_id: str = Depends(get_current_tenant),
 ):
-    actor_id = request.state.user_id
+    actor_id = UUID(str(request.state.user_id))
+    t_id = UUID(tenant_id)
+    role = _get_itsm_role(db, t_id, actor_id)
+
+    if role == "REQUESTER":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Requesters are not permitted to change incident status",
+        )
+
     return IncidentService.change_status(
         db=db,
-        tenant_id=UUID(tenant_id),
+        tenant_id=t_id,
         incident_id=incident_id,
-        actor_id=UUID(str(actor_id)),
+        actor_id=actor_id,
         payload=payload,
     )
 
@@ -160,12 +240,21 @@ def assign_incident(
     db: Session = Depends(get_tenant_db),
     tenant_id: str = Depends(get_current_tenant),
 ):
-    actor_id = request.state.user_id
+    actor_id = UUID(str(request.state.user_id))
+    t_id = UUID(tenant_id)
+    role = _get_itsm_role(db, t_id, actor_id)
+
+    if role == "REQUESTER":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Requesters are not permitted to assign incidents",
+        )
+
     return IncidentService.assign_incident(
         db=db,
-        tenant_id=UUID(tenant_id),
+        tenant_id=t_id,
         incident_id=incident_id,
-        actor_id=UUID(str(actor_id)),
+        actor_id=actor_id,
         payload=payload,
     )
 
@@ -184,14 +273,40 @@ def add_incident_activity(
     db: Session = Depends(get_tenant_db),
     tenant_id: str = Depends(get_current_tenant),
 ):
-    actor_id = request.state.user_id
-    return IncidentService.add_activity(
+    actor_id = UUID(str(request.state.user_id))
+    t_id = UUID(tenant_id)
+    role = _get_itsm_role(db, t_id, actor_id)
+
+    incident = IncidentService.get_incident(db=db, tenant_id=t_id, incident_id=incident_id)
+
+    if role == "REQUESTER":
+        if str(incident.requester_id) != str(actor_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
+        payload.is_internal = False
+
+    res = IncidentService.add_activity(
         db=db,
-        tenant_id=UUID(tenant_id),
+        tenant_id=t_id,
         incident_id=incident_id,
-        actor_id=UUID(str(actor_id)),
+        actor_id=actor_id,
         payload=payload,
     )
+    try:
+        from app.services.notifications import create_notification
+        title = f"Comment added on {incident.ticket_number}" if str(actor_id) == str(incident.requester_id) else f"IT Agent update on {incident.ticket_number}"
+        create_notification(
+            db=db,
+            tenant_id=t_id,
+            user_id=incident.requester_id,
+            type="itsm.incident.comment",
+            severity="info",
+            title=title,
+            body=payload.content[:120],
+            link=f"/itsm/incidents/{incident.id}",
+        )
+    except Exception:
+        pass
+    return res
 
 
 @router.get(
@@ -202,11 +317,26 @@ def add_incident_activity(
 )
 def list_incident_activities(
     incident_id: UUID,
+    request: Request,
     db: Session = Depends(get_tenant_db),
     tenant_id: str = Depends(get_current_tenant),
 ):
-    return IncidentService.list_activities(
+    actor_id = UUID(str(request.state.user_id))
+    t_id = UUID(tenant_id)
+    role = _get_itsm_role(db, t_id, actor_id)
+
+    incident = IncidentService.get_incident(db=db, tenant_id=t_id, incident_id=incident_id)
+
+    if role == "REQUESTER" and str(incident.requester_id) != str(actor_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
+
+    activities = IncidentService.list_activities(
         db=db,
-        tenant_id=UUID(tenant_id),
+        tenant_id=t_id,
         incident_id=incident_id,
     )
+
+    if role == "REQUESTER":
+        activities = [a for a in activities if not getattr(a, "is_internal", False)]
+
+    return activities

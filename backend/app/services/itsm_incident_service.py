@@ -7,7 +7,7 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import text
+from sqlalchemy import case, text
 from sqlalchemy.orm import Session
 
 from app.db.models import (
@@ -369,6 +369,64 @@ class IncidentService:
             )
 
         return query.order_by(ITSMTicket.created_at.desc()).offset(offset).limit(limit).all()
+
+    @classmethod
+    def list_agent_queue(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        agent_id: UUID,
+        filter_mode: str = "all",
+        status: Optional[str] = None,
+        sort_by: str = "recently_updated",
+        offset: int = 0,
+        limit: int = 50,
+    ) -> list[ITSMTicket]:
+        query = db.query(ITSMTicket).filter(
+            ITSMTicket.tenant_id == tenant_id,
+            ITSMTicket.ticket_type == "INCIDENT",
+        )
+
+        if status:
+            query = query.filter(ITSMTicket.status == status.strip().upper())
+        else:
+            query = query.filter(ITSMTicket.status.notin_(["CLOSED", "CANCELLED"]))
+
+        mode = (filter_mode or "all").lower().strip()
+        if mode == "assigned_to_me":
+            query = query.filter(ITSMTicket.assignee_id == agent_id)
+        elif mode == "high_priority":
+            query = query.filter(ITSMTicket.priority.in_(["P1", "P2"]))
+        elif mode == "sla_risk":
+            query = query.filter(ITSMTicket.sla_status.in_(["AT_RISK", "BREACHED"]))
+
+        sort_order = (sort_by or "recently_updated").lower().strip()
+        if sort_order == "priority":
+            query = query.order_by(
+                case(
+                    (ITSMTicket.priority == "P1", 1),
+                    (ITSMTicket.priority == "P2", 2),
+                    (ITSMTicket.priority == "P3", 3),
+                    (ITSMTicket.priority == "P4", 4),
+                    else_=5,
+                ).asc(),
+                ITSMTicket.updated_at.desc(),
+            )
+        elif sort_order == "sla_risk":
+            query = query.order_by(
+                case(
+                    (ITSMTicket.sla_status == "BREACHED", 1),
+                    (ITSMTicket.sla_status == "AT_RISK", 2),
+                    (ITSMTicket.sla_status == "WITHIN_SLA", 3),
+                    else_=4,
+                ).asc(),
+                ITSMTicket.sla_resolution_due_at.asc().nullslast(),
+                ITSMTicket.updated_at.desc(),
+            )
+        else:
+            query = query.order_by(ITSMTicket.updated_at.desc())
+
+        return query.offset(offset).limit(limit).all()
 
     @classmethod
     def get_incident(cls, db: Session, tenant_id: UUID, incident_id: UUID) -> ITSMTicket:

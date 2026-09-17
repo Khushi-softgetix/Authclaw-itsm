@@ -125,8 +125,10 @@ class IncidentResponse(BaseModel):
     source_channel: str
     requester_id: UUID
     assignee_id: Optional[UUID] = None
+    assignee_email: Optional[str] = None
     assignment_group: Optional[str] = None
     service_id: Optional[UUID] = None
+    service_name: Optional[str] = None
     category_id: Optional[UUID] = None
     category: str
     subcategory: Optional[str] = None

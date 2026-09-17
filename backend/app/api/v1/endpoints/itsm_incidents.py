@@ -139,6 +139,44 @@ def list_incidents(
 
 
 @router.get(
+    "/queue",
+    response_model=list[IncidentResponse],
+    summary="List Service Agent work queue",
+    description="Retrieve workable incidents for the authenticated Service Agent within tenant context.",
+)
+def list_agent_queue(
+    request: Request,
+    filter_mode: str = Query(default="all", description="Queue filter: all, assigned_to_me, high_priority, sla_risk"),
+    ticket_status: Optional[str] = Query(default=None, alias="status", description="Filter by lifecycle status"),
+    sort_by: str = Query(default="recently_updated", description="Sort order: recently_updated, priority, sla_risk"),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    actor_id = UUID(str(request.state.user_id))
+    t_id = UUID(tenant_id)
+    role = _get_itsm_role(db, t_id, actor_id)
+
+    if role != "SERVICE_AGENT":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access restricted to Service Agents",
+        )
+
+    return IncidentService.list_agent_queue(
+        db=db,
+        tenant_id=t_id,
+        agent_id=actor_id,
+        filter_mode=filter_mode,
+        status=ticket_status,
+        sort_by=sort_by,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@router.get(
     "/{incident_id}",
     response_model=IncidentResponse,
     summary="Get single incident",
@@ -147,12 +185,19 @@ def list_incidents(
 def get_incident(
     incident_id: UUID,
     request: Request,
+    agent_view: bool = Query(default=False, description="Enforce Service Agent role restriction for agent workspace"),
     db: Session = Depends(get_tenant_db),
     tenant_id: str = Depends(get_current_tenant),
 ):
     actor_id = UUID(str(request.state.user_id))
     t_id = UUID(tenant_id)
     role = _get_itsm_role(db, t_id, actor_id)
+
+    if agent_view and role != "SERVICE_AGENT":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access restricted to Service Agents",
+        )
 
     incident = IncidentService.get_incident(
         db=db,

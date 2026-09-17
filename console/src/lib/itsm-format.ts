@@ -148,3 +148,34 @@ export function itsmAllowedTransitions(currentStatus: string): string[] {
   const norm = currentStatus?.toUpperCase() || "NEW";
   return APPROVED_TRANSITIONS[norm] || [];
 }
+
+export function itsmSlaConfig(status?: string | null) {
+  const norm = status?.toUpperCase() || "WITHIN_SLA";
+  switch (norm) {
+    case "WITHIN_SLA":
+    case "ON_TRACK":
+      return {
+        label: "On track",
+        badge: "bg-emerald-500/10 text-emerald-700 border-emerald-500/30",
+        dot: "bg-emerald-500",
+      };
+    case "AT_RISK":
+      return {
+        label: "At risk",
+        badge: "bg-amber-500/10 text-amber-700 border-amber-500/30",
+        dot: "bg-amber-500",
+      };
+    case "BREACHED":
+      return {
+        label: "Breached",
+        badge: "bg-red-500/10 text-red-600 border-red-500/30",
+        dot: "bg-red-500",
+      };
+    default:
+      return {
+        label: "Normal",
+        badge: "bg-slate-500/10 text-slate-600 border-slate-500/30",
+        dot: "bg-slate-400",
+      };
+  }
+}

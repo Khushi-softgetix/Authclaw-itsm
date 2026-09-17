@@ -25,8 +25,10 @@ export interface Incident {
   source_channel: string;
   requester_id: string;
   assignee_id?: string | null;
+  assignee_email?: string | null;
   assignment_group?: string | null;
   service_id?: string | null;
+  service_name?: string | null;
   category_id?: string | null;
   category: string;
   subcategory?: string | null;

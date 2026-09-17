@@ -33,7 +33,7 @@ export default async function DashboardRootPage() {
     case "REQUESTER":
       redirect("/itsm/dashboard/requester");
     case "SERVICE_AGENT":
-      redirect("/itsm/dashboard/service-agent");
+      redirect("/itsm/dashboard/agent");
     case "INCIDENT_MANAGER":
     case "SERVICE_LEAD":
       redirect("/itsm/incident-manager");
@@ -44,6 +44,6 @@ export default async function DashboardRootPage() {
     case "AUDITOR":
       redirect("/itsm/dashboard/auditor");
     default:
-      redirect("/itsm/dashboard/service-agent");
+      redirect("/itsm/dashboard/agent");
   }
 }

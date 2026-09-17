@@ -1261,6 +1261,14 @@ class ITSMTicket(Base):
     sla_policy = relationship("ITSMSLAPolicy")
     linked_problem = relationship("ITSMTicket", remote_side=[id], foreign_keys=[linked_problem_id])
 
+    @property
+    def service_name(self) -> str | None:
+        return self.service.name if self.service else None
+
+    @property
+    def assignee_email(self) -> str | None:
+        return self.assignee.email if self.assignee else None
+
     __table_args__ = (
         UniqueConstraint("tenant_id", "ticket_number", name="uq_itsm_tickets_tenant_number"),
         Index("idx_itsm_tickets_tenant_status", "tenant_id", "status"),

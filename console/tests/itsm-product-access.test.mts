@@ -136,7 +136,7 @@ test("ConsoleShell supports ITSM business roles", () => {
 
 test("Proxy middleware redirects unauthenticated /itsm routes to /itsm/login", () => {
   const proxyPath = path.join(consoleDir, "src/proxy.ts");
-  const proxySource = fs.readFileSync(proxyPath, "utf-8");
+  const proxySource = fs.readFileSync(proxyPath, "utf-8").replace(/\r\n/g, "\n");
 
   assert.ok(
     proxySource.includes('if (path.startsWith("/itsm")) {\n      return NextResponse.redirect(new URL("/itsm/login", request.url));\n    }'),

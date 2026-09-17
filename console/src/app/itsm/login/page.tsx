@@ -77,7 +77,7 @@ export default function ItsmLoginPage() {
           defaultRoute = "/itsm/incident-manager";
           break;
         case "SERVICE_AGENT":
-          defaultRoute = "/itsm/dashboard/service-agent";
+          defaultRoute = "/itsm/dashboard/agent";
           break;
         case "REQUESTER":
           defaultRoute = "/itsm/dashboard/requester";

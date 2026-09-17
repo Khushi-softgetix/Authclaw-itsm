@@ -93,6 +93,14 @@ const itsmNavigation: NavItem[] = [
   { name: "Reports & Audit", href: "/itsm/reports", icon: FileCheck, roles: readRoles },
 ];
 
+const serviceAgentNavigation: NavItem[] = [
+  { name: "My Work", href: "/itsm/dashboard/agent", icon: LayoutDashboard, roles: readRoles },
+  { name: "Incidents", href: "/itsm/incidents", icon: Ticket, roles: readRoles },
+  { name: "Requests", href: "/itsm/requests", icon: ClipboardCheck, roles: readRoles },
+  { name: "Knowledge", href: "/itsm/knowledge", icon: BookOpen, roles: readRoles },
+  { name: "Services", href: "/itsm/services", icon: Layers, roles: readRoles },
+];
+
 export default function ConsoleShell({ children, userEmail, tenantId, tenantName, userRole, platformRole = "NONE", itsmRole }: ConsoleShellProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -118,6 +126,8 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
           { name: "Knowledge Base", href: "/itsm/knowledge", icon: BookOpen, roles: readRoles },
           { name: "Notifications", href: "/itsm/notifications", icon: Bell, roles: readRoles },
         ]
+      : effectiveItsmRole === "SERVICE_AGENT"
+      ? serviceAgentNavigation
       : itsmNavigation
     : navigation;
   const allowedNavigation = activeNavigationList.filter((item) => item.roles.includes(normalizedRole));
@@ -135,7 +145,9 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
   const currentPage = pathname === "/notifications"
     ? "Notifications"
     : isItsm
-    ? pathname.startsWith("/itsm/dashboard")
+    ? pathname === "/itsm/dashboard/agent"
+      ? "My Work"
+      : pathname.startsWith("/itsm/dashboard")
       ? "Dashboard"
       : pathname === "/itsm/incidents/new"
       ? "Report an Issue"

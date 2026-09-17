@@ -57,6 +57,8 @@ export default function MajorIncidentCommandPage() {
   useEffect(() => { const request=window.setTimeout(()=>void load(),0); return()=>window.clearTimeout(request); }, [load]);
   useEffect(() => {
     if (!selectedId) return;
+    const selectedIncident=incidents.find(incident=>incident.id===selectedId);
+    if (!selectedIncident?.is_major_incident) { const reset=window.setTimeout(()=>{setRecord(null);setRecordLoading(false);},0); return()=>window.clearTimeout(reset); }
     let active=true;
     const request=window.setTimeout(()=>{ setRecordLoading(true);
     fetch(`/api/itsm/incidents/${encodeURIComponent(selectedId)}/major-incident`, { cache:"no-store" }).then(async response => {
@@ -65,7 +67,7 @@ export default function MajorIncidentCommandPage() {
       return response.json();
     }).then(data=>{if(active)setRecord(data);}).catch(reason=>{if(active)setError(reason instanceof Error?reason.message:"Unable to load command record");}).finally(()=>{if(active)setRecordLoading(false);}); },0);
     return()=>{active=false;window.clearTimeout(request);};
-  },[selectedId]);
+  },[incidents,selectedId]);
 
   const visible=incidents;
   const selected=incidents.find(i=>i.id===selectedId)||null;

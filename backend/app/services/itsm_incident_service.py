@@ -15,6 +15,7 @@ from app.db.models import (
     ITSMIncidentSavedView,
     ITSMService,
     ITSMTeam,
+    ITSMTeamMember,
     ITSMMajorIncident,
     ITSMSLAPolicy,
     ITSMTicket,
@@ -309,10 +310,20 @@ class IncidentService:
             .order_by(ITSMTicketCategory.display_order.asc(), ITSMTicketCategory.name.asc())
             .all()
         )
+        team_members: dict[UUID, list[UUID]] = {}
+        if teams:
+            for team_id, user_id in db.query(ITSMTeamMember.team_id, ITSMTeamMember.user_id).filter(
+                ITSMTeamMember.tenant_id == tenant_id,
+                ITSMTeamMember.team_id.in_([team.id for team in teams]),
+            ).all():
+                team_members.setdefault(team_id, []).append(user_id)
         return {
             "users": [{"id": user.id, "email": user.email} for user in users],
             "commanders": [{"id": user.id, "email": user.email} for user in cls.list_major_command_participants(db, tenant_id, commanders_only=True)],
-            "teams": [{"id": team.id, "name": team.name} for team in teams],
+            "teams": [
+                {"id": team.id, "name": team.name, "member_ids": team_members.get(team.id, [])}
+                for team in teams
+            ],
             "services": [
                 {"id": service.id, "name": service.name, "status": service.status}
                 for service in services
@@ -437,6 +448,34 @@ class IncidentService:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Assignment group must be an active operational team in this tenant",
+            )
+
+    @staticmethod
+    def _validate_assignment_membership(
+        db: Session,
+        tenant_id: UUID,
+        assignment_group: str | None,
+        assignee_id: UUID | None,
+    ) -> None:
+        """Require an individually assigned user to belong to the selected operational team."""
+        if not assignment_group or not assignee_id:
+            return
+        membership = (
+            db.query(ITSMTeamMember.id)
+            .join(ITSMTeam, ITSMTeam.id == ITSMTeamMember.team_id)
+            .filter(
+                ITSMTeamMember.tenant_id == tenant_id,
+                ITSMTeamMember.user_id == assignee_id,
+                ITSMTeam.tenant_id == tenant_id,
+                ITSMTeam.is_active.is_(True),
+                ITSMTeam.name == assignment_group.strip(),
+            )
+            .first()
+        )
+        if not membership:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Assignee must be an active member of the selected assignment group",
             )
 
     @staticmethod
@@ -565,6 +604,7 @@ class IncidentService:
         if not assignment_group and service and service.escalation_team:
             cls._validate_assignment_group(db, tenant_id, service.escalation_team)
             assignment_group = service.escalation_team
+        cls._validate_assignment_membership(db, tenant_id, assignment_group, payload.assignee_id)
 
         # Minimal SLA Policy Association (Step 14: no SLA engine calculations)
         sla_policy = cls._find_sla_policy(db, tenant_id, priority, payload.service_id)
@@ -911,6 +951,14 @@ class IncidentService:
             ticket.assignment_group = payload.assignment_group
             changed_fields.append("assignment_group")
 
+        if any(field in changed_fields for field in ("assignee_id", "assignment_group")):
+            cls._validate_assignment_membership(
+                db,
+                tenant_id,
+                ticket.assignment_group,
+                ticket.assignee_id,
+            )
+
         if payload.is_major_incident is not None and payload.is_major_incident != ticket.is_major_incident:
             old_values["is_major_incident"] = ticket.is_major_incident
             new_values["is_major_incident"] = payload.is_major_incident
@@ -1088,10 +1136,12 @@ class IncidentService:
         new_assignee = str(payload.assignee_id) if payload.assignee_id else None
         old_group = ticket.assignment_group
 
+        new_group = payload.assignment_group if "assignment_group" in payload.model_fields_set else ticket.assignment_group
+        cls._validate_assignment_membership(db, tenant_id, new_group, payload.assignee_id)
+
         ticket.assignee_id = payload.assignee_id
         if "assignment_group" in payload.model_fields_set:
             ticket.assignment_group = payload.assignment_group
-        new_group = ticket.assignment_group
 
         # If incident was NEW and is now assigned, advance to ASSIGNED
         if ticket.status == "NEW" and (ticket.assignee_id or ticket.assignment_group):

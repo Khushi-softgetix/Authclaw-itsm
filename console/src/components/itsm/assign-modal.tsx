@@ -32,6 +32,10 @@ export default function AssignModal({ incident, onClose, onSuccess, usersEndpoin
   const [loadingUsers, setLoadingUsers] = useState<boolean>(true);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const selectedTeam = teams.find((team) => team.name === assignmentGroup);
+  const eligibleUsers = selectedTeam
+    ? users.filter((user) => selectedTeam.member_ids?.includes(user.id))
+    : users;
 
   useEffect(() => {
     let mounted = true;
@@ -105,7 +109,7 @@ export default function AssignModal({ incident, onClose, onSuccess, usersEndpoin
             className="w-full bg-white border border-[#E6E9F0] rounded-lg px-3 py-2 text-xs text-[#0E1726] focus:ring-1 focus:ring-[#6D28D9] focus:outline-none"
           >
             <option value="">Unassigned</option>
-            {users.map((u) => (
+            {eligibleUsers.map((u) => (
               <option key={u.id} value={u.id}>
                 {u.email} {u.role ? `(${u.role})` : ""}
               </option>
@@ -121,7 +125,7 @@ export default function AssignModal({ incident, onClose, onSuccess, usersEndpoin
             Assignment Group
           </label>
           {referenceEndpoint ? (
-            <select id="group-select" value={assignmentGroup} onChange={(e) => setAssignmentGroup(e.target.value)} className="w-full bg-white border border-[#E6E9F0] rounded-lg px-3 py-2 text-xs text-[#0E1726] focus:ring-1 focus:ring-[#6D28D9] focus:outline-none">
+            <select id="group-select" value={assignmentGroup} onChange={(e) => { setAssignmentGroup(e.target.value); setAssigneeId(""); }} className="w-full bg-white border border-[#E6E9F0] rounded-lg px-3 py-2 text-xs text-[#0E1726] focus:ring-1 focus:ring-[#6D28D9] focus:outline-none">
               <option value="">Unassigned</option>
               {teams.map(team=><option key={team.id} value={team.name}>{team.name}</option>)}
             </select>

@@ -146,3 +146,13 @@ class IncidentResponse(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class IncidentSummaryStatsResponse(BaseModel):
+    open_tickets_count: int
+    resolved_tickets_count: int
+    pending_action_count: int
+    avg_resolution_hours: float
+
+    model_config = ConfigDict(from_attributes=True)
+

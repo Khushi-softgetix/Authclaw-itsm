@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  AlertCircle,
   ArrowRight,
   BookOpen,
   CheckCircle2,
@@ -12,6 +13,7 @@ import {
   HelpCircle,
   LifeBuoy,
   Plus,
+  RefreshCw,
   Search,
   Sparkles,
   ThumbsUp,
@@ -29,97 +31,69 @@ interface KBArticle {
   steps: string[];
 }
 
-const KNOWLEDGE_ARTICLES: KBArticle[] = [
-  {
-    id: "kb-001",
-    title: "Connecting to Corporate WireGuard VPN",
-    category: "Networking",
-    readTime: "3 min read",
-    views: "1,240 views",
-    summary: "Step-by-step setup for WireGuard VPN client across macOS, Windows, and Linux workstations.",
-    content: "AuthClaw corporate network access requires an encrypted WireGuard VPN tunnel for remote connectivity. Ensure you have your tenant client configuration file before starting.",
-    steps: [
-      "Download and install the official WireGuard client from wireguard.com.",
-      "Open WireGuard and select 'Add Tunnel' -> 'Import Tunnel from File'.",
-      "Select your '.conf' certificate downloaded from the Service Catalog.",
-      "Toggle the tunnel active and verify connection status via ping 10.0.0.1.",
-    ],
-  },
-  {
-    id: "kb-002",
-    title: "Requesting Temporary Cloud Sandbox IAM Roles",
-    category: "DevOps & Cloud",
-    readTime: "4 min read",
-    views: "890 views",
-    summary: "How to request time-bound AWS IAM credentials with pre-configured developer policies.",
-    content: "Developer cloud sandboxes provide isolated AWS environments for testing AI models and microservices. Access expires automatically after 8 hours unless extended.",
-    steps: [
-      "Navigate to Service Catalog -> AWS Account & IAM Sandbox Access.",
-      "Select your required cloud region and sandbox project code.",
-      "Submit request for manager approval or automated entitlement check.",
-      "Retrieve your short-lived STS credentials from the active session tab.",
-    ],
-  },
-  {
-    id: "kb-003",
-    title: "Troubleshooting Okta Single Sign-On (SSO) Sessions",
-    category: "Authentication",
-    readTime: "2 min read",
-    views: "2,410 views",
-    summary: "Resolving session cookie timeouts, MFA loop prompts, and browser cache conflicts.",
-    content: "If you experience infinite redirect loops during Okta authentication, follow these quick remediation steps before submitting an IT ticket.",
-    steps: [
-      "Clear browser cookies and cache for *.authclaw.com and your identity provider.",
-      "Disable third-party tracking blocker extensions temporarily.",
-      "Ensure your computer clock is synchronized with UTC network time.",
-      "Attempt logging in using a private or incognito window.",
-    ],
-  },
-  {
-    id: "kb-004",
-    title: "Setting Up Hardware Security Keys (YubiKey)",
-    category: "Security",
-    readTime: "5 min read",
-    views: "640 views",
-    summary: "Registering FIDO2 / WebAuthn YubiKey devices for passwordless MFA.",
-    content: "Hardware security keys protect your account against phishing and credential theft by establishing cryptographic binding during sign-in.",
-    steps: [
-      "Plug your YubiKey into a USB-A / USB-C port on your workstation.",
-      "Go to Account Settings -> Security & MFA -> Add Hardware Key.",
-      "Touch the gold contact point on your key when prompted by the browser.",
-      "Save your one-time backup recovery codes in a secure secret manager.",
-    ],
-  },
-  {
-    id: "kb-005",
-    title: "Configuring Workstation WiFi & WPA3 Enterprise",
-    category: "Networking",
-    readTime: "2 min read",
-    views: "520 views",
-    summary: "Connecting your laptop to the secure office corporate WiFi network.",
-    content: "AuthClaw office wireless networks utilize 802.1X EAP-TLS certificate authentication for high-speed local connectivity.",
-    steps: [
-      "Select 'AuthClaw-Corporate' from your operating system WiFi menu.",
-      "Enter your SSO corporate username and current account password.",
-      "Accept the network RADIUS root certificate when prompted.",
-    ],
-  },
-];
-
 export default function KnowledgePage() {
+  const [articles, setArticles] = useState<KBArticle[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [activeArticle, setActiveArticle] = useState<KBArticle | null>(null);
   const [helpfulFeedback, setHelpfulFeedback] = useState<boolean | null>(null);
 
+  const fetchArticles = useCallback(async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const res = await fetch("/api/itsm/knowledge", { cache: "no-store" });
+      if (res.status === 401) {
+        window.location.href = "/itsm/login";
+        return;
+      }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || data.detail || "Failed to load knowledge base");
+      }
+      const data = await res.json();
+      const mapped: KBArticle[] = (Array.isArray(data) ? data : []).map((item: any) => ({
+        id: item.id,
+        title: item.title,
+        category: item.category || "General",
+        readTime: item.read_time || "3 min read",
+        views: item.views_label || `${item.view_count || 0} views`,
+        summary: item.summary || item.title,
+        content: item.content || "",
+        steps: Array.isArray(item.steps) ? item.steps : [],
+      }));
+      setArticles(mapped);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to load knowledge base");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchArticles();
+  }, [fetchArticles]);
+
+  const recordHelpful = async (articleId: string) => {
+    setHelpfulFeedback(true);
+    await fetch(`/api/itsm/knowledge/${articleId}/helpful`, { method: "POST" }).catch(() => undefined);
+  };
+
   const categories = ["All", "Networking", "Authentication", "Security", "DevOps & Cloud"];
 
-  const filteredArticles = KNOWLEDGE_ARTICLES.filter((art) => {
-    const matchesCategory = selectedCategory === "All" || art.category === selectedCategory;
+  const filteredArticles = articles.filter((art) => {
+    const matchesCategory =
+      selectedCategory === "All" ||
+      art.category.toLowerCase().includes(selectedCategory.toLowerCase());
+    const q = searchQuery.toLowerCase().trim();
     const matchesSearch =
-      !searchQuery ||
-      art.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      art.summary.toLowerCase().includes(searchQuery.toLowerCase());
+      !q ||
+      art.title.toLowerCase().includes(q) ||
+      art.summary.toLowerCase().includes(q) ||
+      art.content.toLowerCase().includes(q) ||
+      art.category.toLowerCase().includes(q);
     return matchesCategory && matchesSearch;
   });
 
@@ -172,57 +146,99 @@ export default function KnowledgePage() {
           })}
         </div>
 
-        <div className="relative max-w-md">
-          <Search className="w-4 h-4 absolute left-3 top-2.5 text-[#6B7488]" />
-          <input
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search guides, VPN, Okta SSO, YubiKey..."
-            className="w-full bg-[#FBFAF9] border border-[#E6E9F0] rounded-xl pl-9 pr-3 py-2 text-xs text-[#0E1726] focus:bg-white focus:ring-1 focus:ring-[#6D28D9] focus:outline-none"
-          />
+        <div className="flex items-center justify-between gap-4">
+          <div className="relative flex-1 max-w-md">
+            <Search className="w-4 h-4 absolute left-3 top-2.5 text-[#6B7488]" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search guides, VPN, Okta SSO, YubiKey..."
+              className="w-full bg-[#FBFAF9] border border-[#E6E9F0] rounded-xl pl-9 pr-3 py-2 text-xs text-[#0E1726] focus:bg-white focus:ring-1 focus:ring-[#6D28D9] focus:outline-none"
+            />
+          </div>
+
+          <button
+            onClick={fetchArticles}
+            className="p-2 text-[#6B7488] hover:text-[#0E1726] hover:bg-[#F5F7FA] rounded-xl border border-[#E6E9F0] transition"
+            title="Refresh knowledge base"
+          >
+            <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
+          </button>
         </div>
       </div>
 
-      {/* Articles Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {filteredArticles.map((article) => (
-          <div
-            key={article.id}
-            onClick={() => {
-              setActiveArticle(article);
-              setHelpfulFeedback(null);
-            }}
-            className="bg-white rounded-2xl border border-[#E6E9F0] hover:border-[#A78BFA] p-6 shadow-sm hover:shadow-md transition cursor-pointer flex flex-col justify-between space-y-4 group"
+      {/* Error Alert */}
+      {error && (
+        <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-center justify-between">
+          <span>{error}</span>
+          <button
+            onClick={fetchArticles}
+            className="text-xs font-bold text-red-800 hover:underline"
           >
-            <div className="space-y-2">
-              <div className="flex items-center justify-between text-[11px] text-[#6B7488]">
-                <span className="font-bold text-[#6D28D9] bg-[#F1ECFE] px-2.5 py-0.5 rounded-full border border-[#A78BFA]">
-                  {article.category}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Eye className="w-3 h-3 text-[#6B7488]" /> {article.views}
-                </span>
+            Retry
+          </button>
+        </div>
+      )}
+
+      {/* Articles Grid / Loading / Empty State */}
+      {loading && articles.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-[#E6E9F0] p-12 text-center text-xs text-[#6B7488]">
+          <RefreshCw className="w-5 h-5 text-[#6D28D9] animate-spin mx-auto mb-2" />
+          <span>Loading database-backed knowledge base articles...</span>
+        </div>
+      ) : filteredArticles.length === 0 ? (
+        <div className="bg-white rounded-2xl border border-[#E6E9F0] p-12 text-center space-y-3">
+          <div className="w-12 h-12 rounded-full bg-[#F5F7FA] text-[#6B7488] flex items-center justify-center mx-auto">
+            <AlertCircle className="w-6 h-6" />
+          </div>
+          <h3 className="text-sm font-bold text-[#0E1726]">No articles found</h3>
+          <p className="text-xs text-[#6B7488] max-w-sm mx-auto">
+            {searchQuery
+              ? "No knowledge base articles match your search criteria."
+              : "No published articles available for this category."}
+          </p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {filteredArticles.map((article) => (
+            <div
+              key={article.id}
+              onClick={() => {
+                setActiveArticle(article);
+                setHelpfulFeedback(null);
+              }}
+              className="bg-white rounded-2xl border border-[#E6E9F0] hover:border-[#A78BFA] p-6 shadow-sm hover:shadow-md transition cursor-pointer flex flex-col justify-between space-y-4 group"
+            >
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-[11px] text-[#6B7488]">
+                  <span className="font-bold text-[#6D28D9] bg-[#F1ECFE] px-2.5 py-0.5 rounded-full border border-[#A78BFA]">
+                    {article.category}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <Eye className="w-3 h-3 text-[#6B7488]" /> {article.views}
+                  </span>
+                </div>
+
+                <h3 className="text-sm font-bold text-[#0E1726] group-hover:text-[#6D28D9] transition">
+                  {article.title}
+                </h3>
+
+                <p className="text-xs text-[#6B7488] leading-relaxed line-clamp-2">
+                  {article.summary}
+                </p>
               </div>
 
-              <h3 className="text-sm font-bold text-[#0E1726] group-hover:text-[#6D28D9] transition">
-                {article.title}
-              </h3>
-
-              <p className="text-xs text-[#6B7488] leading-relaxed line-clamp-2">
-                {article.summary}
-              </p>
+              <div className="pt-3 border-t border-[#F0F2F6] flex items-center justify-between text-xs">
+                <span className="text-[#6B7488] text-[11px]">{article.readTime}</span>
+                <span className="font-semibold text-[#6D28D9] flex items-center gap-1 group-hover:translate-x-0.5 transition-transform">
+                  Read Guide <ChevronRight className="w-3.5 h-3.5" />
+                </span>
+              </div>
             </div>
-
-            <div className="pt-3 border-t border-[#F0F2F6] flex items-center justify-between text-xs">
-              <span className="text-[#6B7488] text-[11px]">{article.readTime}</span>
-              <span className="font-semibold text-[#6D28D9] flex items-center gap-1 group-hover:translate-x-0.5 transition-transform">
-                Read Guide <ChevronRight className="w-3.5 h-3.5" />
-              </span>
-            </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
       {/* Article Detail Modal / Drawer */}
       {activeArticle && (
@@ -256,21 +272,23 @@ export default function KnowledgePage() {
                 {activeArticle.content}
               </p>
 
-              <div>
-                <h4 className="text-xs font-bold uppercase text-[#0E1726] tracking-wider mb-3">
-                  Step-by-Step Resolution Steps
-                </h4>
-                <div className="space-y-2.5">
-                  {activeArticle.steps.map((step, idx) => (
-                    <div key={idx} className="flex items-start gap-3 p-3 rounded-xl border border-[#F0F2F6] bg-white">
-                      <span className="w-5 h-5 rounded-full bg-[#6D28D9] text-white font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
-                        {idx + 1}
-                      </span>
-                      <span className="text-[#0E1726] text-xs leading-relaxed">{step}</span>
-                    </div>
-                  ))}
+              {activeArticle.steps.length > 0 && (
+                <div>
+                  <h4 className="text-xs font-bold uppercase text-[#0E1726] tracking-wider mb-3">
+                    Step-by-Step Resolution Steps
+                  </h4>
+                  <div className="space-y-2.5">
+                    {activeArticle.steps.map((step, idx) => (
+                      <div key={idx} className="flex items-start gap-3 p-3 rounded-xl border border-[#F0F2F6] bg-white">
+                        <span className="w-5 h-5 rounded-full bg-[#6D28D9] text-white font-bold text-[10px] flex items-center justify-center shrink-0 mt-0.5">
+                          {idx + 1}
+                        </span>
+                        <span className="text-[#0E1726] text-xs leading-relaxed">{step}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
 
             {/* Modal Footer */}
@@ -278,14 +296,14 @@ export default function KnowledgePage() {
               <div className="flex items-center gap-2">
                 <span className="text-[#6B7488]">Did this article solve your issue?</span>
                 <button
-                  onClick={() => setHelpfulFeedback(true)}
+                  onClick={() => recordHelpful(activeArticle.id)}
                   className={`px-3 py-1 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition ${
                     helpfulFeedback === true
                       ? "bg-emerald-50 text-emerald-700 border-emerald-300"
                       : "bg-white text-[#475069] border-[#E6E9F0] hover:bg-[#F5F7FA]"
                   }`}
                 >
-                  <ThumbsUp className="w-3.5 h-3.5" /> Yes
+                  <ThumbsUp className="w-3.5 h-3.5" /> {helpfulFeedback ? "Thanks!" : "Yes"}
                 </button>
               </div>
 

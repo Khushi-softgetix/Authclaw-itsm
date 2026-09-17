@@ -8,7 +8,11 @@ import { marketingRoutes } from "@/marketing/config";
 
 export default function ItsmLoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const [email, setEmail] = useState(() => {
+    if (typeof window === "undefined") return "";
+    const params = new URLSearchParams(window.location.search);
+    return params.get("email") || "";
+  });
   const [password, setPassword] = useState("");
   const [tenantName, setTenantName] = useState("");
   const [resetMode, setResetMode] = useState<"login" | "request" | "confirm">("login");
@@ -25,7 +29,14 @@ export default function ItsmLoginPage() {
     }
     return params.get("sso_error");
   });
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(() => {
+    if (typeof window === "undefined") return null;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("setup") === "success") {
+      return "Account setup completed! Please sign in with your new password.";
+    }
+    return null;
+  });
   const hydrated = useSyncExternalStore(() => () => {}, () => true, () => false);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -54,8 +65,32 @@ export default function ItsmLoginPage() {
       }
 
       const searchParams = new URLSearchParams(window.location.search);
-      const returnTo = searchParams.get("returnTo") || searchParams.get("redirect") || "/itsm/incidents";
-      const safeRedirect = returnTo.startsWith("/itsm") && !returnTo.startsWith("//") ? returnTo : "/itsm/incidents";
+      const explicitReturnTo = searchParams.get("returnTo") || searchParams.get("redirect");
+      const role = (data.user?.itsmRole || "REQUESTER").toUpperCase();
+      let defaultRoute = "/itsm/dashboard/service-agent";
+      switch (role) {
+        case "PLATFORM_ADMINISTRATOR":
+          defaultRoute = "/itsm/admin-portal";
+          break;
+        case "INCIDENT_MANAGER":
+        case "SERVICE_LEAD":
+          defaultRoute = "/itsm/incident-manager";
+          break;
+        case "SERVICE_AGENT":
+          defaultRoute = "/itsm/dashboard/agent";
+          break;
+        case "REQUESTER":
+          defaultRoute = "/itsm/dashboard/requester";
+          break;
+        case "PROCESS_CHANGE_MANAGER":
+          defaultRoute = "/itsm/dashboard/process-change";
+          break;
+        case "AUDITOR":
+          defaultRoute = "/itsm/dashboard/auditor";
+          break;
+      }
+      const returnTo = explicitReturnTo || defaultRoute;
+      const safeRedirect = returnTo.startsWith("/itsm") && !returnTo.startsWith("//") ? returnTo : defaultRoute;
       router.push(safeRedirect);
       router.refresh();
     } catch (err: unknown) {

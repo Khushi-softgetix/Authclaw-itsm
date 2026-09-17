@@ -192,7 +192,7 @@ class RequesterPortalTestCase(unittest.TestCase):
         # Create ticket
         res = self.client.post(
             "/v1/itsm/incidents",
-            json={"title": "Test Issue", "description": "Need assistance."},
+            json={"title": "Test Issue", "description": "Need assistance.", "impact": "LOW", "urgency": "MEDIUM"},
             headers=headers,
         )
         ticket_id = res.json()["id"]

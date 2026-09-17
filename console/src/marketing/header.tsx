@@ -147,8 +147,8 @@ export function MarketingHeader() {
           <Link className="login" href={marketingRoutes.login}>
             Log in
           </Link>
-          <Link className="btn btn-primary" href={marketingRoutes.demo}>
-            Book a demo
+          <Link className="btn btn-primary" href={marketingRoutes.demo} style={{ color: "#ffffff" }}>
+            <span style={{ color: "#ffffff" }}>Book a demo</span>
           </Link>
           <button
             ref={buttonRef}
@@ -248,8 +248,8 @@ export function MarketingHeader() {
           <Link className="btn btn-ghost" href={marketingRoutes.login}>
             Log in
           </Link>
-          <Link className="btn btn-primary" href={marketingRoutes.demo}>
-            Book a demo
+          <Link className="btn btn-primary" href={marketingRoutes.demo} style={{ color: "#ffffff" }}>
+            <span style={{ color: "#ffffff" }}>Book a demo</span>
           </Link>
         </div>
       </nav>

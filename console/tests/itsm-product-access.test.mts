@@ -117,7 +117,11 @@ test("ConsoleShell supports ITSM business roles", () => {
     "ConsoleShell must support SERVICE_AGENT"
   );
   assert.ok(
-    shellSource.includes("SERVICE_LEAD: \"Service Lead\""),
+    shellSource.includes("INCIDENT_MANAGER: \"Incident Manager\""),
+    "ConsoleShell must support INCIDENT_MANAGER"
+  );
+  assert.ok(
+    shellSource.includes("SERVICE_LEAD: \"Incident Manager\""),
     "ConsoleShell must support SERVICE_LEAD"
   );
   assert.ok(
@@ -132,7 +136,7 @@ test("ConsoleShell supports ITSM business roles", () => {
 
 test("Proxy middleware redirects unauthenticated /itsm routes to /itsm/login", () => {
   const proxyPath = path.join(consoleDir, "src/proxy.ts");
-  const proxySource = fs.readFileSync(proxyPath, "utf-8");
+  const proxySource = fs.readFileSync(proxyPath, "utf-8").replace(/\r\n/g, "\n");
 
   assert.ok(
     proxySource.includes('if (path.startsWith("/itsm")) {\n      return NextResponse.redirect(new URL("/itsm/login", request.url));\n    }'),

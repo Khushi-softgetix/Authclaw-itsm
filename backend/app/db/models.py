@@ -1261,6 +1261,18 @@ class ITSMTicket(Base):
     sla_policy = relationship("ITSMSLAPolicy")
     linked_problem = relationship("ITSMTicket", remote_side=[id], foreign_keys=[linked_problem_id])
 
+    @property
+    def configuration_item_id(self) -> None:
+        return None
+
+    @property
+    def service_name(self) -> str | None:
+        return self.service.name if self.service else None
+
+    @property
+    def assignee_email(self) -> str | None:
+        return self.assignee.email if self.assignee else None
+
     __table_args__ = (
         UniqueConstraint("tenant_id", "ticket_number", name="uq_itsm_tickets_tenant_number"),
         Index("idx_itsm_tickets_tenant_status", "tenant_id", "status"),
@@ -1607,6 +1619,38 @@ class ITSMMajorIncident(Base):
     ticket = relationship("ITSMTicket")
     incident_commander = relationship("User", foreign_keys=[incident_commander_id])
     declared_by = relationship("User", foreign_keys=[declared_by_id])
+
+    @property
+    def communication_lead_id(self) -> None:
+        return None
+
+    @property
+    def affected_service_ids(self) -> list:
+        return []
+
+    @property
+    def affected_configuration_item_ids(self) -> list:
+        return []
+
+    @property
+    def restoration_checkpoints(self) -> list:
+        return []
+
+    @property
+    def command_decisions(self) -> list:
+        return []
+
+    @property
+    def command_tasks(self) -> list:
+        return []
+
+    @property
+    def stakeholders(self) -> list:
+        return []
+
+    @property
+    def command_communications(self) -> list:
+        return []
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "ticket_id", name="uq_itsm_major_incident_ticket"),
@@ -1955,4 +1999,47 @@ class ITSMUserAccess(Base):
         UniqueConstraint("tenant_id", "user_id", name="uq_itsm_user_access_tenant_user"),
         Index("idx_itsm_user_access_lookup", "tenant_id", "user_id"),
         Index("idx_itsm_user_access_role", "tenant_id", "itsm_role"),
+    )
+
+
+class ITSMTeam(Base):
+    """ITSM operational teams and assignment groups."""
+    __tablename__ = "itsm_teams"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(255), nullable=False)
+    description = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    members = relationship("ITSMTeamMember", back_populates="team", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_itsm_teams_tenant_name"),
+        Index("idx_itsm_teams_tenant", "tenant_id"),
+        Index("idx_itsm_teams_tenant_status", "tenant_id", "is_active"),
+    )
+
+
+class ITSMTeamMember(Base):
+    """Membership of an existing AuthClaw user within an ITSM operational team."""
+    __tablename__ = "itsm_team_members"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    team_id = Column(UUID(as_uuid=True), ForeignKey("itsm_teams.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    team = relationship("ITSMTeam", back_populates="members")
+    user = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("team_id", "user_id", name="uq_itsm_team_members_team_user"),
+        Index("idx_itsm_team_members_lookup", "tenant_id", "team_id"),
+        Index("idx_itsm_team_members_user", "tenant_id", "user_id"),
     )

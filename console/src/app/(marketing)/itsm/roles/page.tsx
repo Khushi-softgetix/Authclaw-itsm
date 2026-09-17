@@ -19,7 +19,7 @@ import { createMarketingMetadata } from "@/marketing/seo";
 export const metadata: Metadata = createMarketingMetadata({
   title: "ITSM Roles & Responsibilities — AuthClaw ITSM",
   description:
-    "Explore the 6 purpose-built roles in AuthClaw ITSM: Requester, Service Agent, Service Lead, Process & Change Manager, Platform Administrator, and Auditor.",
+    "Explore the 6 purpose-built roles in AuthClaw ITSM: Requester, Service Agent, Incident Manager, Process & Change Manager, Platform Administrator, and Auditor.",
   path: "/itsm/roles",
 });
 
@@ -98,14 +98,14 @@ const ROLES: RoleDefinition[] = [
     targetAudience: "IT Support Engineers, Tier 1/2 Service Desk Specialists, NOC Operators",
   },
   {
-    id: "service-lead",
-    roleKey: "SERVICE_LEAD",
-    name: "Service Lead",
-    badge: "Queue & Major Incident Lead",
-    tagline: "Unified queue command, SLA health oversight, and major incident triage.",
+    id: "incident-manager",
+    roleKey: "INCIDENT_MANAGER",
+    name: "Incident Manager",
+    badge: "Incident Command & Queue Lead",
+    tagline: "Dedicated incident manager workspace, queue governance, and escalation control.",
     description:
       "Team leads, service delivery managers, and incident command commanders responsible for team throughput, queue balance, and high-impact crisis resolution.",
-    dashboardPath: "/itsm/dashboard/service-lead",
+    dashboardPath: "/itsm/incident-manager",
     icon: ShieldAlert,
     color: "#DC2626",
     bgColor: "#FEF2F2",

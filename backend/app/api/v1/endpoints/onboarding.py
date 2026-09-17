@@ -68,42 +68,45 @@ def _emit_invitation_audit(
     request_id: str,
     response_status: int,
 ) -> None:
-    if not invitation or invitation.purpose != "invite" or not invitation.tenant_id:
-        event_backbone.increment_metric(f"invitation_{action}_total")
-        logger.info(
-            "[INVITATION_AUDIT] action=%s reason=%s request_id=%s result=failure response_status=%s",
-            action,
-            reason,
-            request_id,
-            response_status,
+    try:
+        if not invitation or getattr(invitation, "purpose", None) != "invite" or not getattr(invitation, "tenant_id", None):
+            event_backbone.increment_metric(f"invitation_{action}_total")
+            logger.info(
+                "[INVITATION_AUDIT] action=%s reason=%s request_id=%s result=failure response_status=%s",
+                action,
+                reason,
+                request_id,
+                response_status,
+            )
+            return
+        global _invitation_kafka_producer
+        event = event_backbone.audit_event(
+            event_type="invitation",
+            tenant_id=str(invitation.tenant_id),
+            subject_id=str(invitation.id),
+            identity_action=f"{action}:{request_id or uuid.uuid4()}",
+            action=f"invitation:{action}",
+            reason=reason,
+            provider="onboarding",
+            request_id=request_id,
         )
-        return
-    global _invitation_kafka_producer
-    event = event_backbone.audit_event(
-        event_type="invitation",
-        tenant_id=str(invitation.tenant_id),
-        subject_id=str(invitation.id),
-        identity_action=f"{action}:{request_id or uuid.uuid4()}",
-        action=f"invitation:{action}",
-        reason=reason,
-        provider="onboarding",
-        request_id=request_id,
-    )
-    event["actor_id"] = ""
-    event["result"] = "success" if response_status < 400 else "failure"
-    event["response_status"] = response_status
-    event_backbone.increment_metric(f"invitation_{action}_total")
-    if _invitation_kafka_producer is None:
-        try:
-            _invitation_kafka_producer = event_backbone.make_kafka_producer()
-        except Exception:
-            logger.warning("Invitation audit Kafka producer unavailable")
-    if exc := event_backbone.publish_audit_event(
-        _invitation_kafka_producer,
-        str(invitation.tenant_id),
-        event,
-    ):
-        logger.warning("Failed to publish invitation audit event: action=%s", action)
+        event["actor_id"] = ""
+        event["result"] = "success" if response_status < 400 else "failure"
+        event["response_status"] = response_status
+        event_backbone.increment_metric(f"invitation_{action}_total")
+        if _invitation_kafka_producer is None:
+            try:
+                _invitation_kafka_producer = event_backbone.make_kafka_producer()
+            except Exception:
+                logger.warning("Invitation audit Kafka producer unavailable")
+        if exc := event_backbone.publish_audit_event(
+            _invitation_kafka_producer,
+            str(invitation.tenant_id),
+            event,
+        ):
+            logger.warning("Failed to publish invitation audit event: action=%s", action)
+    except Exception as exc:
+        logger.warning("Could not emit invitation audit event for action=%s: %s", action, exc)
 
 
 def _invitation_audit_snapshot(invitation: OnboardingEmailOTP):
@@ -217,20 +220,20 @@ def _deliver_otp(
     action_url: str | None = None,
 ) -> tuple[str, str | None]:
     result = send_otp_email(email, otp, tenant_name, purpose=purpose, action_url=action_url)
-    dev_otp = otp if result.method == "console" and demo_otp_visible() else None
+    dev_otp = otp if demo_otp_visible() else None
     return result.method, dev_otp
 
 
 def _checklist(status_row: OnboardingStatus) -> OnboardingChecklistResponse:
     return OnboardingChecklistResponse(
-        email_verified=status_row.email_verified,
-        tenant_created=status_row.tenant_created,
-        api_key_issued=status_row.api_key_issued,
-        provider_key_saved=status_row.provider_key_saved,
-        route_created=status_row.route_created,
-        policy_created=status_row.policy_created,
-        snippet_viewed=status_row.snippet_viewed,
-        current_step=status_row.current_step,
+        email_verified=bool(status_row.email_verified),
+        tenant_created=bool(status_row.tenant_created),
+        api_key_issued=bool(status_row.api_key_issued),
+        provider_key_saved=bool(status_row.provider_key_saved),
+        route_created=bool(status_row.route_created),
+        policy_created=bool(status_row.policy_created),
+        snippet_viewed=bool(status_row.snippet_viewed),
+        current_step=status_row.current_step or "connect_provider",
     )
 
 
@@ -654,8 +657,10 @@ def verify(payload: OnboardingVerifyRequest, request: Request):
                     email_verified=True,
                     tenant_created=True,
                     api_key_issued=True,
+                    provider_key_saved=False,
                     route_created=True,
                     policy_created=True,
+                    snippet_viewed=False,
                     current_step="connect_provider",
                 )
                 db.add(status_row)

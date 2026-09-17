@@ -35,6 +35,13 @@ ITSM_AGENT_EMAIL = "itsm-agent@test.com"
 ITSM_REQUESTER_USER_ID = uuid.UUID("22222222-2222-4222-8222-222222222227")
 ITSM_REQUESTER_EMAIL = "requester123@gmail.com"
 RAW_REQUESTER_PASSWORD = os.getenv("AUTHCLAW_ITSM_REQUESTER_PASSWORD", "Requester@123")
+ITSM_INCIDENT_MANAGER_USER_ID = uuid.UUID("22222222-2222-4222-8222-222222222228")
+ITSM_INCIDENT_MANAGER_EMAIL = "incidentmanager@authclaw-lite.demo"
+RAW_INCIDENT_MANAGER_PASSWORD = os.getenv("AUTHCLAW_ITSM_INCIDENT_MANAGER_PASSWORD", "AuthClawDemo!234")
+ITSM_AGENT_LITE_USER_ID = uuid.UUID("22222222-2222-4222-8222-222222222229")
+ITSM_REQUESTER_LITE_USER_ID = uuid.UUID("22222222-2222-4222-8222-222222222230")
+ITSM_PROCESS_CHANGE_USER_ID = uuid.UUID("22222222-2222-4222-8222-222222222231")
+ITSM_AUDITOR_USER_ID = uuid.UUID("22222222-2222-4222-8222-222222222232")
 API_KEY_ID = uuid.UUID("33333333-3333-4333-8333-333333333333")
 GATEWAY_ID = uuid.UUID("44444444-4444-4444-8444-444444444444")
 POLICY_ID = uuid.UUID("55555555-5555-4555-8555-555555555555")
@@ -235,6 +242,50 @@ def main() -> None:
             },
         )
 
+        conn.execute(
+            text("""
+            INSERT INTO users (id, tenant_id, email, password_hash, role, platform_role, mfa_enabled, is_active)
+            VALUES (:id, :tenant_id, :email, :password_hash, 'viewer', 'NONE', false, true)
+            ON CONFLICT (tenant_id, email) DO UPDATE SET
+                password_hash = users.password_hash,
+                role = 'viewer',
+                is_active = true,
+                updated_at = NOW()
+            """),
+            {
+                "id": ITSM_INCIDENT_MANAGER_USER_ID,
+                "tenant_id": TENANT_ID,
+                "email": ITSM_INCIDENT_MANAGER_EMAIL,
+                "password_hash": hash_password(RAW_INCIDENT_MANAGER_PASSWORD),
+            },
+        )
+
+        # Seed additional standard test accounts
+        additional_test_users = [
+            (ITSM_AGENT_LITE_USER_ID, "agent@authclaw-lite.demo", "SERVICE_AGENT", True, False),
+            (ITSM_REQUESTER_LITE_USER_ID, "requester@authclaw-lite.demo", "REQUESTER", True, False),
+            (ITSM_PROCESS_CHANGE_USER_ID, "processchange@authclaw-lite.demo", "PROCESS_CHANGE_MANAGER", True, False),
+            (ITSM_AUDITOR_USER_ID, "auditor@authclaw-lite.demo", "AUDITOR", True, False),
+        ]
+        for u_id, u_email, u_role, u_itsm, u_gov in additional_test_users:
+            conn.execute(
+                text("""
+                INSERT INTO users (id, tenant_id, email, password_hash, role, platform_role, mfa_enabled, is_active)
+                VALUES (:id, :tenant_id, :email, :password_hash, 'viewer', 'NONE', false, true)
+                ON CONFLICT (tenant_id, email) DO UPDATE SET
+                    password_hash = users.password_hash,
+                    role = 'viewer',
+                    is_active = true,
+                    updated_at = NOW()
+                """),
+                {
+                    "id": u_id,
+                    "tenant_id": TENANT_ID,
+                    "email": u_email,
+                    "password_hash": hash_password(RAW_ADMIN_PASSWORD),
+                },
+            )
+
         # Seed ITSM Product Access & Business Roles
         conn.execute(
             text("""
@@ -242,7 +293,13 @@ def main() -> None:
             VALUES
                 (gen_random_uuid(), :tenant_id, :admin_id, 'PLATFORM_ADMINISTRATOR', true, true),
                 (gen_random_uuid(), :tenant_id, :agent_id, 'SERVICE_AGENT', true, false),
+                (gen_random_uuid(), :tenant_id, :agent_lite_id, 'SERVICE_AGENT', true, false),
+                (gen_random_uuid(), :tenant_id, :operator_id, 'INCIDENT_MANAGER', true, true),
+                (gen_random_uuid(), :tenant_id, :incident_manager_id, 'INCIDENT_MANAGER', true, false),
                 (gen_random_uuid(), :tenant_id, :requester_id, 'REQUESTER', true, false),
+                (gen_random_uuid(), :tenant_id, :requester_lite_id, 'REQUESTER', true, false),
+                (gen_random_uuid(), :tenant_id, :pcm_id, 'PROCESS_CHANGE_MANAGER', true, false),
+                (gen_random_uuid(), :tenant_id, :auditor_id, 'AUDITOR', true, false),
                 (gen_random_uuid(), :tenant_id, :viewer_id, 'REQUESTER', false, true)
             ON CONFLICT (tenant_id, user_id) DO UPDATE SET
                 itsm_role = EXCLUDED.itsm_role,
@@ -254,7 +311,13 @@ def main() -> None:
                 "tenant_id": TENANT_ID,
                 "admin_id": ADMIN_USER_ID,
                 "agent_id": ITSM_AGENT_USER_ID,
+                "agent_lite_id": ITSM_AGENT_LITE_USER_ID,
+                "operator_id": uuid.UUID("22222222-2222-4222-8222-222222222224"),
+                "incident_manager_id": ITSM_INCIDENT_MANAGER_USER_ID,
                 "requester_id": ITSM_REQUESTER_USER_ID,
+                "requester_lite_id": ITSM_REQUESTER_LITE_USER_ID,
+                "pcm_id": ITSM_PROCESS_CHANGE_USER_ID,
+                "auditor_id": ITSM_AUDITOR_USER_ID,
                 "viewer_id": uuid.UUID("22222222-2222-4222-8222-222222222225"),
             },
         )

@@ -252,7 +252,10 @@ def _lookup_user_product_access(db, tenant_id: UUID, user_id: UUID) -> tuple[boo
             {"tenant_id": str(tenant_id), "user_id": str(user_id)},
         ).first()
         if row:
-            return bool(row.has_governance_access), bool(row.has_itsm_access), row.itsm_role
+            role = row.itsm_role
+            if role == "SERVICE_LEAD":
+                role = "INCIDENT_MANAGER"
+            return bool(row.has_governance_access), bool(row.has_itsm_access), role
     except Exception:
         pass
     return True, False, None

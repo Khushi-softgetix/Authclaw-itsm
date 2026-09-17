@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import smtplib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -24,46 +27,88 @@ def demo_otp_visible() -> bool:
 
 
 def smtp_configured() -> bool:
-    return bool(os.getenv("SMTP_HOST", "").strip())
+    smtp_host = (
+        os.getenv("SMTP_HOST", "").strip()
+        or ("smtp.gmail.com" if (os.getenv("GMAIL_USER") or os.getenv("GMAIL_APP_PASSWORD")) else "")
+    )
+    smtp_user = os.getenv(
+        "SMTP_USER",
+        os.getenv("SMTP_USERNAME", os.getenv("GMAIL_USER", "")),
+    ).strip()
+    smtp_password = os.getenv(
+        "SMTP_PASSWORD",
+        os.getenv("SMTP_PASS", os.getenv("GMAIL_APP_PASSWORD", "")),
+    ).strip()
+    if not smtp_host:
+        return False
+    if smtp_user and not smtp_password:
+        return False
+    return True
 
 
 def _send_smtp_message(message: EmailMessage) -> None:
-    smtp_host = os.getenv("SMTP_HOST", "").strip()
+    smtp_host = (
+        os.getenv("SMTP_HOST", "").strip()
+        or ("smtp.gmail.com" if (os.getenv("GMAIL_USER") or os.getenv("GMAIL_APP_PASSWORD")) else "")
+    )
     smtp_port = int(os.getenv("SMTP_PORT", "587"))
-    smtp_user = os.getenv("SMTP_USER", os.getenv("SMTP_USERNAME", "")).strip()
-    smtp_password = os.getenv("SMTP_PASSWORD", os.getenv("SMTP_PASS", ""))
+    smtp_user = os.getenv(
+        "SMTP_USER",
+        os.getenv("SMTP_USERNAME", os.getenv("GMAIL_USER", "")),
+    ).strip()
+    smtp_password = os.getenv(
+        "SMTP_PASSWORD",
+        os.getenv("SMTP_PASS", os.getenv("GMAIL_APP_PASSWORD", "")),
+    )
     smtp_tls = (
         os.getenv("SMTP_TLS", os.getenv("SMTP_STARTTLS", "true")).lower() == "true"
     )
+
+    if (smtp_host and "gmail" in smtp_host.lower()) or os.getenv("GMAIL_APP_PASSWORD"):
+        if smtp_password:
+            smtp_password = smtp_password.replace(" ", "")
 
     try:
         with smtplib.SMTP(smtp_host, smtp_port, timeout=10) as server:
             if smtp_tls:
                 server.starttls()
-            if smtp_user:
+            if smtp_user and smtp_password:
                 server.login(smtp_user, smtp_password)
             server.send_message(message)
     except Exception as exc:
+        logger.error("SMTP delivery failed for host=%s port=%s tls=%s: %s", smtp_host, smtp_port, smtp_tls, exc)
         raise EmailDeliveryError("Could not send email") from exc
 
 
-def send_email(email: str, subject: str, body: str) -> EmailDeliveryResult:
+def send_email(
+    email: str, subject: str, body: str, html_body: str | None = None
+) -> EmailDeliveryResult:
     """Send a non-OTP email through the existing SMTP transport."""
-    smtp_host = os.getenv("SMTP_HOST", "").strip()
-    if not smtp_host:
-        if os.getenv("AUTHCLAW_ENV", "").lower() == "production":
-            raise EmailDeliveryError("Email delivery is not configured")
-        return _write_local_email(email, subject, body)
+    if not smtp_configured():
+        if os.getenv("AUTHCLAW_ENV", "").lower() != "production":
+            return _write_local_email(email, subject, body)
+        raise EmailDeliveryError("Email delivery is not configured")
+
+    default_from = os.getenv("GMAIL_USER") or os.getenv("SMTP_USER") or "no-reply@authclaw.local"
+    configured_from = os.getenv("SMTP_FROM", os.getenv("EMAIL_FROM", "")).strip()
+    smtp_from = default_from if (not configured_from or "example.com" in configured_from.lower()) else configured_from
 
     message = EmailMessage()
     message["Subject"] = subject
-    message["From"] = os.getenv(
-        "SMTP_FROM", os.getenv("EMAIL_FROM", "no-reply@authclaw.local")
-    ).strip()
+    message["From"] = smtp_from
     message["To"] = email
     message.set_content(body)
-    _send_smtp_message(message)
-    return EmailDeliveryResult(method="smtp", detail="Email sent by SMTP")
+    if html_body:
+        message.add_alternative(html_body, subtype="html")
+
+    try:
+        _send_smtp_message(message)
+        return EmailDeliveryResult(method="smtp", detail="Email sent by SMTP")
+    except EmailDeliveryError as exc:
+        if os.getenv("AUTHCLAW_ENV", "").lower() != "production":
+            logger.warning("SMTP delivery failed in non-production, falling back to local outbox: %s", exc)
+            return _write_local_email(email, subject, body)
+        raise
 
 
 def send_otp_email(
@@ -74,33 +119,84 @@ def send_otp_email(
     purpose: str = "tenant setup",
     action_url: str | None = None,
 ) -> EmailDeliveryResult:
-    smtp_host = os.getenv("SMTP_HOST", "").strip()
-    if not smtp_host:
+    if not smtp_configured():
         if os.getenv("AUTHCLAW_ENV", "").lower() != "production":
             return _write_local_outbox(
                 email, otp, tenant_name, purpose=purpose, action_url=action_url
             )
         raise EmailDeliveryError("Email delivery is not configured")
 
-    smtp_from = os.getenv(
-        "SMTP_FROM", os.getenv("EMAIL_FROM", "no-reply@authclaw.local")
-    ).strip()
+    default_from = os.getenv("GMAIL_USER") or os.getenv("SMTP_USER") or "no-reply@authclaw.local"
+    configured_from = os.getenv("SMTP_FROM", os.getenv("EMAIL_FROM", "")).strip()
+    smtp_from = default_from if (not configured_from or "example.com" in configured_from.lower()) else configured_from
 
     message = EmailMessage()
-    message["Subject"] = "Your AuthClaw verification code"
     message["From"] = smtp_from
     message["To"] = email
-    body = (
-        f"Your AuthClaw verification code is {otp}.\n\n"
-        f"It expires in 15 minutes for {purpose}: {tenant_name}.\n\n"
-    )
-    if action_url:
-        body += f"Open this invite link to verify: {action_url}\n\n"
-    body += "If you did not request this code, you can ignore this email."
-    message.set_content(body)
 
-    _send_smtp_message(message)
-    return EmailDeliveryResult(method="smtp", detail="OTP sent by SMTP")
+    if action_url:
+        message["Subject"] = f"You're invited to join {tenant_name} on AuthClaw ITSM"
+        plain_body = (
+            f"Hello,\n\n"
+            f"You have been invited to join {tenant_name} on AuthClaw ITSM.\n\n"
+            f"Please use the link below to complete your account setup and create your password:\n\n"
+            f"Complete Account Setup:\n{action_url}\n\n"
+            f"Your 6-digit verification code:\n{otp}\n\n"
+            f"(This code and invitation link expire in 15 minutes.)\n\n"
+            f"Once your account setup is complete, you can sign in to AuthClaw ITSM with your email and newly created password.\n\n"
+            f"If you did not request this invitation, you can safely ignore this email.\n\n"
+            f"Best regards,\n"
+            f"The {tenant_name} Team"
+        )
+        message.set_content(plain_body)
+
+        html_body = f"""<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:24px;background-color:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111827;">
+  <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:12px;border:1px solid #e5e7eb;padding:36px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+    <div style="margin-bottom:24px;">
+      <span style="font-size:18px;font-weight:700;color:#6D28D9;letter-spacing:-0.02em;">AuthClaw ITSM</span>
+    </div>
+    <h1 style="font-size:20px;font-weight:700;color:#0e1726;margin:0 0 12px 0;">Welcome to {tenant_name}</h1>
+    <p style="font-size:14px;line-height:22px;color:#475069;margin:0 0 24px 0;">
+      You have been invited by your platform administrator to join <strong>{tenant_name}</strong> on AuthClaw ITSM. Please complete your account setup to create your password and activate your access.
+    </p>
+    <div style="background-color:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:20px;margin-bottom:28px;text-align:center;">
+      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.06em;color:#6d28d9;margin-bottom:8px;">6-Digit Verification Code</div>
+      <div style="font-size:32px;font-weight:800;letter-spacing:8px;color:#0e1726;font-family:monospace;">{otp}</div>
+      <div style="font-size:12px;color:#6b7488;margin-top:6px;">Expires in 15 minutes</div>
+    </div>
+    <div style="text-align:center;margin-bottom:28px;">
+      <a href="{action_url}" style="display:inline-block;background-color:#6D28D9;color:#ffffff;padding:13px 32px;font-size:14px;font-weight:600;text-decoration:none;border-radius:10px;box-shadow:0 4px 14px rgba(109,40,217,0.35);">Complete Account Setup &rarr;</a>
+    </div>
+    <p style="font-size:12px;color:#6b7488;line-height:18px;margin:28px 0 0 0;border-top:1px solid #f1f3f7;padding-top:20px;">
+      If the button above does not work, copy and paste this link into your browser:<br/>
+      <a href="{action_url}" style="color:#6D28D9;word-break:break-all;text-decoration:underline;">{action_url}</a>
+    </p>
+  </div>
+</body>
+</html>"""
+        message.add_alternative(html_body, subtype="html")
+    else:
+        message["Subject"] = "Your AuthClaw verification code"
+        body = (
+            f"Your AuthClaw verification code is {otp}.\n\n"
+            f"It expires in 15 minutes for {purpose}: {tenant_name}.\n\n"
+            f"If you did not request this code, you can ignore this email."
+        )
+        message.set_content(body)
+
+    try:
+        _send_smtp_message(message)
+        return EmailDeliveryResult(method="smtp", detail="OTP sent by SMTP")
+    except EmailDeliveryError as exc:
+        if os.getenv("AUTHCLAW_ENV", "").lower() != "production":
+            logger.warning("SMTP delivery failed in non-production, falling back to local outbox: %s", exc)
+            return _write_local_outbox(
+                email, otp, tenant_name, purpose=purpose, action_url=action_url
+            )
+        raise
 
 
 def _write_local_outbox(

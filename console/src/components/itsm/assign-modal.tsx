@@ -4,12 +4,14 @@ import React, { useEffect, useState } from "react";
 import ModalShell from "@/components/modal-shell";
 import { jsonRequest } from "@/lib/client-fetch";
 import { apiErrorMessage } from "@/lib/errors";
-import { Incident, TenantUser } from "@/lib/itsm-types";
+import { Incident, IncidentReferenceItem, TenantUser } from "@/lib/itsm-types";
 
 interface AssignModalProps {
   incident: Incident;
   onClose: () => void;
   onSuccess: (updated: Incident) => void;
+  usersEndpoint?: string;
+  referenceEndpoint?: string;
 }
 
 const COMMON_GROUPS = [
@@ -22,8 +24,9 @@ const COMMON_GROUPS = [
   "Database Operations",
 ];
 
-export default function AssignModal({ incident, onClose, onSuccess }: AssignModalProps) {
+export default function AssignModal({ incident, onClose, onSuccess, usersEndpoint = "/api/users", referenceEndpoint }: AssignModalProps) {
   const [users, setUsers] = useState<TenantUser[]>([]);
+  const [teams, setTeams] = useState<IncidentReferenceItem[]>([]);
   const [assigneeId, setAssigneeId] = useState<string>(incident.assignee_id || "");
   const [assignmentGroup, setAssignmentGroup] = useState<string>(incident.assignment_group || "");
   const [loadingUsers, setLoadingUsers] = useState<boolean>(true);
@@ -35,15 +38,16 @@ export default function AssignModal({ incident, onClose, onSuccess }: AssignModa
     const loadUsers = async () => {
       try {
         setLoadingUsers(true);
-        const res = await fetch("/api/users");
-        if (res.ok) {
-          const data = await res.json();
-          if (mounted && Array.isArray(data)) {
-            setUsers(data);
-          }
+        const res = await fetch(referenceEndpoint || usersEndpoint, { cache: "no-store" });
+        const data = await res.json().catch(() => ([]));
+        if (!res.ok) throw new Error(apiErrorMessage(data, "Unable to load eligible assignees"));
+        if (mounted && Array.isArray(data)) setUsers(data);
+        if (mounted && !Array.isArray(data)) {
+          setUsers(Array.isArray(data.users) ? data.users : []);
+          setTeams(Array.isArray(data.teams) ? data.teams : []);
         }
       } catch (err: unknown) {
-        console.warn("Failed to load tenant users:", err);
+        if (mounted) setError(err instanceof Error ? err.message : "Unable to load eligible assignees");
       } finally {
         if (mounted) setLoadingUsers(false);
       }
@@ -52,7 +56,7 @@ export default function AssignModal({ incident, onClose, onSuccess }: AssignModa
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [referenceEndpoint, usersEndpoint]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -116,22 +120,23 @@ export default function AssignModal({ incident, onClose, onSuccess }: AssignModa
           <label htmlFor="group-select" className="block text-xs font-semibold text-[#0E1726] mb-1.5">
             Assignment Group
           </label>
-          <input
-            id="group-select"
-            type="text"
-            list="common-groups"
-            value={assignmentGroup}
-            onChange={(e) => setAssignmentGroup(e.target.value)}
-            placeholder="e.g. Service Desk, Infrastructure..."
-            className="w-full bg-white border border-[#E6E9F0] rounded-lg px-3 py-2 text-xs text-[#0E1726] focus:ring-1 focus:ring-[#6D28D9] focus:outline-none"
-          />
-          <datalist id="common-groups">
-            {COMMON_GROUPS.map((g) => (
-              <option key={g} value={g} />
-            ))}
-          </datalist>
+          {referenceEndpoint ? (
+            <select id="group-select" value={assignmentGroup} onChange={(e) => setAssignmentGroup(e.target.value)} className="w-full bg-white border border-[#E6E9F0] rounded-lg px-3 py-2 text-xs text-[#0E1726] focus:ring-1 focus:ring-[#6D28D9] focus:outline-none">
+              <option value="">Unassigned</option>
+              {teams.map(team=><option key={team.id} value={team.name}>{team.name}</option>)}
+            </select>
+          ) : (
+            <>
+              <input id="group-select" type="text" list="common-groups" value={assignmentGroup} onChange={(e) => setAssignmentGroup(e.target.value)} placeholder="e.g. Service Desk, Infrastructure..." className="w-full bg-white border border-[#E6E9F0] rounded-lg px-3 py-2 text-xs text-[#0E1726] focus:ring-1 focus:ring-[#6D28D9] focus:outline-none" />
+              <datalist id="common-groups">{COMMON_GROUPS.map(group => <option key={group} value={group} />)}</datalist>
+            </>
+          )}
           <p className="text-[10px] text-[#6B7488] mt-1">
-            Choose a common operational group or enter a custom team name.
+            {referenceEndpoint
+              ? teams.length
+                ? "Choose an active operational team in this workspace."
+                : "No active operational teams are configured. You can leave the incident without a supporting team."
+              : "Choose a common operational group or enter a custom team name."}
           </p>
         </div>
 

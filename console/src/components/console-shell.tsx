@@ -27,9 +27,23 @@ import {
   Sliders,
   Ticket,
   User,
+  Users,
   X,
 } from "lucide-react";
 import NotificationBell from "@/components/notification-bell";
+
+interface NavItem {
+  name: string;
+  href: string;
+  icon: React.ComponentType<{ className?: string }>;
+  roles: string[];
+  itsmRoles?: string[];
+  children?: {
+    name: string;
+    href: string;
+    icon?: React.ComponentType<{ className?: string }>;
+  }[];
+}
 
 interface ConsoleShellProps {
   children: React.ReactNode;
@@ -44,7 +58,8 @@ interface ConsoleShellProps {
 const ITSM_ROLE_LABELS: Record<string, string> = {
   REQUESTER: "Requester",
   SERVICE_AGENT: "Service Agent",
-  SERVICE_LEAD: "Service Lead",
+  INCIDENT_MANAGER: "Incident Manager",
+  SERVICE_LEAD: "Incident Manager",
   PROCESS_CHANGE_MANAGER: "Process & Change Manager",
   PLATFORM_ADMINISTRATOR: "Platform Administrator",
   AUDITOR: "Auditor",
@@ -52,7 +67,7 @@ const ITSM_ROLE_LABELS: Record<string, string> = {
 
 const readRoles = ["owner", "admin", "developer", "operator", "viewer"];
 
-const navigation = [
+const navigation: NavItem[] = [
   { name: "Overview", href: "/overview", icon: LayoutDashboard, roles: readRoles },
   { name: "Compliance & Governance", href: "/compliance", icon: ShieldCheck, roles: readRoles },
   { name: "Approvals", href: "/approvals", icon: ClipboardCheck, roles: readRoles },
@@ -67,7 +82,7 @@ const navigation = [
   { name: "Settings", href: "/settings", icon: Settings, roles: ["owner", "admin"] },
 ];
 
-const itsmNavigation = [
+const itsmNavigation: NavItem[] = [
   { name: "Dashboard", href: "/itsm/dashboard", icon: LayoutDashboard, roles: readRoles },
   { name: "Incidents", href: "/itsm/incidents", icon: Ticket, roles: readRoles },
   { name: "Requests", href: "/itsm/requests", icon: ClipboardCheck, roles: readRoles },
@@ -76,7 +91,14 @@ const itsmNavigation = [
   { name: "Problems & Changes", href: "/itsm/changes", icon: GitPullRequest, roles: readRoles },
   { name: "CMDB", href: "/itsm/cmdb", icon: Database, roles: readRoles },
   { name: "Reports & Audit", href: "/itsm/reports", icon: FileCheck, roles: readRoles },
-  { name: "Administration", href: "/itsm/settings", icon: Sliders, roles: ["owner", "admin"] },
+];
+
+const serviceAgentNavigation: NavItem[] = [
+  { name: "My Work", href: "/itsm/dashboard/agent", icon: LayoutDashboard, roles: readRoles },
+  { name: "Incidents", href: "/itsm/incidents", icon: Ticket, roles: readRoles },
+  { name: "Requests", href: "/itsm/requests", icon: ClipboardCheck, roles: readRoles },
+  { name: "Knowledge", href: "/itsm/knowledge", icon: BookOpen, roles: readRoles },
+  { name: "Services", href: "/itsm/services", icon: Layers, roles: readRoles },
 ];
 
 export default function ConsoleShell({ children, userEmail, tenantId, tenantName, userRole, platformRole = "NONE", itsmRole }: ConsoleShellProps) {
@@ -104,6 +126,8 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
           { name: "Knowledge Base", href: "/itsm/knowledge", icon: BookOpen, roles: readRoles },
           { name: "Notifications", href: "/itsm/notifications", icon: Bell, roles: readRoles },
         ]
+      : effectiveItsmRole === "SERVICE_AGENT"
+      ? serviceAgentNavigation
       : itsmNavigation
     : navigation;
   const allowedNavigation = activeNavigationList.filter((item) => item.roles.includes(normalizedRole));
@@ -121,7 +145,9 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
   const currentPage = pathname === "/notifications"
     ? "Notifications"
     : isItsm
-    ? pathname.startsWith("/itsm/dashboard")
+    ? pathname === "/itsm/dashboard/agent"
+      ? "My Work"
+      : pathname.startsWith("/itsm/dashboard")
       ? "Dashboard"
       : pathname === "/itsm/incidents/new"
       ? "Report an Issue"
@@ -153,7 +179,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
             }`}
           >
             <item.icon className={`w-4.5 h-4.5 ${active ? "text-[#6D28D9]" : "text-[#6B7488]"}`} />
-            {item.name}
+            <span>{item.name}</span>
           </Link>
         );
       })}

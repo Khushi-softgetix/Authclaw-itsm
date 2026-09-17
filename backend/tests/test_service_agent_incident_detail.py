@@ -168,6 +168,13 @@ class ServiceAgentIncidentDetailTestCase(unittest.TestCase):
                 ),
                 {"id": cls.service_id, "tenant_id": cls.tenant_id, "slug": f"sso-{uuid4().hex[:8]}"},
             )
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_teams (id, tenant_id, name, is_active, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, 'Security Operations', true, now(), now())"
+                ),
+                {"id": uuid4(), "tenant_id": cls.tenant_id},
+            )
 
         agent_headers = {"Authorization": f"Bearer {cls.agent_key}"}
         create_res = cls.client.post(

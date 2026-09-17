@@ -1262,6 +1262,10 @@ class ITSMTicket(Base):
     linked_problem = relationship("ITSMTicket", remote_side=[id], foreign_keys=[linked_problem_id])
 
     @property
+    def configuration_item_id(self) -> None:
+        return None
+
+    @property
     def service_name(self) -> str | None:
         return self.service.name if self.service else None
 
@@ -1615,6 +1619,38 @@ class ITSMMajorIncident(Base):
     ticket = relationship("ITSMTicket")
     incident_commander = relationship("User", foreign_keys=[incident_commander_id])
     declared_by = relationship("User", foreign_keys=[declared_by_id])
+
+    @property
+    def communication_lead_id(self) -> None:
+        return None
+
+    @property
+    def affected_service_ids(self) -> list:
+        return []
+
+    @property
+    def affected_configuration_item_ids(self) -> list:
+        return []
+
+    @property
+    def restoration_checkpoints(self) -> list:
+        return []
+
+    @property
+    def command_decisions(self) -> list:
+        return []
+
+    @property
+    def command_tasks(self) -> list:
+        return []
+
+    @property
+    def stakeholders(self) -> list:
+        return []
+
+    @property
+    def command_communications(self) -> list:
+        return []
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "ticket_id", name="uq_itsm_major_incident_ticket"),
@@ -2007,4 +2043,3 @@ class ITSMTeamMember(Base):
         Index("idx_itsm_team_members_lookup", "tenant_id", "team_id"),
         Index("idx_itsm_team_members_user", "tenant_id", "user_id"),
     )
-

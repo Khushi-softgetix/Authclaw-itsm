@@ -5,18 +5,23 @@ import { Lock, MessageSquare, Send, Shield, User } from "lucide-react";
 import { formatDateTime } from "@/lib/itsm-format";
 import { jsonRequest } from "@/lib/client-fetch";
 import { apiErrorMessage } from "@/lib/errors";
-import { IncidentActivity } from "@/lib/itsm-types";
+import { IncidentActivity, TenantUser } from "@/lib/itsm-types";
+import { activityActor, activityContent, activityLabel, latestActivities } from "@/lib/incident-activity-presentation";
 
 interface ActivityTimelineProps {
   incidentId: string;
   activities: IncidentActivity[];
   onActivityAdded: () => void;
+  oversight?: boolean;
+  users?: TenantUser[];
 }
 
 export default function ActivityTimeline({
   incidentId,
   activities,
   onActivityAdded,
+  oversight = false,
+  users = [],
 }: ActivityTimelineProps) {
   const [content, setContent] = useState<string>("");
   const [activityType, setActivityType] = useState<string>("COMMENT");
@@ -71,13 +76,21 @@ export default function ActivityTimeline({
   return (
     <div className="bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm space-y-6">
       <div className="flex items-center justify-between border-b border-[#E6E9F0] pb-3">
-        <h3 className="text-sm font-bold text-[#0E1726]">Activity Stream & Notes</h3>
-        <span className="text-xs text-[#6B7488]">{activities.length} updates recorded</span>
+        <h3 className="text-sm font-bold text-[#0E1726]">{oversight ? "Activity & Updates" : "Activity Stream & Notes"}</h3>
+        <span className="text-xs text-[#6B7488]">{activities.length} updates{oversight ? " · Latest first" : " recorded"}</span>
       </div>
 
       {/* Composer */}
-      <form onSubmit={handleSubmit} className="space-y-3 bg-[#F5F7FA] p-4 rounded-xl border border-[#E6E9F0]">
-        <div className="flex items-center justify-between">
+      <form onSubmit={handleSubmit} className={oversight ? "space-y-2" : "space-y-3 bg-[#F5F7FA] p-4 rounded-xl border border-[#E6E9F0]"}>
+        {oversight ? <div className="flex flex-wrap items-center gap-3">
+          <label className="text-xs font-semibold text-[#475069]" htmlFor={`update-audience-${incidentId}`}>Update visibility</label>
+          <select id={`update-audience-${incidentId}`} value={isInternal ? "INTERNAL" : "PUBLIC"}
+            onChange={event => { const internal = event.target.value === "INTERNAL"; setIsInternal(internal); setActivityType(internal ? "NOTE" : "COMMENT"); }}
+            className="rounded-lg border border-[#DDD6FE] bg-white px-3 py-2 text-xs text-[#0E1726] focus:ring-2 focus:ring-[#6D28D9]">
+            <option value="PUBLIC">Public comment — requester visible</option>
+            <option value="INTERNAL">Internal note — team only</option>
+          </select>
+        </div> : <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <select
               value={activityType}
@@ -104,22 +117,23 @@ export default function ActivityTimeline({
               Internal Only
             </span>
           )}
-        </div>
+        </div>}
 
         <textarea
           value={content}
           onChange={(e) => setContent(e.target.value)}
-          placeholder={
+          aria-label="Incident update"
+          placeholder={oversight ? (isInternal ? "Add a team note…" : "Add a requester update…") :
             isInternal
               ? "Add an internal investigation note, diagnostic finding, or handoff note..."
               : "Post an update or response for the requester..."
           }
-          rows={3}
+          rows={oversight ? 2 : 3}
           className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-xs text-[#0E1726] focus:ring-1 focus:ring-[#6D28D9] focus:outline-none"
           required
         />
 
-        {error && <div className="text-xs text-red-600">{error}</div>}
+        {error && <div role="alert" className={oversight ? "text-xs text-[#5B21B6]" : "text-xs text-red-600"}>{error}</div>}
 
         <div className="flex justify-end">
           <button
@@ -139,21 +153,21 @@ export default function ActivityTimeline({
           <p className="text-xs text-[#6B7488] text-center py-6">No activity records found.</p>
         ) : (
           <div className="relative pl-6 border-l-2 border-[#E6E9F0] ml-3 space-y-6">
-            {activities.map((act) => (
+            {(oversight ? latestActivities(activities) : activities).map((act) => (
               <div key={act.id} className="relative group">
                 <div className="absolute -left-[31px] top-0.5 w-6 h-6 rounded-full bg-white border border-[#E6E9F0] shadow-sm flex items-center justify-center">
-                  {getActivityIcon(act.activity_type)}
+                  {oversight ? <MessageSquare className="h-3.5 w-3.5 text-[#6D28D9]"/> : getActivityIcon(act.activity_type)}
                 </div>
                 <div className="space-y-1">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-semibold text-[#0E1726]">
-                      {act.actor_id ? "Team Member" : "System Automation"}
+                      {oversight ? activityActor(act, users) : act.actor_id ? "Team Member" : "System Automation"}
                     </span>
                     <span className="text-[10px] font-mono text-[#6B7488] bg-[#F5F7FA] px-1.5 py-0.5 rounded border border-[#E6E9F0]">
-                      {act.activity_type}
+                      {oversight ? activityLabel(act.activity_type) : act.activity_type}
                     </span>
                     {act.is_internal && (
-                      <span className="inline-flex items-center gap-1 text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-1.5 py-0.5 rounded font-medium">
+                      <span className={`inline-flex items-center gap-1 text-[10px] border px-1.5 py-0.5 rounded font-medium ${oversight ? "bg-[#F1ECFE] text-[#5B21B6] border-[#DDD6FE]" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
                         <Lock className="w-2.5 h-2.5" /> Internal
                       </span>
                     )}
@@ -163,8 +177,8 @@ export default function ActivityTimeline({
                   </div>
 
                   {act.content && (
-                    <p className="text-xs text-[#475069] leading-relaxed bg-[#FBFAF9] p-3 rounded-lg border border-[#E6E9F0] whitespace-pre-wrap">
-                      {act.content}
+                    <p className={oversight && !["COMMENT", "NOTE"].includes(act.activity_type) ? "break-words text-sm text-[#475069] leading-relaxed whitespace-pre-wrap" : "break-words text-xs text-[#475069] leading-relaxed bg-[#FBFAF9] p-3 rounded-lg border border-[#E6E9F0] whitespace-pre-wrap"}>
+                      {oversight ? activityContent(act, users) : act.content}
                     </p>
                   )}
 

@@ -156,6 +156,8 @@ services:
       POSTGRES_APP_USER: ${POSTGRES_APP_USER:-authclaw_app}
       ENVELOPE_KEY: ${ENVELOPE_KEY:-YXV0aGNsYXctbG9jYWwtZmVybmV0LWtleS1jaGFuZ2U=}
       API_KEY_HASH_SECRET: ${API_KEY_HASH_SECRET:-authclaw-full-local-api-key-hash-secret}
+    volumes:
+      - ./backend/alembic:/app/alembic:ro
     command: ["alembic", "upgrade", "head"]
     restart: "no"
 

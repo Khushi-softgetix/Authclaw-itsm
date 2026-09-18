@@ -220,6 +220,8 @@ class IncidentActivityResponse(BaseModel):
     ticket_id: UUID
     actor_type: str
     actor_id: Optional[UUID] = None
+    actor_name: Optional[str] = None
+    actor_email: Optional[str] = None
     activity_type: str
     content: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict, validation_alias="activity_metadata")
@@ -233,12 +235,20 @@ class IncidentActivityResponse(BaseModel):
     def extract_metadata_fields(cls, data: Any) -> Any:
         if hasattr(data, "activity_metadata"):
             meta = data.activity_metadata or {}
+            actor_email = meta.get("actor_email")
+            actor_name = meta.get("actor_name")
+            if not actor_email and hasattr(data, "actor") and data.actor:
+                actor_email = getattr(data.actor, "email", None)
+            if not actor_name:
+                actor_name = actor_email
             return {
                 "id": data.id,
                 "tenant_id": data.tenant_id,
                 "ticket_id": data.ticket_id,
                 "actor_type": data.actor_type,
                 "actor_id": data.actor_id,
+                "actor_name": actor_name,
+                "actor_email": actor_email,
                 "activity_type": data.activity_type,
                 "content": data.content,
                 "metadata": meta,
@@ -247,6 +257,15 @@ class IncidentActivityResponse(BaseModel):
                 "is_internal": bool(meta.get("is_internal", False)),
                 "created_at": data.created_at,
             }
+        elif isinstance(data, dict):
+            meta = data.get("activity_metadata") or data.get("metadata") or {}
+            data_copy = dict(data)
+            data_copy.setdefault("actor_email", meta.get("actor_email"))
+            data_copy.setdefault("actor_name", meta.get("actor_name") or meta.get("actor_email"))
+            data_copy.setdefault("old_value", meta.get("old_value"))
+            data_copy.setdefault("new_value", meta.get("new_value"))
+            data_copy.setdefault("is_internal", bool(meta.get("is_internal", False)))
+            return data_copy
         return data
 
     model_config = ConfigDict(from_attributes=True)

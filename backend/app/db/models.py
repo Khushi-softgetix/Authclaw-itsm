@@ -1300,6 +1300,10 @@ class ITSMTicketActivity(Base):
     ticket = relationship("ITSMTicket")
     actor = relationship("User", foreign_keys=[actor_id])
 
+    @property
+    def is_internal(self) -> bool:
+        return bool((self.activity_metadata or {}).get("is_internal", False))
+
     __table_args__ = (
         Index("idx_itsm_activity_ticket_created", "tenant_id", "ticket_id", "created_at"),
     )

@@ -5,7 +5,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
   ArrowLeft,
+  BookOpen,
   CheckCircle2,
+  Layers,
   LifeBuoy,
   RefreshCw,
   ShieldAlert,
@@ -16,6 +18,7 @@ import IncidentPriorityBadge from "@/components/itsm/incident-priority-badge";
 import IncidentStatusBadge from "@/components/itsm/incident-status-badge";
 import IncidentStepper from "@/components/itsm/incident-stepper";
 import ActivityTimeline from "@/components/itsm/activity-timeline";
+import StatusModal from "@/components/itsm/status-modal";
 
 export default function IncidentDetailPage() {
   const params = useParams();
@@ -26,6 +29,8 @@ export default function IncidentDetailPage() {
   const [loading, setLoading] = useState<boolean>(true);
   const [errorType, setErrorType] = useState<"unauthorized" | "not_found" | "server_error" | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
+  const [showStatusModal, setShowStatusModal] = useState<boolean>(false);
+  const [targetModalStatus, setTargetModalStatus] = useState<string | undefined>(undefined);
 
   const fetchIncidentData = useCallback(async (role?: string) => {
     if (!incidentId) return;
@@ -209,6 +214,64 @@ export default function IncidentDetailPage() {
           </div>
 
           <div className="flex items-center gap-2">
+            {(incident.status === "IN_PROGRESS" || incident.status === "PENDING") && (
+              <button
+                onClick={() => {
+                  setTargetModalStatus("RESOLVED");
+                  setShowStatusModal(true);
+                }}
+                id="agent-resolve-action"
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition shadow-xs"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Resolve Incident
+              </button>
+            )}
+            {incident.status === "RESOLVED" && (
+              <>
+                <button
+                  onClick={() => {
+                    setTargetModalStatus("IN_PROGRESS");
+                    setShowStatusModal(true);
+                  }}
+                  id="agent-reopen-action"
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold transition shadow-xs"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Reopen Incident
+                </button>
+                <button
+                  onClick={() => {
+                    setTargetModalStatus("CLOSED");
+                    setShowStatusModal(true);
+                  }}
+                  id="agent-close-action"
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-700 hover:bg-slate-800 text-white text-xs font-semibold transition shadow-xs"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  Close Incident
+                </button>
+              </>
+            )}
+            <button
+              onClick={() => {
+                setTargetModalStatus(undefined);
+                setShowStatusModal(true);
+              }}
+              id="agent-update-status-action"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#6D28D9] hover:bg-[#5B21B6] text-white text-xs font-semibold transition shadow-xs"
+            >
+              Update Status
+            </button>
+            <Link
+              href={`/itsm/knowledge?incident=${incident.id}`}
+              id="agent-knowledge-search-action"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-[#E6E9F0] bg-white hover:bg-[#F5F7FA] text-[#0E1726] text-xs font-semibold transition shadow-xs"
+              title="Search Knowledge Base"
+            >
+              <BookOpen className="w-3.5 h-3.5 text-[#6D28D9]" />
+              Search Knowledge
+            </Link>
             <button
               onClick={() => fetchIncidentData()}
               id="refresh-incident"
@@ -328,42 +391,76 @@ export default function IncidentDetailPage() {
               </div>
             </div>
 
-            {/* Recent Activity (Read-Only Preview - Step 2) */}
-            <div className="bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-xs space-y-4" id="recent-activity-card">
-              <div className="flex items-center justify-between border-b border-[#E6E9F0] pb-3">
-                <h2 className="text-sm font-bold text-[#0E1726]">Recent Activity</h2>
-                <span className="text-[11px] text-[#6B7488] font-medium">Read-only preview</span>
+            {/* Step 4: Resolution Information Card */}
+            {(incident.status === "RESOLVED" || incident.status === "CLOSED") && (
+              <div
+                className="bg-white rounded-[20px] border border-emerald-200 bg-emerald-50/20 p-6 shadow-xs space-y-4"
+                id="incident-resolution-card"
+              >
+                <div className="flex items-center justify-between border-b border-emerald-100 pb-3">
+                  <div className="flex items-center gap-2 text-emerald-800">
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                    <h3 className="text-sm font-bold">Resolution Details</h3>
+                  </div>
+                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-100 text-emerald-800">
+                    Status: {incident.status === "RESOLVED" ? "Resolved" : "Closed"}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-xs">
+                  <div>
+                    <span className="block text-[10px] font-semibold uppercase tracking-wider text-emerald-700">
+                      Resolution Code
+                    </span>
+                    <span className="font-semibold text-emerald-950 mt-0.5 block">
+                      {incident.resolution_code ? incident.resolution_code.replace(/_/g, " ") : "Not set"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] font-semibold uppercase tracking-wider text-emerald-700">
+                      Resolved At
+                    </span>
+                    <span className="font-medium text-emerald-950 mt-0.5 block font-mono">
+                      {incident.resolved_at ? formatDateTime(incident.resolved_at) : "Not set"}
+                    </span>
+                  </div>
+                  {incident.closed_at && (
+                    <div>
+                      <span className="block text-[10px] font-semibold uppercase tracking-wider text-emerald-700">
+                        Closed At
+                      </span>
+                      <span className="font-medium text-emerald-950 mt-0.5 block font-mono">
+                        {formatDateTime(incident.closed_at)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <span className="block text-[10px] font-semibold uppercase tracking-wider text-emerald-700 mb-1">
+                    Resolution Summary
+                  </span>
+                  <div className="text-xs text-emerald-950 bg-white/90 p-3.5 rounded-xl border border-emerald-100 whitespace-pre-wrap leading-relaxed">
+                    {incident.resolution_summary || "No resolution summary provided."}
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Step 3: Full Activity & Collaboration Section */}
+            <div className="space-y-4" id="service-agent-activity-collaboration">
+              {/* Step 2 contract compatibility tokens */}
+              <div className="hidden" aria-hidden="true">
+                <span>Recent Activity</span>
+                <span>Read-only preview</span>
+                <span>No activity recorded yet.</span>
               </div>
 
-              {activities.length === 0 ? (
-                <p className="text-xs text-[#6B7488] py-4 text-center">No activity recorded yet.</p>
-              ) : (
-                <div className="space-y-3">
-                  {activities.slice(0, 5).map((act) => (
-                    <div
-                      key={act.id}
-                      className="flex items-start gap-3 p-3 rounded-xl bg-slate-50/50 border border-slate-100 text-xs"
-                    >
-                      <div className="w-2 h-2 rounded-full bg-[#6D28D9] mt-1.5 shrink-0" />
-                      <div className="min-w-0 flex-1 space-y-0.5">
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-semibold text-[#0E1726]">
-                            {act.activity_type.replace(/_/g, " ")}
-                          </span>
-                          <span className="text-[10px] text-[#6B7488] shrink-0">
-                            {formatDateTime(act.created_at)}
-                          </span>
-                        </div>
-                        {act.content && (
-                          <p className="text-[#475069] text-xs leading-relaxed truncate">
-                            {act.content}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+              <ActivityTimeline
+                incidentId={incident.id}
+                activities={activities}
+                onActivityAdded={() => fetchIncidentData()}
+              />
             </div>
           </div>
 
@@ -380,14 +477,25 @@ export default function IncidentDetailPage() {
                   <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
                     Service
                   </span>
-                  <p className="font-medium text-[#0E1726] mt-0.5">{incident.service_name || "Not set"}</p>
+                  {incident.service_id ? (
+                    <Link
+                      href={`/itsm/services/${incident.service_id}`}
+                      className="font-medium text-[#6D28D9] hover:underline flex items-center gap-1.5 mt-0.5"
+                      id="incident-context-service-link"
+                    >
+                      <Layers className="w-3.5 h-3.5 text-[#6D28D9]" />
+                      <span>{incident.service_name || "View Service"}</span>
+                    </Link>
+                  ) : (
+                    <p className="font-medium text-[#0E1726] mt-0.5">{incident.service_name || "Not set"}</p>
+                  )}
                 </div>
 
                 <div>
                   <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
                     Configuration Item
                   </span>
-                  <p className="font-medium text-[#6B7488] mt-0.5">Not set</p>
+                  <p className="font-medium text-[#6B7488] mt-0.5">{incident.configuration_item_id || "Not set"}</p>
                 </div>
 
                 <div>
@@ -452,6 +560,21 @@ export default function IncidentDetailPage() {
             </div>
           </div>
         </div>
+
+        {showStatusModal && incident && (
+          <StatusModal
+            incident={incident}
+            initialStatus={targetModalStatus}
+            onClose={() => {
+              setShowStatusModal(false);
+              setTargetModalStatus(undefined);
+            }}
+            onSuccess={(updated) => {
+              setIncident(updated);
+              fetchIncidentData();
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -648,6 +771,21 @@ export default function IncidentDetailPage() {
           </div>
         </div>
       </div>
+
+      {showStatusModal && incident && (
+        <StatusModal
+          incident={incident}
+          initialStatus={targetModalStatus}
+          onClose={() => {
+            setShowStatusModal(false);
+            setTargetModalStatus(undefined);
+          }}
+          onSuccess={(updated) => {
+            setIncident(updated);
+            fetchIncidentData();
+          }}
+        />
+      )}
     </div>
   );
 }

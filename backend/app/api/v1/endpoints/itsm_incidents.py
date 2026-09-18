@@ -401,12 +401,20 @@ def change_incident_status(
 ):
     actor_id = UUID(str(request.state.user_id))
     t_id = UUID(tenant_id)
-    role = _get_itsm_role(db, t_id, actor_id)
 
-    if role == "REQUESTER":
+    access_row = db.execute(
+        text("SELECT itsm_role, has_itsm_access FROM authn.lookup_itsm_user_access(:tenant_id, :user_id)"),
+        {"tenant_id": str(t_id), "user_id": str(actor_id)},
+    ).first()
+    if access_row and not access_row.has_itsm_access:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ITSM access disabled")
+
+    role = str(access_row.itsm_role).upper() if (access_row and access_row.itsm_role) else _get_itsm_role(db, t_id, actor_id)
+    allowed_roles = {"SERVICE_AGENT", "INCIDENT_MANAGER", "PLATFORM_ADMINISTRATOR", "SERVICE_LEAD", "ADMIN"}
+    if role not in allowed_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Requesters are not permitted to change incident status",
+            detail="Requesters and unauthorized roles are not permitted to change incident status",
         )
 
     return IncidentService.change_status(
@@ -482,7 +490,18 @@ def add_incident_activity(
 ):
     actor_id = UUID(str(request.state.user_id))
     t_id = UUID(tenant_id)
-    role = _get_itsm_role(db, t_id, actor_id)
+
+    access_row = db.execute(
+        text("SELECT itsm_role, has_itsm_access FROM authn.lookup_itsm_user_access(:tenant_id, :user_id)"),
+        {"tenant_id": str(t_id), "user_id": str(actor_id)},
+    ).first()
+    if access_row and not access_row.has_itsm_access:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ITSM access disabled")
+
+    role = str(access_row.itsm_role).upper() if (access_row and access_row.itsm_role) else _get_itsm_role(db, t_id, actor_id)
+    allowed_roles = {"SERVICE_AGENT", "INCIDENT_MANAGER", "PLATFORM_ADMINISTRATOR", "SERVICE_LEAD", "REQUESTER", "ADMIN"}
+    if role not in allowed_roles:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized role")
 
     incident = IncidentService.get_incident(db=db, tenant_id=t_id, incident_id=incident_id)
 
@@ -530,7 +549,18 @@ def list_incident_activities(
 ):
     actor_id = UUID(str(request.state.user_id))
     t_id = UUID(tenant_id)
-    role = _get_itsm_role(db, t_id, actor_id)
+
+    access_row = db.execute(
+        text("SELECT itsm_role, has_itsm_access FROM authn.lookup_itsm_user_access(:tenant_id, :user_id)"),
+        {"tenant_id": str(t_id), "user_id": str(actor_id)},
+    ).first()
+    if access_row and not access_row.has_itsm_access:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ITSM access disabled")
+
+    role = str(access_row.itsm_role).upper() if (access_row and access_row.itsm_role) else _get_itsm_role(db, t_id, actor_id)
+    allowed_roles = {"SERVICE_AGENT", "INCIDENT_MANAGER", "PLATFORM_ADMINISTRATOR", "SERVICE_LEAD", "REQUESTER", "ADMIN"}
+    if role not in allowed_roles:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized role")
 
     incident = IncidentService.get_incident(db=db, tenant_id=t_id, incident_id=incident_id)
 
@@ -544,6 +574,9 @@ def list_incident_activities(
     )
 
     if role == "REQUESTER":
-        activities = [a for a in activities if not getattr(a, "is_internal", False)]
+        activities = [
+            a for a in activities
+            if not (getattr(a, "is_internal", False) or bool((getattr(a, "activity_metadata", None) or {}).get("is_internal", False)))
+        ]
 
     return activities

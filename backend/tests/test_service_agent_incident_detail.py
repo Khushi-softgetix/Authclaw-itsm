@@ -127,6 +127,31 @@ class ServiceAgentIncidentDetailTestCase(unittest.TestCase):
                 {"id": uuid4(), "tenant_id": cls.tenant_id, "key_hash": hash_key(cls.admin_key), "created_by": cls.admin_user_id},
             )
 
+            # User without ITSM access in Tenant A
+            cls.no_itsm_user_id = uuid4()
+            cls.no_itsm_key = f"no-itsm-{uuid4().hex[:12]}"
+            conn.execute(
+                text(
+                    "INSERT INTO public.users (id, tenant_id, email, role, platform_role, is_active, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, :email, 'viewer', 'NONE', true, now(), now())"
+                ),
+                {"id": cls.no_itsm_user_id, "tenant_id": cls.tenant_id, "email": f"no-itsm-{uuid4().hex[:8]}@example.com"},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_user_access (id, tenant_id, user_id, itsm_role, has_itsm_access, has_governance_access, created_at, updated_at) "
+                    "VALUES (gen_random_uuid(), :tenant_id, :user_id, 'REQUESTER', false, false, now(), now())"
+                ),
+                {"tenant_id": cls.tenant_id, "user_id": cls.no_itsm_user_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO public.api_keys (id, tenant_id, key_hash, name, scopes, is_active, created_by, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, :key_hash, 'no-itsm-key', ARRAY['read', 'write'], true, :created_by, now(), now())"
+                ),
+                {"id": uuid4(), "tenant_id": cls.tenant_id, "key_hash": hash_key(cls.no_itsm_key), "created_by": cls.no_itsm_user_id},
+            )
+
             # Tenant B
             conn.execute(
                 text(
@@ -273,6 +298,334 @@ class ServiceAgentIncidentDetailTestCase(unittest.TestCase):
         agent_headers = {"Authorization": f"Bearer {self.agent_key}"}
         res_agent = self.client.get(f"/v1/itsm/incidents/{self.ticket_id}", headers=agent_headers)
         self.assertEqual(res_agent.status_code, 200)
+
+    # 8. SERVICE_AGENT can read activities
+    def test_08_service_agent_can_read_activities(self):
+        headers = {"Authorization": f"Bearer {self.agent_key}"}
+        res = self.client.get(f"/v1/itsm/incidents/{self.ticket_id}/activities", headers=headers)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertIsInstance(data, list)
+        self.assertGreaterEqual(len(data), 1)
+        first_act = data[0]
+        self.assertIn("activity_type", first_act)
+        self.assertIn("created_at", first_act)
+
+    # 9. SERVICE_AGENT can create a public comment
+    def test_09_service_agent_can_create_public_comment(self):
+        headers = {"Authorization": f"Bearer {self.agent_key}"}
+        payload = {
+            "content": "Checking the authentication server logs now.",
+            "activity_type": "COMMENT",
+            "is_internal": False,
+        }
+        res = self.client.post(f"/v1/itsm/incidents/{self.ticket_id}/activities", json=payload, headers=headers)
+        self.assertEqual(res.status_code, 201)
+        data = res.json()
+        self.assertEqual(data["ticket_id"], self.ticket_id)
+        self.assertEqual(data["content"], "Checking the authentication server logs now.")
+        self.assertEqual(data["is_internal"], False)
+        self.assertEqual(data["actor_email"], self.agent_email)
+
+    # 10. SERVICE_AGENT can create an internal note
+    def test_10_service_agent_can_create_internal_note(self):
+        headers = {"Authorization": f"Bearer {self.agent_key}"}
+        payload = {
+            "content": "Internal note: Potential memory leak in token validation module.",
+            "activity_type": "NOTE",
+            "is_internal": True,
+        }
+        res = self.client.post(f"/v1/itsm/incidents/{self.ticket_id}/activities", json=payload, headers=headers)
+        self.assertEqual(res.status_code, 201)
+        data = res.json()
+        self.assertEqual(data["ticket_id"], self.ticket_id)
+        self.assertEqual(data["content"], "Internal note: Potential memory leak in token validation module.")
+        self.assertEqual(data["is_internal"], True)
+        self.assertEqual(data["actor_email"], self.agent_email)
+
+    # 11. Unauthenticated activity request receives 401
+    def test_11_unauthenticated_activity_receives_401(self):
+        res_get = self.client.get(f"/v1/itsm/incidents/{self.ticket_id}/activities")
+        self.assertEqual(res_get.status_code, 401)
+
+        res_post = self.client.post(
+            f"/v1/itsm/incidents/{self.ticket_id}/activities",
+            json={"content": "Should fail", "is_internal": False},
+        )
+        self.assertEqual(res_post.status_code, 401)
+
+    # 12. Unauthorized role receives 403
+    def test_12_unauthorized_user_receives_403(self):
+        headers = {"Authorization": f"Bearer {self.no_itsm_key}"}
+        res_get = self.client.get(f"/v1/itsm/incidents/{self.ticket_id}/activities", headers=headers)
+        self.assertEqual(res_get.status_code, 403)
+
+        res_post = self.client.post(
+            f"/v1/itsm/incidents/{self.ticket_id}/activities",
+            json={"content": "Should fail", "is_internal": False},
+            headers=headers,
+        )
+        self.assertEqual(res_post.status_code, 403)
+
+    # 13. Tenant isolation enforced on activities
+    def test_13_tenant_isolation_enforced_on_activities(self):
+        # Tenant A agent attempts to read Tenant B activities
+        headers = {"Authorization": f"Bearer {self.agent_key}"}
+        res_get = self.client.get(f"/v1/itsm/incidents/{self.tenant_b_ticket_id}/activities", headers=headers)
+        self.assertEqual(res_get.status_code, 404)
+
+        res_post = self.client.post(
+            f"/v1/itsm/incidents/{self.tenant_b_ticket_id}/activities",
+            json={"content": "Cross-tenant attempt", "is_internal": False},
+            headers=headers,
+        )
+        self.assertEqual(res_post.status_code, 404)
+
+    # 14. Internal notes are NOT exposed to Requester
+    def test_14_internal_notes_hidden_from_requester(self):
+        req_headers = {"Authorization": f"Bearer {self.requester_key}"}
+        req_ticket_res = self.client.post(
+            "/v1/itsm/incidents",
+            json={
+                "title": "Requester VPN Disconnection",
+                "description": "VPN client fails to reconnect.",
+                "urgency": "HIGH",
+            },
+            headers=req_headers,
+        )
+        self.assertEqual(req_ticket_res.status_code, 201)
+        req_ticket_id = req_ticket_res.json()["id"]
+
+        agent_headers = {"Authorization": f"Bearer {self.agent_key}"}
+        pub_res = self.client.post(
+            f"/v1/itsm/incidents/{req_ticket_id}/activities",
+            json={
+                "content": "Public response: please restart the tunnel service.",
+                "activity_type": "COMMENT",
+                "is_internal": False,
+            },
+            headers=agent_headers,
+        )
+        self.assertEqual(pub_res.status_code, 201)
+
+        note_res = self.client.post(
+            f"/v1/itsm/incidents/{req_ticket_id}/activities",
+            json={
+                "content": "Internal diagnosis: VPN gateway certificate expires soon.",
+                "activity_type": "NOTE",
+                "is_internal": True,
+            },
+            headers=agent_headers,
+        )
+        self.assertEqual(note_res.status_code, 201)
+
+        res = self.client.get(f"/v1/itsm/incidents/{req_ticket_id}/activities", headers=req_headers)
+        self.assertEqual(res.status_code, 200)
+        activities = res.json()
+
+        internal_activities = [a for a in activities if a.get("is_internal") is True]
+        self.assertEqual(len(internal_activities), 0, "Requester must never see internal notes")
+
+        public_comments = [a for a in activities if a.get("content") == "Public response: please restart the tunnel service."]
+        self.assertGreaterEqual(len(public_comments), 1, "Public comment should be visible to requester")
+
+    # 15. SERVICE_AGENT can update incident status via safe status API
+    def test_15_service_agent_can_update_status(self):
+        headers = {"Authorization": f"Bearer {self.agent_key}"}
+        # Current status is ASSIGNED -> transition to IN_PROGRESS
+        payload = {
+            "status": "IN_PROGRESS",
+            "status_reason": "Beginning active troubleshooting of SSO tokens",
+        }
+        res = self.client.post(f"/v1/itsm/incidents/{self.ticket_id}/status", json=payload, headers=headers)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "IN_PROGRESS")
+
+    # 16. Existing assignment functionality requires INCIDENT_MANAGER (SERVICE_AGENT receives 403)
+    def test_16_service_agent_cannot_assign_incident(self):
+        headers = {"Authorization": f"Bearer {self.agent_key}"}
+        payload = {
+            "assignee_id": str(self.agent_user_id),
+            "assignment_group": "Security Operations",
+        }
+        res = self.client.post(f"/v1/itsm/incidents/{self.ticket_id}/assign", json=payload, headers=headers)
+        self.assertEqual(res.status_code, 403)
+
+    # 17. SERVICE_AGENT can resolve an authorized incident
+    def test_17_service_agent_can_resolve_incident(self):
+        headers = {"Authorization": f"Bearer {self.agent_key}"}
+        res_progress = self.client.post(
+            f"/v1/itsm/incidents/{self.ticket_id}/status",
+            json={"status": "IN_PROGRESS", "status_reason": "Investigating"},
+            headers=headers,
+        )
+        self.assertIn(res_progress.status_code, [200, 409])
+
+        resolve_payload = {
+            "status": "RESOLVED",
+            "resolution_code": "PERMANENT_FIX",
+            "resolution_summary": "Replaced faulty router interface module and verified traffic flow.",
+        }
+        res = self.client.post(f"/v1/itsm/incidents/{self.ticket_id}/status", json=resolve_payload, headers=headers)
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "RESOLVED")
+        self.assertEqual(data["resolution_code"], "PERMANENT_FIX")
+        self.assertEqual(data["resolution_summary"], "Replaced faulty router interface module and verified traffic flow.")
+        self.assertIsNotNone(data["resolved_at"])
+
+        res_act = self.client.get(f"/v1/itsm/incidents/{self.ticket_id}/activities", headers=headers)
+        self.assertEqual(res_act.status_code, 200)
+        activities = res_act.json()
+        resolution_activities = [
+            a for a in activities
+            if a.get("activity_type") == "STATUS_CHANGE" and ("resolved" in (a.get("content") or "").lower() or (a.get("new_value") or {}).get("status") == "RESOLVED")
+        ]
+        self.assertGreaterEqual(len(resolution_activities), 1)
+
+    # 18. Resolution validation fails when resolution_code or resolution_summary is missing
+    def test_18_resolve_validation_fails_without_summary_or_code(self):
+        headers = {"Authorization": f"Bearer {self.agent_key}"}
+        ticket_res = self.client.post(
+            "/v1/itsm/incidents",
+            json={"title": "Validation Ticket", "description": "Validation check", "urgency": "MEDIUM"},
+            headers=headers,
+        )
+        self.assertEqual(ticket_res.status_code, 201)
+        tid = ticket_res.json()["id"]
+
+        self.client.post(
+            f"/v1/itsm/incidents/{tid}/status",
+            json={"status": "IN_PROGRESS"},
+            headers=headers,
+        )
+
+        # Missing code
+        res1 = self.client.post(
+            f"/v1/itsm/incidents/{tid}/status",
+            json={"status": "RESOLVED", "resolution_summary": "Summary only"},
+            headers=headers,
+        )
+        self.assertEqual(res1.status_code, 400)
+
+        # Missing summary
+        res2 = self.client.post(
+            f"/v1/itsm/incidents/{tid}/status",
+            json={"status": "RESOLVED", "resolution_code": "PERMANENT_FIX"},
+            headers=headers,
+        )
+        self.assertEqual(res2.status_code, 400)
+
+    # 19. Unauthorized role cannot resolve incident
+    def test_19_unauthorized_user_cannot_resolve(self):
+        req_headers = {"Authorization": f"Bearer {self.requester_key}"}
+        resolve_payload = {
+            "status": "RESOLVED",
+            "resolution_code": "PERMANENT_FIX",
+            "resolution_summary": "Requester trying to resolve",
+        }
+        res_req = self.client.post(
+            f"/v1/itsm/incidents/{self.ticket_id}/status",
+            json=resolve_payload,
+            headers=req_headers,
+        )
+        self.assertEqual(res_req.status_code, 403)
+
+        no_itsm_headers = {"Authorization": f"Bearer {self.no_itsm_key}"}
+        res_no_itsm = self.client.post(
+            f"/v1/itsm/incidents/{self.ticket_id}/status",
+            json=resolve_payload,
+            headers=no_itsm_headers,
+        )
+        self.assertEqual(res_no_itsm.status_code, 403)
+
+    # 20. Unauthenticated resolution returns 401
+    def test_20_unauthenticated_resolution_returns_401(self):
+        res = self.client.post(
+            f"/v1/itsm/incidents/{self.ticket_id}/status",
+            json={"status": "RESOLVED", "resolution_code": "PERMANENT_FIX", "resolution_summary": "No auth"},
+        )
+        self.assertEqual(res.status_code, 401)
+
+    # 21. Cross-tenant resolution is blocked
+    def test_21_cross_tenant_resolution_blocked(self):
+        headers = {"Authorization": f"Bearer {self.agent_key}"}
+        resolve_payload = {
+            "status": "RESOLVED",
+            "resolution_code": "PERMANENT_FIX",
+            "resolution_summary": "Cross tenant resolution attempt",
+        }
+        res = self.client.post(
+            f"/v1/itsm/incidents/{self.tenant_b_ticket_id}/status",
+            json=resolve_payload,
+            headers=headers,
+        )
+        self.assertEqual(res.status_code, 404)
+
+    # 22. SERVICE_AGENT can reopen a resolved incident
+    def test_22_service_agent_can_reopen_resolved_incident(self):
+        headers = {"Authorization": f"Bearer {self.agent_key}"}
+        ticket_res = self.client.post(
+            "/v1/itsm/incidents",
+            json={"title": "Reopen Test Ticket", "description": "Testing reopen", "urgency": "HIGH"},
+            headers=headers,
+        )
+        self.assertEqual(ticket_res.status_code, 201)
+        tid = ticket_res.json()["id"]
+
+        self.client.post(f"/v1/itsm/incidents/{tid}/status", json={"status": "IN_PROGRESS"}, headers=headers)
+        res_res = self.client.post(
+            f"/v1/itsm/incidents/{tid}/status",
+            json={"status": "RESOLVED", "resolution_code": "WORKAROUND_APPLIED", "resolution_summary": "Temp bypass applied"},
+            headers=headers,
+        )
+        self.assertEqual(res_res.status_code, 200)
+        self.assertIsNotNone(res_res.json()["resolved_at"])
+
+        reopen_payload = {
+            "status": "IN_PROGRESS",
+            "status_reason": "Customer reported recurrent symptom",
+        }
+        res_reopen = self.client.post(f"/v1/itsm/incidents/{tid}/status", json=reopen_payload, headers=headers)
+        self.assertEqual(res_reopen.status_code, 200)
+        data = res_reopen.json()
+        self.assertEqual(data["status"], "IN_PROGRESS")
+        self.assertIsNone(data["resolved_at"])
+
+        res_act = self.client.get(f"/v1/itsm/incidents/{tid}/activities", headers=headers)
+        self.assertEqual(res_act.status_code, 200)
+        reopen_acts = [
+            a for a in res_act.json()
+            if a.get("activity_type") == "STATUS_CHANGE" and "reopened" in (a.get("content") or "").lower()
+        ]
+        self.assertGreaterEqual(len(reopen_acts), 1)
+
+    # 23. SERVICE_AGENT can close a resolved incident
+    def test_23_service_agent_can_close_resolved_incident(self):
+        headers = {"Authorization": f"Bearer {self.agent_key}"}
+        ticket_res = self.client.post(
+            "/v1/itsm/incidents",
+            json={"title": "Close Test Ticket", "description": "Testing closure", "urgency": "LOW"},
+            headers=headers,
+        )
+        self.assertEqual(ticket_res.status_code, 201)
+        tid = ticket_res.json()["id"]
+
+        self.client.post(f"/v1/itsm/incidents/{tid}/status", json={"status": "IN_PROGRESS"}, headers=headers)
+        self.client.post(
+            f"/v1/itsm/incidents/{tid}/status",
+            json={"status": "RESOLVED", "resolution_code": "PERMANENT_FIX", "resolution_summary": "Firmware patch applied"},
+            headers=headers,
+        )
+
+        close_payload = {"status": "CLOSED"}
+        res_close = self.client.post(f"/v1/itsm/incidents/{tid}/status", json=close_payload, headers=headers)
+        self.assertEqual(res_close.status_code, 200)
+        data = res_close.json()
+        self.assertEqual(data["status"], "CLOSED")
+        self.assertIsNotNone(data["closed_at"])
+        self.assertEqual(data["closed_by"], str(self.agent_user_id))
 
 
 if __name__ == "__main__":

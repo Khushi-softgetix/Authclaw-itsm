@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
 from sqlalchemy import case, inspect, or_, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import (
     ITSMConfigurationItem,
@@ -435,6 +435,14 @@ class IncidentService:
             meta["new_value"] = new_value
         if is_internal:
             meta["is_internal"] = True
+        if actor_id:
+            try:
+                actor_user = db.query(User).filter(User.id == actor_id).first()
+                if actor_user and actor_user.email:
+                    meta["actor_email"] = actor_user.email
+                    meta["actor_name"] = actor_user.email
+            except Exception:
+                pass
 
         activity = ITSMTicketActivity(
             id=uuid4(),
@@ -1063,14 +1071,25 @@ class IncidentService:
                     major.resolved_at = None
                     major.closed_at = None
 
+        activity_content = f"Status changed from {current_status} to {target_status}" + (f": {payload.status_reason}" if payload.status_reason else "")
+        if target_status == "RESOLVED":
+            activity_content = f"Incident resolved: Status changed from {current_status} to RESOLVED: {ticket.resolution_summary} (Code: {ticket.resolution_code})"
+        elif current_status == "RESOLVED" and target_status == "IN_PROGRESS":
+            activity_content = "Incident reopened: Status changed from RESOLVED to IN_PROGRESS" + (f": {payload.status_reason}" if payload.status_reason else "")
+
+        new_val = {"status": target_status, "status_reason": payload.status_reason}
+        if target_status == "RESOLVED":
+            new_val["resolution_code"] = ticket.resolution_code
+            new_val["resolution_summary"] = ticket.resolution_summary
+
         cls._record_activity(
             db=db,
             tenant_id=tenant_id,
             ticket_id=ticket.id,
             activity_type="STATUS_CHANGE",
-            content=f"Status changed from {current_status} to {target_status}" + (f": {payload.status_reason}" if payload.status_reason else ""),
+            content=activity_content,
             old_value={"status": current_status},
-            new_value={"status": target_status, "status_reason": payload.status_reason},
+            new_value=new_val,
             actor_id=actor_id,
         )
 
@@ -1286,6 +1305,7 @@ class IncidentService:
         cls.get_incident(db, tenant_id, incident_id)
         return (
             db.query(ITSMTicketActivity)
+            .options(joinedload(ITSMTicketActivity.actor))
             .filter(
                 ITSMTicketActivity.ticket_id == incident_id,
                 ITSMTicketActivity.tenant_id == tenant_id,

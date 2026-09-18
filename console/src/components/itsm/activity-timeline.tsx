@@ -14,6 +14,7 @@ interface ActivityTimelineProps {
   onActivityAdded: () => void;
   oversight?: boolean;
   users?: TenantUser[];
+  apiEndpoint?: string;
 }
 
 export default function ActivityTimeline({
@@ -22,6 +23,7 @@ export default function ActivityTimeline({
   onActivityAdded,
   oversight = false,
   users = [],
+  apiEndpoint,
 }: ActivityTimelineProps) {
   const [content, setContent] = useState<string>("");
   const [activityType, setActivityType] = useState<string>("COMMENT");
@@ -43,7 +45,8 @@ export default function ActivityTimeline({
         is_internal: isInternal,
       };
 
-      const res = await fetch(`/api/itsm/incidents/${incidentId}/activities`, jsonRequest("POST", payload));
+      const endpoint = apiEndpoint || `/api/itsm/incidents/${incidentId}/activities`;
+      const res = await fetch(endpoint, jsonRequest("POST", payload));
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(apiErrorMessage(data, "Failed to post comment"));
@@ -67,127 +70,204 @@ export default function ActivityTimeline({
       case "ASSIGNMENT_CHANGE":
         return <User className="w-3.5 h-3.5 text-purple-500" />;
       case "NOTE":
+        return <Lock className="w-3.5 h-3.5 text-amber-600" />;
       case "COMMENT":
       default:
         return <MessageSquare className="w-3.5 h-3.5 text-indigo-500" />;
     }
   };
 
+  const formatActor = (act: IncidentActivity) => {
+    if (oversight && users.length > 0) {
+      return activityActor(act, users);
+    }
+    if (act.actor_name) {
+      return act.actor_email && act.actor_name !== act.actor_email
+        ? `${act.actor_name} (${act.actor_email})`
+        : act.actor_name;
+    }
+    if (act.actor_email) return act.actor_email;
+    if (act.actor_id) return "Support Agent";
+    return "System Automation";
+  };
+
+  const setVisibility = (internal: boolean) => {
+    // Update visibility
+    setIsInternal(internal);
+    setActivityType(internal ? "NOTE" : "COMMENT");
+  };
+
   return (
-    <div className="bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm space-y-6">
+    <div className="bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm space-y-6" id="activity-timeline-container">
       <div className="flex items-center justify-between border-b border-[#E6E9F0] pb-3">
-        <h3 className="text-sm font-bold text-[#0E1726]">{oversight ? "Activity & Updates" : "Activity Stream & Notes"}</h3>
-        <span className="text-xs text-[#6B7488]">{activities.length} updates{oversight ? " · Latest first" : " recorded"}</span>
+        <div>
+          <h3 className="text-sm font-bold text-[#0E1726]">{oversight ? "Activity & Updates" : "Activity & Collaboration"}</h3>
+          <p className="text-[11px] text-[#6B7488]">Audit trail, status updates, and discussion stream</p>
+        </div>
+        <span className="text-xs font-mono text-[#6B7488] bg-[#F5F7FA] px-2 py-0.5 rounded-full border border-[#E6E9F0]">
+          {activities.length} {activities.length === 1 ? "entry" : "entries"}
+        </span>
       </div>
 
       {/* Composer */}
-      <form onSubmit={handleSubmit} className={oversight ? "space-y-2" : "space-y-3 bg-[#F5F7FA] p-4 rounded-xl border border-[#E6E9F0]"}>
-        {oversight ? <div className="flex flex-wrap items-center gap-3">
-          <label className="text-xs font-semibold text-[#475069]" htmlFor={`update-audience-${incidentId}`}>Update visibility</label>
-          <select id={`update-audience-${incidentId}`} value={isInternal ? "INTERNAL" : "PUBLIC"}
-            onChange={event => { const internal = event.target.value === "INTERNAL"; setIsInternal(internal); setActivityType(internal ? "NOTE" : "COMMENT"); }}
-            className="rounded-lg border border-[#DDD6FE] bg-white px-3 py-2 text-xs text-[#0E1726] focus:ring-2 focus:ring-[#6D28D9]">
-            <option value="PUBLIC">Public comment — requester visible</option>
-            <option value="INTERNAL">Internal note — team only</option>
-          </select>
-        </div> : <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <select
-              value={activityType}
-              onChange={(e) => setActivityType(e.target.value)}
-              className="bg-white border border-[#E6E9F0] rounded-lg px-2.5 py-1 text-xs text-[#0E1726] focus:outline-none"
+      <form
+        onSubmit={handleSubmit}
+        className={`space-y-3 p-4 rounded-xl border transition-colors ${
+          isInternal ? "bg-amber-50/40 border-amber-200" : "bg-[#F8FAFC] border-[#E6E9F0]"
+        }`}
+        id="activity-composer-form"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-1 border-b border-[#E6E9F0]/60">
+          <div className="flex items-center gap-1.5 p-0.5 bg-white rounded-lg border border-[#E6E9F0] shadow-2xs" aria-label="Update visibility">
+            <button
+              type="button"
+              onClick={() => setVisibility(false)}
+              id="composer-public-tab"
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition ${
+                !isInternal
+                  ? "bg-[#6D28D9] text-white shadow-xs"
+                  : "text-[#6B7488] hover:text-[#0E1726]"
+              }`}
             >
-              <option value="COMMENT">Public Comment</option>
-              <option value="NOTE">Work Note</option>
-            </select>
-            <label className="flex items-center gap-1.5 text-xs text-[#475069] cursor-pointer ml-2">
-              <input
-                type="checkbox"
-                checked={isInternal}
-                onChange={(e) => setIsInternal(e.target.checked)}
-                className="w-3.5 h-3.5 rounded border-[#E6E9F0] text-[#6D28D9] focus:ring-[#6D28D9]"
-              />
-              <span className="flex items-center gap-1">
-                <Lock className="w-3 h-3 text-[#6B7488]" /> Internal note
-              </span>
-            </label>
+              <MessageSquare className="w-3 h-3" />
+              Public Comment
+            </button>
+            <button
+              type="button"
+              onClick={() => setVisibility(true)}
+              id="composer-internal-tab"
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition ${
+                isInternal
+                  ? "bg-amber-600 text-white shadow-xs"
+                  : "text-[#6B7488] hover:text-[#0E1726]"
+              }`}
+            >
+              <Lock className="w-3 h-3" />
+              Internal Note
+            </button>
           </div>
-          {isInternal && (
-            <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200 px-2 py-0.5 rounded font-medium">
-              Internal Only
-            </span>
-          )}
-        </div>}
+
+          <div className="text-[11px] font-medium">
+            {isInternal ? (
+              <span className="inline-flex items-center gap-1 text-amber-800 bg-amber-100/70 border border-amber-300 px-2 py-0.5 rounded-full">
+                <Lock className="w-2.5 h-2.5" /> Visible to IT staff only · Never exposed to Requester
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-blue-800 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+                <MessageSquare className="w-2.5 h-2.5" /> Visible to Requester and Support Team
+              </span>
+            )}
+          </div>
+        </div>
 
         <textarea
           value={content}
           onChange={(e) => setContent(e.target.value)}
-          aria-label="Incident update"
-          placeholder={oversight ? (isInternal ? "Add a team note…" : "Add a requester update…") :
+          aria-label="Incident activity content"
+          id="activity-content-input"
+          placeholder={
             isInternal
-              ? "Add an internal investigation note, diagnostic finding, or handoff note..."
-              : "Post an update or response for the requester..."
+              ? "Add an internal investigation note, diagnosis finding, or handoff note (hidden from requester)..."
+              : "Post an update or reply visible to the incident requester..."
           }
-          rows={oversight ? 2 : 3}
-          className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-xs text-[#0E1726] focus:ring-1 focus:ring-[#6D28D9] focus:outline-none"
+          rows={3}
+          className="w-full bg-white border border-[#E6E9F0] rounded-lg p-3 text-xs text-[#0E1726] focus:ring-1 focus:ring-[#6D28D9] focus:outline-none transition resize-y"
           required
         />
 
-        {error && <div role="alert" className={oversight ? "text-xs text-[#5B21B6]" : "text-xs text-red-600"}>{error}</div>}
+        {error && (
+          <div
+            role="alert"
+            className="flex items-center justify-between p-2.5 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700"
+            id="activity-composer-error"
+          >
+            <span>{error}</span>
+            <button
+              type="button"
+              onClick={() => setError(null)}
+              className="text-red-500 hover:text-red-800 text-[11px] underline ml-2"
+            >
+              Dismiss
+            </button>
+          </div>
+        )}
 
-        <div className="flex justify-end">
+        <div className="flex items-center justify-between pt-1">
+          <span className="text-[11px] text-[#8C95A6]">
+            {isInternal ? "Protected internal note" : "Public customer communication"}
+          </span>
           <button
             type="submit"
             disabled={submitting || !content.trim()}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 bg-[#6D28D9] hover:bg-[#5B21B6] text-white rounded-lg text-xs font-semibold transition shadow-sm disabled:opacity-50"
+            id="submit-activity-button"
+            className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-semibold text-white transition shadow-sm disabled:opacity-50 ${
+              isInternal ? "bg-amber-600 hover:bg-amber-700" : "bg-[#6D28D9] hover:bg-[#5B21B6]"
+            }`}
           >
             <Send className="w-3 h-3" />
-            {submitting ? "Posting..." : "Post Update"}
+            {submitting ? "Posting..." : isInternal ? "Save Internal Note" : "Post Public Comment"}
           </button>
         </div>
       </form>
 
       {/* Timeline entries */}
-      <div className="space-y-4">
+      <div className="space-y-4" id="activity-stream">
         {activities.length === 0 ? (
-          <p className="text-xs text-[#6B7488] text-center py-6">No activity records found.</p>
+          <div className="text-center py-8 bg-[#FBFBFC] rounded-xl border border-dashed border-[#E6E9F0]">
+            <p className="text-xs text-[#6B7488]">No activity records found.</p>
+          </div>
         ) : (
-          <div className="relative pl-6 border-l-2 border-[#E6E9F0] ml-3 space-y-6">
+          <div className="relative pl-6 border-l-2 border-[#E6E9F0] ml-3 space-y-5">
             {(oversight ? latestActivities(activities) : activities).map((act) => (
-              <div key={act.id} className="relative group">
-                <div className="absolute -left-[31px] top-0.5 w-6 h-6 rounded-full bg-white border border-[#E6E9F0] shadow-sm flex items-center justify-center">
+              <div key={act.id} className="relative group" id={`activity-entry-${act.id}`}>
+                <div className="absolute -left-[31px] top-0.5 w-6 h-6 rounded-full bg-white border border-[#E6E9F0] shadow-2xs flex items-center justify-center">
                   {oversight ? <MessageSquare className="h-3.5 w-3.5 text-[#6D28D9]"/> : getActivityIcon(act.activity_type)}
                 </div>
-                <div className="space-y-1">
+                <div className="space-y-1.5">
                   <div className="flex items-center gap-2 flex-wrap">
                     <span className="text-xs font-semibold text-[#0E1726]">
-                      {oversight ? activityActor(act, users) : act.actor_id ? "Team Member" : "System Automation"}
+                      {formatActor(act)}
                     </span>
-                    <span className="text-[10px] font-mono text-[#6B7488] bg-[#F5F7FA] px-1.5 py-0.5 rounded border border-[#E6E9F0]">
-                      {oversight ? activityLabel(act.activity_type) : act.activity_type}
+                    <span className="text-[10px] font-mono text-[#6B7488] bg-[#F5F7FA] px-2 py-0.5 rounded-md border border-[#E6E9F0]">
+                      {oversight ? activityLabel(act.activity_type) : act.activity_type.replace(/_/g, " ")}
                     </span>
-                    {act.is_internal && (
-                      <span className={`inline-flex items-center gap-1 text-[10px] border px-1.5 py-0.5 rounded font-medium ${oversight ? "bg-[#F1ECFE] text-[#5B21B6] border-[#DDD6FE]" : "bg-amber-50 text-amber-700 border-amber-200"}`}>
-                        <Lock className="w-2.5 h-2.5" /> Internal
+                    {act.is_internal ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-amber-50 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-full">
+                        <Lock className="w-2.5 h-2.5" /> Internal Note
                       </span>
-                    )}
+                    ) : act.activity_type === "COMMENT" ? (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-medium bg-blue-50 text-blue-700 border border-blue-200 px-2 py-0.5 rounded-full">
+                        Public Comment
+                      </span>
+                    ) : null}
                     <span className="text-[11px] text-[#A8B0C0] ml-auto">
                       {formatDateTime(act.created_at)}
                     </span>
                   </div>
 
                   {act.content && (
-                    <p className={oversight && !["COMMENT", "NOTE"].includes(act.activity_type) ? "break-words text-sm text-[#475069] leading-relaxed whitespace-pre-wrap" : "break-words text-xs text-[#475069] leading-relaxed bg-[#FBFAF9] p-3 rounded-lg border border-[#E6E9F0] whitespace-pre-wrap"}>
+                    <p
+                      className={
+                        act.is_internal
+                          ? "break-words text-xs text-[#0E1726] leading-relaxed bg-amber-50/40 p-3.5 rounded-xl border border-amber-200 whitespace-pre-wrap"
+                          : oversight && !["COMMENT", "NOTE"].includes(act.activity_type)
+                          ? "break-words text-sm text-[#475069] leading-relaxed whitespace-pre-wrap"
+                          : "break-words text-xs text-[#475069] leading-relaxed bg-[#FBFAF9] p-3.5 rounded-xl border border-[#E6E9F0] whitespace-pre-wrap"
+                      }
+                    >
                       {oversight ? activityContent(act, users) : act.content}
                     </p>
                   )}
 
                   {/* Transition diff pill if available */}
-                  {act.metadata && Boolean(act.metadata.old_status || act.metadata.new_status) && (
-                    <div className="text-[11px] text-[#6B7488] flex items-center gap-1.5 pt-1">
-                      <span className="font-medium text-[#475069]">{String(act.metadata.old_status)}</span>
+                  {Boolean(
+                    (act.old_value?.status && act.new_value?.status) ||
+                    (act.metadata?.old_status && act.metadata?.new_status)
+                  ) && (
+                    <div className="text-[11px] text-[#6B7488] inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#F5F7FA] border border-[#E6E9F0]">
+                      <span className="font-mono text-[#475069]">{String(act.old_value?.status || act.metadata?.old_status)}</span>
                       <span>&rarr;</span>
-                      <span className="font-semibold text-[#0E1726]">{String(act.metadata.new_status)}</span>
+                      <span className="font-mono font-semibold text-[#0E1726]">{String(act.new_value?.status || act.metadata?.new_status)}</span>
                     </div>
                   )}
                 </div>

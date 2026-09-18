@@ -406,6 +406,318 @@ def main() -> None:
             },
         )
 
+        # Seed standard ITSM Knowledge Articles
+        seed_kb_articles = [
+            (
+                uuid.UUID("66666666-6666-4666-8666-666666666671"),
+                "connecting-to-corporate-wireguard-vpn",
+                "Connecting to Corporate WireGuard VPN",
+                "Networking",
+                "Step-by-step setup for WireGuard VPN client across macOS, Windows, and Linux workstations.",
+                "### Connecting to Corporate WireGuard VPN\n\nAuthClaw corporate network access requires an encrypted WireGuard VPN tunnel for remote connectivity. Ensure you have your tenant client configuration file before starting.\n\n#### Prerequisites\n1. Active AuthClaw SSO credentials.\n2. Workstation enrolled in corporate device management.\n\n#### Setup Steps\n1. Download and install the official WireGuard client from wireguard.com.\n2. Open WireGuard and select **Add Tunnel** -> **Import Tunnel from File**.\n3. Select your `.conf` certificate downloaded from the Service Catalog.\n4. Toggle the tunnel active and verify connection status via `ping 10.0.0.1`.",
+                ["vpn", "wireguard", "remote", "network"],
+            ),
+            (
+                uuid.UUID("66666666-6666-4666-8666-666666666672"),
+                "vpn-connection-setup",
+                "VPN Connection Setup",
+                "Networking",
+                "Detailed walkthrough for configuring client certificates, DNS routing, and split-tunneling.",
+                "### VPN Connection Setup\n\nConfigure your secure remote access profile with correct DNS servers and routing domains.\n\n#### Instructions\n1. Open your enterprise connection profile settings.\n2. Verify the gateway endpoint is set to `vpn.authclaw-corp.internal`.\n3. Enable DNS suffix search list for internal hostnames.\n4. Connect and test intranet reachability.",
+                ["vpn", "setup", "networking", "connection"],
+            ),
+            (
+                uuid.UUID("66666666-6666-4666-8666-666666666673"),
+                "vpn-common-errors",
+                "VPN Common Errors & Troubleshooting",
+                "Troubleshooting",
+                "Resolving handshake timeouts, MTU fragmentation, and routing conflicts in VPN sessions.",
+                "### VPN Common Errors & Troubleshooting\n\nCommon diagnostic procedures when experiencing VPN dropped packets or handshake failures.\n\n#### Troubleshooting Matrix\n- **Error 101 (Handshake Timeout)**: Check firewall UDP port 51820 egress.\n- **Error 204 (MTU Packet Drop)**: Clamp tunnel MTU to 1360 in `.conf` interface section.\n- **Error 305 (Split-Tunnel Collision)**: Ensure local subnet does not overlap with 10.0.0.0/16.",
+                ["vpn", "troubleshooting", "errors", "timeout"],
+            ),
+            (
+                uuid.UUID("66666666-6666-4666-8666-666666666674"),
+                "troubleshooting-okta-sso-sessions",
+                "Troubleshooting Okta Single Sign-On (SSO) Sessions",
+                "Authentication",
+                "Resolving session cookie timeouts, MFA loop prompts, and browser cache conflicts.",
+                "### Troubleshooting Okta Single Sign-On (SSO) Sessions\n\nIf you experience redirect loops or session cookie expiration during sign-in, follow these remediation steps.\n\n#### Resolution Steps\n1. Clear browser cookies and cache for `*.authclaw.com` and your identity provider.\n2. Disable third-party tracking blocker extensions temporarily.\n3. Ensure workstation clock is synchronized with UTC network time.\n4. Attempt logging in using a private or incognito window.",
+                ["okta", "sso", "authentication", "login"],
+            ),
+            (
+                uuid.UUID("66666666-6666-4666-8666-666666666675"),
+                "setting-up-hardware-security-keys",
+                "Setting Up Hardware Security Keys (YubiKey)",
+                "Security",
+                "Registering FIDO2 / WebAuthn YubiKey devices for phishing-resistant MFA.",
+                "### Setting Up Hardware Security Keys (YubiKey)\n\nHardware security keys protect accounts against phishing and credential theft through cryptographic origin binding.\n\n#### Registration Steps\n1. Plug your YubiKey into a USB-A or USB-C port on your workstation.\n2. Go to **Account Settings** -> **Security & MFA** -> **Add Hardware Key**.\n3. Touch the gold contact point on your key when prompted by the browser.\n4. Save your one-time backup recovery codes in a secure secret manager.",
+                ["yubikey", "security", "fido2", "mfa", "hardware"],
+            ),
+        ]
+
+        for kb_id, kb_slug, kb_title, kb_category, kb_summary, kb_content, kb_keywords in seed_kb_articles:
+            conn.execute(
+                text("""
+                INSERT INTO itsm_knowledge_articles (
+                    id, tenant_id, title, slug, category, status, current_published_version,
+                    view_count, helpful_count, author_id, published_at, created_at, updated_at
+                )
+                VALUES (
+                    :id, :tenant_id, :title, :slug, :category, 'PUBLISHED', 1,
+                    42, 12, :author_id, NOW(), NOW(), NOW()
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                    title = EXCLUDED.title,
+                    slug = EXCLUDED.slug,
+                    category = EXCLUDED.category,
+                    status = EXCLUDED.status,
+                    current_published_version = 1,
+                    updated_at = NOW()
+                """),
+                {
+                    "id": kb_id,
+                    "tenant_id": TENANT_ID,
+                    "title": kb_title,
+                    "slug": kb_slug,
+                    "category": kb_category,
+                    "author_id": ADMIN_USER_ID,
+                },
+            )
+            conn.execute(
+                text("""
+                INSERT INTO itsm_knowledge_article_versions (
+                    id, tenant_id, article_id, version_number, title, content_markdown,
+                    summary, keywords, change_summary, created_by, created_at
+                )
+                VALUES (
+                    gen_random_uuid(), :tenant_id, :article_id, 1, :title, :content,
+                    :summary, :keywords, 'Initial published version', :created_by, NOW()
+                )
+                ON CONFLICT (tenant_id, article_id, version_number) DO UPDATE SET
+                    title = EXCLUDED.title,
+                    content_markdown = EXCLUDED.content_markdown,
+                    summary = EXCLUDED.summary,
+                    keywords = EXCLUDED.keywords
+                """),
+                {
+                    "tenant_id": TENANT_ID,
+                    "article_id": kb_id,
+                    "title": kb_title,
+                    "content": kb_content,
+                    "summary": kb_summary,
+                    "keywords": kb_keywords,
+                    "created_by": ADMIN_USER_ID,
+                },
+            )
+
+        # Seed standard ITSM Service Requests (Step 6)
+        service_id = uuid.UUID("77777777-7777-4777-8777-777777777790")
+        catalog_laptop_id = uuid.UUID("77777777-7777-4777-8777-777777777791")
+        catalog_cloud_id = uuid.UUID("77777777-7777-4777-8777-777777777792")
+        catalog_yubikey_id = uuid.UUID("77777777-7777-4777-8777-777777777793")
+
+        services_seed = [
+            (service_id, "Workplace Technology", "workplace-technology", "End-user hardware, cloud sandboxes, and identity devices.", "OPERATIONAL", "TIER_2", "IT Support Team"),
+            (uuid.UUID("77777777-7777-4777-8777-777777777794"), "Corporate Network & VPN", "network-vpn", "WireGuard enterprise remote access gateway and office WiFi infrastructure.", "OPERATIONAL", "TIER_1", "Network Engineering"),
+            (uuid.UUID("77777777-7777-4777-8777-777777777795"), "Identity & Access Management", "identity-sso", "Okta Single Sign-On, MFA token orchestration, and directory federation.", "OPERATIONAL", "TIER_1", "SecOps Identity"),
+            (uuid.UUID("77777777-7777-4777-8777-777777777796"), "Payments Platform API", "payments-api", "Core transaction processing pipeline, ledger sync, and billing gateways.", "DEGRADED", "TIER_1", "Payments Core"),
+        ]
+
+        for s_id, s_name, s_slug, s_desc, s_stat, s_tier, s_team in services_seed:
+            conn.execute(
+                text("""
+                INSERT INTO itsm_services (id, tenant_id, name, slug, description, status, tier, escalation_team, owner_user_id, created_at, updated_at)
+                VALUES (:id, :tenant_id, :name, :slug, :description, :status, :tier, :escalation_team, :owner_id, NOW(), NOW())
+                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, status = EXCLUDED.status, description = EXCLUDED.description, tier = EXCLUDED.tier, escalation_team = EXCLUDED.escalation_team
+                """),
+                {
+                    "id": s_id,
+                    "tenant_id": TENANT_ID,
+                    "name": s_name,
+                    "slug": s_slug,
+                    "description": s_desc,
+                    "status": s_stat,
+                    "tier": s_tier,
+                    "escalation_team": s_team,
+                    "owner_id": ADMIN_USER_ID,
+                },
+            )
+
+        # Seed Configuration Items (CIs)
+        ci_seeds = [
+            (uuid.UUID("77777777-7777-4777-8777-7777777777a1"), "vpn-gw-prod-uswest", "NETWORK", uuid.UUID("77777777-7777-4777-8777-777777777794"), "PRODUCTION", "ACTIVE", '{"ip": "198.51.100.1", "version": "WireGuard 1.0.2"}'::jsonb),
+            (uuid.UUID("77777777-7777-4777-8777-7777777777a2"), "okta-auth-bridge-01", "APPLICATION", uuid.UUID("77777777-7777-4777-8777-777777777795"), "PRODUCTION", "ACTIVE", '{"protocol": "SAML 2.0 / OIDC", "cluster": "us-west-2a"}'::jsonb),
+            (uuid.UUID("77777777-7777-4777-8777-7777777777a3"), "macbook-fleet-mdm", "HARDWARE", service_id, "PRODUCTION", "ACTIVE", '{"enrolled_devices": 184, "agent": "Jamf Pro"}'::jsonb),
+            (uuid.UUID("77777777-7777-4777-8777-7777777777a4"), "payments-postgres-primary", "DATABASE", uuid.UUID("77777777-7777-4777-8777-777777777796"), "PRODUCTION", "DEGRADED", '{"engine": "PostgreSQL 17.2", "region": "us-east-1"}'::jsonb),
+        ]
+
+        for ci_id, ci_name, ci_type, ci_svc_id, ci_env, ci_stat, ci_attrs in ci_seeds:
+            conn.execute(
+                text("""
+                INSERT INTO itsm_configuration_items (id, tenant_id, service_id, name, ci_type, environment, status, attributes, created_at, updated_at)
+                VALUES (:id, :tenant_id, :service_id, :name, :ci_type, :environment, :status, :attributes, NOW(), NOW())
+                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, status = EXCLUDED.status, service_id = EXCLUDED.service_id
+                """),
+                {
+                    "id": ci_id,
+                    "tenant_id": TENANT_ID,
+                    "service_id": ci_svc_id,
+                    "name": ci_name,
+                    "ci_type": ci_type,
+                    "environment": ci_env,
+                    "status": ci_stat,
+                    "attributes": ci_attrs,
+                },
+            )
+
+        catalog_items = [
+            (catalog_laptop_id, "Developer Workstation Laptop", "dev-laptop", "Standard high-performance engineer laptop."),
+            (catalog_cloud_id, "Cloud Sandbox Access", "cloud-sandbox-access", "Temporary IAM roles and cloud sandboxes."),
+            (catalog_yubikey_id, "Hardware Security Key Replacement", "yubikey-replacement", "FIDO2 security key issuance."),
+        ]
+        for c_id, c_name, c_slug, c_desc in catalog_items:
+            conn.execute(
+                text("""
+                INSERT INTO itsm_service_catalog_items (
+                    id, tenant_id, service_id, name, slug, description, version,
+                    intake_schema, approval_required, fulfillment_group, is_active, created_at, updated_at
+                )
+                VALUES (
+                    :id, :tenant_id, :service_id, :name, :slug, :description, 1,
+                    '{"type": "object"}'::jsonb, false, 'IT Support Team', true, NOW(), NOW()
+                )
+                ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, is_active = true
+                """),
+                {"id": c_id, "tenant_id": TENANT_ID, "service_id": service_id, "name": c_name, "slug": c_slug, "description": c_desc},
+            )
+
+        sr_tickets = [
+            (
+                uuid.UUID("77777777-7777-4777-8777-777777777781"),
+                "REQ-000001",
+                "Developer Workstation Laptop Provisioning",
+                "Requesting new 16-inch M3 Max MacBook Pro for new engineering hire in Platform Engineering.",
+                "P3",
+                "IN_PROGRESS",
+                ITSM_AGENT_USER_ID,
+                "IT Support Team",
+                None,
+                None,
+                catalog_laptop_id,
+                {"laptop_model": "MacBook Pro 16-inch M3 Max", "ram_gb": 64, "storage_tb": 2, "department": "Platform Engineering", "cost_center": "ENG-4021"},
+            ),
+            (
+                uuid.UUID("77777777-7777-4777-8777-777777777782"),
+                "REQ-000002",
+                "Cloud Sandbox IAM Permissions",
+                "Need temporary elevated IAM role in dev-sandbox AWS account for load testing.",
+                "P2",
+                "NEW",
+                None,
+                "Cloud Operations",
+                None,
+                None,
+                catalog_cloud_id,
+                {"aws_account": "dev-sandbox-9921", "role_requested": "PowerUserAccess", "duration_days": 14, "justification": "Performance and load testing for AuthClaw Align MVP"},
+            ),
+            (
+                uuid.UUID("77777777-7777-4777-8777-777777777783"),
+                "REQ-000003",
+                "Hardware Security Key Replacement (YubiKey 5C)",
+                "Lost primary security key during travel. Requesting replacement YubiKey 5C NFC.",
+                "P3",
+                "RESOLVED",
+                ITSM_AGENT_USER_ID,
+                "IT Support Team",
+                "FULFILLED",
+                "Hardware security key provisioned, registered, and issued via desk pickup.",
+                catalog_yubikey_id,
+                {"key_type": "YubiKey 5C NFC", "office_location": "San Francisco HQ", "lost_key_revoked": True},
+            ),
+        ]
+
+        for sr_id, sr_number, sr_title, sr_desc, sr_prio, sr_status, sr_assignee, sr_group, sr_code, sr_summary, cat_id, form_data in sr_tickets:
+            resolved_time = "NOW()" if sr_status == "RESOLVED" else "NULL"
+            conn.execute(
+                text(f"""
+                INSERT INTO itsm_tickets (
+                    id, tenant_id, ticket_number, ticket_type, title, description, impact, urgency, priority,
+                    status, source_channel, requester_id, assignee_id, assignment_group, service_id,
+                    resolution_code, resolution_summary, resolved_at, sla_status, created_at, updated_at
+                )
+                VALUES (
+                    :id, :tenant_id, :ticket_number, 'SERVICE_REQUEST', :title, :description, 'MEDIUM', 'MEDIUM', :priority,
+                    :status, 'PORTAL', :requester_id, :assignee_id, :assignment_group, :service_id,
+                    :resolution_code, :resolution_summary, {resolved_time},
+                    'WITHIN_SLA', NOW() - INTERVAL '2 hours', NOW()
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                    title = EXCLUDED.title,
+                    description = EXCLUDED.description,
+                    status = EXCLUDED.status,
+                    priority = EXCLUDED.priority,
+                    assignee_id = EXCLUDED.assignee_id,
+                    assignment_group = EXCLUDED.assignment_group,
+                    resolution_code = EXCLUDED.resolution_code,
+                    resolution_summary = EXCLUDED.resolution_summary,
+                    updated_at = NOW()
+                """),
+                {
+                    "id": sr_id,
+                    "tenant_id": TENANT_ID,
+                    "ticket_number": sr_number,
+                    "title": sr_title,
+                    "description": sr_desc,
+                    "priority": sr_prio,
+                    "status": sr_status,
+                    "requester_id": ITSM_REQUESTER_USER_ID,
+                    "assignee_id": sr_assignee,
+                    "assignment_group": sr_group,
+                    "service_id": service_id,
+                    "resolution_code": sr_code,
+                    "resolution_summary": sr_summary,
+                },
+            )
+
+            conn.execute(
+                text("""
+                INSERT INTO itsm_service_request_details (
+                    id, tenant_id, ticket_id, catalog_item_id, catalog_item_version,
+                    intake_schema_snapshot, submitted_form_data, created_at
+                )
+                VALUES (
+                    gen_random_uuid(), :tenant_id, :ticket_id, :catalog_item_id, 1,
+                    CAST('{"type": "object"}' AS JSONB), CAST(:form_data AS JSONB), NOW()
+                )
+                ON CONFLICT (tenant_id, ticket_id) DO UPDATE SET
+                    submitted_form_data = EXCLUDED.submitted_form_data
+                """),
+                {
+                    "tenant_id": TENANT_ID,
+                    "ticket_id": sr_id,
+                    "catalog_item_id": cat_id,
+                    "form_data": __import__("json").dumps(form_data),
+                },
+            )
+
+            conn.execute(
+                text("""
+                INSERT INTO itsm_ticket_activities (
+                    id, tenant_id, ticket_id, activity_type, actor_id, actor_type, content, metadata, created_at
+                )
+                VALUES (
+                    gen_random_uuid(), :tenant_id, :ticket_id, 'CREATION', :actor_id, 'USER',
+                    'Service request submitted via catalog portal', CAST('{"actor_email": "requester123@gmail.com"}' AS JSONB), NOW() - INTERVAL '2 hours'
+                )
+                ON CONFLICT DO NOTHING
+                """),
+                {
+                    "tenant_id": TENANT_ID,
+                    "ticket_id": sr_id,
+                    "actor_id": ITSM_REQUESTER_USER_ID,
+                },
+            )
+
     print("AuthClaw Lite demo seed complete.")
     print("Login email: admin@authclaw-lite.demo")
     print(f"Platform admin email: {RAW_PLATFORM_ADMIN_EMAIL}")

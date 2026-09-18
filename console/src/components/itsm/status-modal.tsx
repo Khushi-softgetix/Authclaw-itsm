@@ -5,12 +5,14 @@ import ModalShell from "@/components/modal-shell";
 import { itsmAllowedTransitions } from "@/lib/itsm-format";
 import { jsonRequest } from "@/lib/client-fetch";
 import { apiErrorMessage } from "@/lib/errors";
-import { Incident } from "@/lib/itsm-types";
+import { Incident, ServiceRequest } from "@/lib/itsm-types";
 
 interface StatusModalProps {
-  incident: Incident;
+  incident: Incident | ServiceRequest;
   onClose: () => void;
-  onSuccess: (updated: Incident) => void;
+  onSuccess: (updated: any) => void;
+  initialStatus?: string;
+  statusEndpoint?: string;
 }
 
 const RESOLUTION_CODES = [
@@ -22,9 +24,12 @@ const RESOLUTION_CODES = [
   "USER_ERROR",
 ];
 
-export default function StatusModal({ incident, onClose, onSuccess }: StatusModalProps) {
+export default function StatusModal({ incident, onClose, onSuccess, initialStatus, statusEndpoint }: StatusModalProps) {
   const allowedTransitions = itsmAllowedTransitions(incident.status);
-  const [targetStatus, setTargetStatus] = useState<string>(allowedTransitions[0] || "");
+  const defaultTarget = (initialStatus && allowedTransitions.includes(initialStatus as Incident["status"]))
+    ? initialStatus
+    : (allowedTransitions[0] || "");
+  const [targetStatus, setTargetStatus] = useState<string>(defaultTarget);
   const [statusReason, setStatusReason] = useState<string>("");
   const [resolutionCode, setResolutionCode] = useState<string>("PERMANENT_FIX");
   const [resolutionSummary, setResolutionSummary] = useState<string>("");
@@ -33,7 +38,33 @@ export default function StatusModal({ incident, onClose, onSuccess }: StatusModa
 
   const isTerminal = allowedTransitions.length === 0;
   const isResolving = targetStatus === "RESOLVED";
+  const isReopening = targetStatus === "IN_PROGRESS" && incident.status === "RESOLVED";
+  const isClosing = targetStatus === "CLOSED";
   const isPendingOrCancelled = targetStatus === "PENDING" || targetStatus === "CANCELLED";
+
+  let modalTitle = `Change Status · ${incident.ticket_number}`;
+  if (isResolving) {
+    modalTitle = `Resolve Incident · ${incident.ticket_number}`;
+  } else if (isReopening) {
+    modalTitle = `Reopen Incident · ${incident.ticket_number}`;
+  } else if (isClosing) {
+    modalTitle = `Close Incident · ${incident.ticket_number}`;
+  }
+
+  let submitLabel = "Update Status";
+  let submitBg = "bg-[#6D28D9] hover:bg-[#5B21B6]";
+  if (isResolving) {
+    submitLabel = loading ? "Resolving..." : "Resolve Incident";
+    submitBg = "bg-emerald-600 hover:bg-emerald-700";
+  } else if (isReopening) {
+    submitLabel = loading ? "Reopening..." : "Reopen Incident";
+    submitBg = "bg-amber-600 hover:bg-amber-700";
+  } else if (isClosing) {
+    submitLabel = loading ? "Closing..." : "Close Incident";
+    submitBg = "bg-slate-700 hover:bg-slate-800";
+  } else {
+    submitLabel = loading ? "Updating..." : "Update Status";
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,7 +94,7 @@ export default function StatusModal({ incident, onClose, onSuccess }: StatusModa
         status: targetStatus,
       };
 
-      if (isPendingOrCancelled) {
+      if (statusReason.trim()) {
         payload.status_reason = statusReason.trim();
       }
 
@@ -72,7 +103,8 @@ export default function StatusModal({ incident, onClose, onSuccess }: StatusModa
         payload.resolution_summary = resolutionSummary.trim();
       }
 
-      const res = await fetch(`/api/itsm/incidents/${incident.id}/status`, jsonRequest("POST", payload));
+      const endpoint = statusEndpoint || `/api/itsm/incidents/${incident.id}/status`;
+      const res = await fetch(endpoint, jsonRequest("POST", payload));
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(apiErrorMessage(data, "Failed to update incident status"));
@@ -90,7 +122,7 @@ export default function StatusModal({ incident, onClose, onSuccess }: StatusModa
 
   return (
     <ModalShell
-      title={`Change Status · ${incident.ticket_number}`}
+      title={modalTitle}
       onClose={onClose}
       error={error}
       maxWidthClass="max-w-[480px]"
@@ -166,6 +198,22 @@ export default function StatusModal({ incident, onClose, onSuccess }: StatusModa
             </div>
           )}
 
+          {isReopening && (
+            <div>
+              <label htmlFor="status-reason" className="block text-xs font-semibold text-[#0E1726] mb-1.5">
+                Reopen Reason
+              </label>
+              <textarea
+                id="status-reason"
+                value={statusReason}
+                onChange={(e) => setStatusReason(e.target.value)}
+                placeholder="Reason for reopening incident (e.g. issue recurred, customer verified problem persists)..."
+                rows={3}
+                className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-xs text-[#0E1726] focus:ring-1 focus:ring-[#6D28D9] focus:outline-none"
+              />
+            </div>
+          )}
+
           {isResolving && (
             <>
               <div>
@@ -207,6 +255,7 @@ export default function StatusModal({ incident, onClose, onSuccess }: StatusModa
           <div className="flex justify-end gap-2 pt-3 border-t border-[#E6E9F0]">
             <button
               type="button"
+              id="status-modal-cancel"
               onClick={onClose}
               disabled={loading}
               className="px-4 py-2 bg-white border border-[#E6E9F0] text-[#475069] rounded-lg text-xs font-medium hover:bg-[#F5F7FA] transition disabled:opacity-50"
@@ -215,10 +264,11 @@ export default function StatusModal({ incident, onClose, onSuccess }: StatusModa
             </button>
             <button
               type="submit"
+              id="status-modal-submit"
               disabled={loading}
-              className="px-4 py-2 bg-[#6D28D9] hover:bg-[#5B21B6] text-white rounded-lg text-xs font-semibold transition shadow-sm disabled:opacity-50"
+              className={`px-4 py-2 text-white rounded-lg text-xs font-semibold transition shadow-sm disabled:opacity-50 ${submitBg}`}
             >
-              {loading ? "Updating..." : "Update Status"}
+              {submitLabel}
             </button>
           </div>
         </form>

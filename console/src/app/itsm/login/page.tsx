@@ -83,7 +83,7 @@ export default function ItsmLoginPage() {
           defaultRoute = "/itsm/dashboard/requester";
           break;
         case "PROCESS_CHANGE_MANAGER":
-          defaultRoute = "/itsm/dashboard/process-change";
+          defaultRoute = "/itsm/problem-change-manager";
           break;
         case "AUDITOR":
           defaultRoute = "/itsm/dashboard/auditor";

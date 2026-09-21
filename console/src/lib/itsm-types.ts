@@ -412,3 +412,152 @@ export interface ITSMServiceDetail extends ITSMServiceSummary {
   recent_incidents: ITSMServiceTicketSummary[];
   recent_requests: ITSMServiceTicketSummary[];
 }
+
+export interface RelatedIncidentItem {
+  id: string;
+  ticket_number: string;
+  title: string;
+  status: string;
+  priority: string;
+  created_at: string;
+}
+
+export interface ProblemDetailData {
+  known_error: boolean;
+  root_cause_summary?: string | null;
+  workaround_summary?: string | null;
+  permanent_solution?: string | null;
+  rca_document_url?: string | null;
+  assigned_investigator_id?: string | null;
+  identified_at?: string | null;
+  resolved_at?: string | null;
+}
+
+export interface ProblemSummary {
+  id: string;
+  ticket_number: string;
+  title: string;
+  description: string;
+  status: string;
+  priority: string;
+  service_id?: string | null;
+  service_name?: string | null;
+  assignment_group?: string | null;
+  assignee_id?: string | null;
+  assignee_email?: string | null;
+  created_at: string;
+  updated_at: string;
+  related_incidents_count: number;
+}
+
+export interface ProblemDetail extends ProblemSummary {
+  configuration_item_id?: string | null;
+  resolution_summary?: string | null;
+  resolution_code?: string | null;
+  resolved_at?: string | null;
+  closed_at?: string | null;
+  closed_by_email?: string | null;
+  related_incidents: RelatedIncidentItem[];
+  problem_details?: ProblemDetailData | null;
+}
+
+export interface ProblemStats {
+  open: number;
+  in_progress: number;
+  resolved: number;
+  total: number;
+}
+
+export interface ProblemInvestigationPayload {
+  root_cause_summary?: string | null;
+  workaround_summary?: string | null;
+  known_error?: boolean;
+  permanent_solution?: string | null;
+  rca_document_url?: string | null;
+  investigation_notes?: string | null;
+  status?: string;
+}
+
+export interface ProblemResolvePayload {
+  resolution_summary: string;
+  resolution_notes?: string | null;
+  permanent_solution?: string | null;
+  workaround_summary?: string | null;
+  root_cause_summary?: string | null;
+  rca_document_url?: string | null;
+}
+
+export interface ProblemClosePayload {
+  closure_notes?: string | null;
+}
+
+export interface ProblemActivity {
+  id: string;
+  ticket_id: string;
+  activity_type: string;
+  actor_id?: string | null;
+  actor_email?: string | null;
+  content?: string | null;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ChangeSummary {
+  id: string;
+  change_number: string;
+  title: string;
+  description?: string | null;
+  status: string;
+  change_type?: string | null;
+  risk_level?: string | null;
+  impact_level?: string | null;
+  service_id?: string | null;
+  service_name?: string | null;
+  assigned_team?: string | null;
+  assigned_to_id?: string | null;
+  assignee_email?: string | null;
+  earliest_start_at?: string | null;
+  latest_finish_at?: string | null;
+  actual_start_at?: string | null;
+  actual_finish_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChangeStats {
+  total: number;
+  open: number;
+  in_progress: number;
+  scheduled: number;
+  completed: number;
+}
+
+export interface ChangeAffectedCI {
+  id: string;
+  ci_id: string;
+  name: string;
+  ci_type: string;
+  environment: string;
+  status: string;
+  impact_type: string;
+  notes?: string | null;
+}
+
+export interface ChangeDetail extends ChangeSummary {
+  lead_time_hours?: number;
+  outage_expected?: boolean;
+  implementation_plan?: string | null;
+  backout_plan?: string | null;
+  test_plan?: string | null;
+  affected_cis: ChangeAffectedCI[];
+}
+
+export interface ChangeAssessmentUpdatePayload {
+  risk_level?: string;
+  impact_level?: string;
+  change_type?: string;
+  description?: string;
+  implementation_plan?: string;
+  backout_plan?: string;
+  test_plan?: string;
+}

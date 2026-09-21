@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   Bell,
   BookOpen,
   Building,
@@ -48,9 +49,9 @@ interface NavItem {
 interface ConsoleShellProps {
   children: React.ReactNode;
   userEmail: string;
-  tenantId: string;
-  tenantName: string;
-  userRole: string;
+  tenantId?: string;
+  tenantName?: string;
+  userRole?: string;
   platformRole?: string;
   itsmRole?: string | null;
 }
@@ -60,7 +61,7 @@ const ITSM_ROLE_LABELS: Record<string, string> = {
   SERVICE_AGENT: "Service Agent",
   INCIDENT_MANAGER: "Incident Manager",
   SERVICE_LEAD: "Incident Manager",
-  PROCESS_CHANGE_MANAGER: "Process & Change Manager",
+  PROCESS_CHANGE_MANAGER: "Problem and Change Manager",
   PLATFORM_ADMINISTRATOR: "Platform Administrator",
   AUDITOR: "Auditor",
 };
@@ -101,6 +102,13 @@ const serviceAgentNavigation: NavItem[] = [
   { name: "Services", href: "/itsm/services", icon: Layers, roles: readRoles },
 ];
 
+const problemChangeNavigation: NavItem[] = [
+  { name: "Dashboard", href: "/itsm/problem-change-manager", icon: LayoutDashboard, roles: readRoles },
+  { name: "Problems", href: "/itsm/problem-change-manager/problems", icon: AlertTriangle, roles: readRoles },
+  { name: "Changes", href: "/itsm/problem-change-manager/changes", icon: GitPullRequest, roles: readRoles },
+  { name: "Knowledge", href: "/itsm/knowledge", icon: BookOpen, roles: readRoles },
+];
+
 export default function ConsoleShell({ children, userEmail, tenantId, tenantName, userRole, platformRole = "NONE", itsmRole }: ConsoleShellProps) {
   const pathname = usePathname();
   const router = useRouter();
@@ -128,6 +136,8 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
         ]
       : effectiveItsmRole === "SERVICE_AGENT"
       ? serviceAgentNavigation
+      : effectiveItsmRole === "PROCESS_CHANGE_MANAGER"
+      ? problemChangeNavigation
       : itsmNavigation
     : navigation;
   const allowedNavigation = activeNavigationList.filter((item) => item.roles.includes(normalizedRole));

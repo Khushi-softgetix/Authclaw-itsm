@@ -7,8 +7,14 @@ import {
   ArrowLeft,
   BookOpen,
   CheckCircle2,
+  Clock,
+  Download,
+  Edit3,
+  FileText,
+  Flame,
   Layers,
   LifeBuoy,
+  Paperclip,
   RefreshCw,
   ShieldAlert,
 } from "lucide-react";
@@ -20,12 +26,21 @@ import IncidentStepper from "@/components/itsm/incident-stepper";
 import ActivityTimeline from "@/components/itsm/activity-timeline";
 import StatusModal from "@/components/itsm/status-modal";
 
+interface AttachmentItem {
+  id: string;
+  file_name: string;
+  file_size_bytes: number;
+  mime_type: string;
+  created_at: string;
+}
+
 export default function IncidentDetailPage() {
   const params = useParams();
   const incidentId = Array.isArray(params.id) ? params.id[0] : (params.id as string);
 
   const [incident, setIncident] = useState<Incident | null>(null);
   const [activities, setActivities] = useState<IncidentActivity[]>([]);
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [errorType, setErrorType] = useState<"unauthorized" | "not_found" | "server_error" | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
@@ -45,9 +60,10 @@ export default function IncidentDetailPage() {
         ? `/api/itsm/incidents/${incidentId}?agent_view=true`
         : `/api/itsm/incidents/${incidentId}`;
 
-      const [incRes, actRes] = await Promise.all([
+      const [incRes, actRes, attRes] = await Promise.all([
         fetch(incidentUrl),
         fetch(`/api/itsm/incidents/${incidentId}/activities`),
+        fetch(`/api/itsm/incidents/${incidentId}/attachments`),
       ]);
 
       if (incRes.status === 401 || actRes.status === 401) {
@@ -76,6 +92,11 @@ export default function IncidentDetailPage() {
       if (actRes.ok) {
         const actData = await actRes.json();
         setActivities(Array.isArray(actData) ? actData : []);
+      }
+
+      if (attRes.ok) {
+        const attData = await attRes.json();
+        setAttachments(Array.isArray(attData) ? attData : []);
       }
     } catch {
       setErrorType("server_error");
@@ -668,6 +689,40 @@ export default function IncidentDetailPage() {
                 {incident.description}
               </p>
             </div>
+
+            {/* Attached Files Card */}
+            {attachments.length > 0 && (
+              <div className="pt-2 border-t border-[#E6E9F0] space-y-2">
+                <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
+                  Attachments ({attachments.length})
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {attachments.map((att) => (
+                    <a
+                      key={att.id}
+                      href={`/api/itsm/attachments/${att.id}/download`}
+                      download={att.file_name}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-between p-3 rounded-xl border border-[#E6E9F0] bg-[#FBFAF9] hover:bg-[#F3E8FF]/30 hover:border-[#6D28D9] transition group"
+                    >
+                      <div className="flex items-center gap-2.5 truncate">
+                        <Paperclip className="w-4 h-4 text-[#6D28D9] shrink-0" />
+                        <div className="truncate">
+                          <span className="text-xs font-semibold text-[#0E1726] group-hover:text-[#6D28D9] block truncate">
+                            {att.file_name}
+                          </span>
+                          <span className="text-[10px] text-[#6B7488]">
+                            {(att.file_size_bytes / 1024).toFixed(1)} KB
+                          </span>
+                        </div>
+                      </div>
+                      <Download className="w-4 h-4 text-[#8C95A8] group-hover:text-[#6D28D9] shrink-0" />
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Resolution Information Card */}

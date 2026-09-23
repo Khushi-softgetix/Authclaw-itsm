@@ -1313,3 +1313,52 @@ class IncidentService:
             .order_by(ITSMTicketActivity.created_at.asc())
             .all()
         )
+
+    @classmethod
+    def get_incident_summary(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        requester_id: Optional[UUID] = None,
+    ) -> dict[str, Any]:
+        base_query = db.query(ITSMTicket).filter(
+            ITSMTicket.tenant_id == tenant_id,
+            ITSMTicket.ticket_type == "INCIDENT",
+        )
+        if requester_id:
+            base_query = base_query.filter(ITSMTicket.requester_id == requester_id)
+
+        open_count = base_query.filter(
+            ITSMTicket.status.notin_(["RESOLVED", "CLOSED", "CANCELLED"])
+        ).count()
+
+        resolved_count = base_query.filter(
+            ITSMTicket.status.in_(["RESOLVED", "CLOSED"])
+        ).count()
+
+        pending_count = base_query.filter(
+            ITSMTicket.status == "PENDING"
+        ).count()
+
+        resolved_tickets = base_query.filter(
+            ITSMTicket.status.in_(["RESOLVED", "CLOSED"])
+        ).all()
+
+        total_seconds = 0.0
+        valid_count = 0
+        for ticket in resolved_tickets:
+            end_time = ticket.resolved_at or ticket.closed_at
+            if end_time and ticket.created_at and end_time >= ticket.created_at:
+                delta = (end_time - ticket.created_at).total_seconds()
+                total_seconds += delta
+                valid_count += 1
+
+        avg_hours = round(total_seconds / (valid_count * 3600.0), 1) if valid_count > 0 else 0.0
+
+        return {
+            "open_tickets_count": open_count,
+            "resolved_tickets_count": resolved_count,
+            "pending_action_count": pending_count,
+            "avg_resolution_hours": avg_hours,
+        }
+

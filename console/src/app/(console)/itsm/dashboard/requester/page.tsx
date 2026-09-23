@@ -23,8 +23,21 @@ import IncidentPriorityBadge from "@/components/itsm/incident-priority-badge";
 import IncidentStatusBadge from "@/components/itsm/incident-status-badge";
 import { formatDateTime } from "@/lib/itsm-format";
 
+interface DashboardStats {
+  open_tickets_count: number;
+  resolved_tickets_count: number;
+  pending_action_count: number;
+  avg_resolution_hours: number;
+}
+
 export default function RequesterDashboardPage() {
   const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [stats, setStats] = useState<DashboardStats>({
+    open_tickets_count: 0,
+    resolved_tickets_count: 0,
+    pending_action_count: 0,
+    avg_resolution_hours: 0,
+  });
   const [loading, setLoading] = useState(true);
   const [searchKnowledge, setSearchKnowledge] = useState("");
 
@@ -32,10 +45,17 @@ export default function RequesterDashboardPage() {
     async function loadData() {
       try {
         setLoading(true);
-        const res = await fetch("/api/itsm/incidents?limit=10");
-        if (res.ok) {
-          const data = await res.json();
+        const [incRes, statsRes] = await Promise.all([
+          fetch("/api/itsm/incidents?limit=10"),
+          fetch("/api/itsm/incidents/summary"),
+        ]);
+        if (incRes.ok) {
+          const data = await incRes.json();
           setIncidents(Array.isArray(data) ? data : []);
+        }
+        if (statsRes.ok) {
+          const statsData = await statsRes.json();
+          setStats(statsData);
         }
       } catch (e) {
         // non-blocking
@@ -45,13 +65,6 @@ export default function RequesterDashboardPage() {
     }
     loadData();
   }, []);
-
-  const openTickets = incidents.filter(
-    (i) => i.status !== "RESOLVED" && i.status !== "CLOSED" && i.status !== "CANCELLED"
-  );
-  const resolvedTickets = incidents.filter(
-    (i) => i.status === "RESOLVED" || i.status === "CLOSED"
-  );
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-8">
@@ -95,7 +108,7 @@ export default function RequesterDashboardPage() {
             <AlertCircle className="w-4 h-4 text-[#2563EB]" />
           </div>
           <div className="text-2xl font-bold text-[#0E1726]">
-            {loading ? "..." : openTickets.length}
+            {loading ? "..." : stats.open_tickets_count}
           </div>
           <p className="text-xs text-[#6B7488] mt-1">Currently under investigation</p>
         </div>
@@ -106,7 +119,7 @@ export default function RequesterDashboardPage() {
             <CheckCircle2 className="w-4 h-4 text-[#10B981]" />
           </div>
           <div className="text-2xl font-bold text-[#0E1726]">
-            {loading ? "..." : resolvedTickets.length}
+            {loading ? "..." : stats.resolved_tickets_count}
           </div>
           <p className="text-xs text-[#6B7488] mt-1">Completed solutions</p>
         </div>
@@ -116,7 +129,9 @@ export default function RequesterDashboardPage() {
             <span className="text-xs font-semibold uppercase tracking-wider">Pending Action</span>
             <Clock className="w-4 h-4 text-[#D97706]" />
           </div>
-          <div className="text-2xl font-bold text-[#0E1726]">0</div>
+          <div className="text-2xl font-bold text-[#0E1726]">
+            {loading ? "..." : stats.pending_action_count}
+          </div>
           <p className="text-xs text-[#6B7488] mt-1">Awaiting your feedback</p>
         </div>
 
@@ -125,7 +140,9 @@ export default function RequesterDashboardPage() {
             <span className="text-xs font-semibold uppercase tracking-wider">Avg Resolution Time</span>
             <Zap className="w-4 h-4 text-[#7C3AED]" />
           </div>
-          <div className="text-2xl font-bold text-[#0E1726]">1.8 hrs</div>
+          <div className="text-2xl font-bold text-[#0E1726]">
+            {loading ? "..." : `${stats.avg_resolution_hours} hrs`}
+          </div>
           <p className="text-xs text-[#6B7488] mt-1">Within SLA targets</p>
         </div>
       </div>

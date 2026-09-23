@@ -17,6 +17,7 @@ from app.schemas.itsm_incidents import (
     IncidentCreateRequest,
     IncidentResponse,
     IncidentStatusUpdateRequest,
+    IncidentSummaryStatsResponse,
     IncidentUpdateRequest,
     IncidentOperationsDashboardResponse,
     IncidentOperationsQueueResponse,
@@ -272,6 +273,32 @@ def list_incidents(
         search=search,
         offset=offset,
         limit=limit,
+    )
+
+
+@router.get(
+    "/summary",
+    response_model=IncidentSummaryStatsResponse,
+    summary="Get incident KPI summary statistics",
+    description="Retrieve aggregated incident counts and average resolution times for tenant and requester.",
+)
+def get_incident_summary(
+    request: Request,
+    requester_id: Optional[UUID] = Query(default=None, description="Filter by requester user ID"),
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    actor_id = UUID(str(request.state.user_id))
+    t_id = UUID(tenant_id)
+    role = _get_itsm_role(db, t_id, actor_id)
+
+    if role == "REQUESTER":
+        requester_id = actor_id
+
+    return IncidentService.get_incident_summary(
+        db=db,
+        tenant_id=t_id,
+        requester_id=requester_id,
     )
 
 

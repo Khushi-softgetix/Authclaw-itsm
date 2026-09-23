@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { ArrowLeft, CheckCircle2, HelpCircle, LifeBuoy, Send } from "lucide-react";
+import { ArrowLeft, CheckCircle2, FileText, HelpCircle, LifeBuoy, Paperclip, Send, X } from "lucide-react";
 import { jsonRequest } from "@/lib/client-fetch";
 import { apiErrorMessage } from "@/lib/errors";
 
@@ -33,6 +33,7 @@ interface CreatedIncidentSummary {
   title: string;
   status: string;
   created_at: string;
+  attached_files?: string[];
 }
 
 export default function CreateIncidentPage() {
@@ -42,11 +43,23 @@ export default function CreateIncidentPage() {
   const [impact, setImpact] = useState<string>("MEDIUM");
   const [urgency, setUrgency] = useState<string>("");
   const [category, setCategory] = useState<string>("GENERAL");
+  const [attachments, setAttachments] = useState<File[]>([]);
 
   // Submission State
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
   const [createdIncident, setCreatedIncident] = useState<CreatedIncidentSummary | null>(null);
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files) {
+      const filesArray = Array.from(e.target.files);
+      setAttachments((prev) => [...prev, ...filesArray]);
+    }
+  };
+
+  const removeFile = (index: number) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -79,12 +92,29 @@ export default function CreateIncidentPage() {
       }
 
       const data = await res.json();
+      const uploadedNames: string[] = [];
+
+      if (attachments.length > 0 && data.id) {
+        for (const file of attachments) {
+          const formData = new FormData();
+          formData.append("file", file);
+          const uploadRes = await fetch(`/api/itsm/incidents/${data.id}/attachments`, {
+            method: "POST",
+            body: formData,
+          });
+          if (uploadRes.ok) {
+            uploadedNames.push(file.name);
+          }
+        }
+      }
+
       setCreatedIncident({
         id: data.id,
         ticket_number: data.ticket_number,
         title: data.title,
         status: data.status || "NEW",
         created_at: data.created_at || new Date().toISOString(),
+        attached_files: uploadedNames,
       });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to submit issue");
@@ -99,6 +129,7 @@ export default function CreateIncidentPage() {
     setImpact("MEDIUM");
     setUrgency("");
     setCategory("GENERAL");
+    setAttachments([]);
     setError(null);
     setCreatedIncident(null);
   };
@@ -308,6 +339,52 @@ export default function CreateIncidentPage() {
               </label>
             ))}
           </div>
+        </div>
+
+        {/* Attachments Section */}
+        <div>
+          <label className="block text-xs font-bold text-[#0E1726] mb-1.5">
+            Attach Files or Screenshots (Optional)
+          </label>
+          <div className="flex items-center gap-3">
+            <label className="cursor-pointer inline-flex items-center gap-2 px-4 py-2 bg-[#F3E8FF] hover:bg-[#E9D5FF] text-[#6D28D9] rounded-lg text-xs font-semibold border border-[#D8B4FE] transition">
+              <Paperclip className="w-3.5 h-3.5" />
+              <span>Choose Files</span>
+              <input
+                type="file"
+                multiple
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+            </label>
+            <span className="text-[11px] text-[#6B7488]">Max 10 MB per file</span>
+          </div>
+
+          {attachments.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {attachments.map((file, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center justify-between p-2.5 rounded-lg bg-[#FBFAF9] border border-[#E6E9F0] text-xs"
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    <FileText className="w-4 h-4 text-[#6D28D9] shrink-0" />
+                    <span className="font-medium text-[#0E1726] truncate">{file.name}</span>
+                    <span className="text-[10px] text-[#6B7488] shrink-0">
+                      ({(file.size / 1024).toFixed(1)} KB)
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => removeFile(idx)}
+                    className="text-[#8C95A8] hover:text-red-500 p-1"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Form Actions */}

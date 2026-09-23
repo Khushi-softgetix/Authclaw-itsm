@@ -314,6 +314,15 @@ class IncidentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class IncidentSummaryStatsResponse(BaseModel):
+    open_tickets_count: int
+    resolved_tickets_count: int
+    pending_action_count: int
+    avg_resolution_hours: float
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class IncidentOperationsSLA(BaseModel):
     status: Literal["NO_SLA", "WITHIN_SLA", "AT_RISK", "BREACHED"]
     remaining_seconds: Optional[float] = None

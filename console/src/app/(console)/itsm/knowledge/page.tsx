@@ -4,6 +4,7 @@ import React, { Suspense, useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import {
+  AlertCircle,
   ArrowLeft,
   ArrowRight,
   BookOpen,
@@ -16,7 +17,6 @@ import {
   Search,
   ThumbsUp,
   X,
-  AlertCircle,
 } from "lucide-react";
 
 interface KBArticleSummary {
@@ -73,7 +73,7 @@ function KnowledgePageContent() {
   const [detailError, setDetailError] = useState<string | null>(null);
   const [helpfulFeedback, setHelpfulFeedback] = useState<boolean | null>(null);
 
-  const categories = ["All", "Networking", "Authentication", "Security", "Troubleshooting"];
+  const categories = ["All", "Networking", "Authentication", "Security", "Troubleshooting", "DevOps & Cloud"];
 
   const fetchArticles = useCallback(async (query = searchQuery, category = selectedCategory) => {
     setLoading(true);
@@ -84,13 +84,18 @@ function KnowledgePageContent() {
       if (category && category !== "All") params.set("category", category);
 
       const res = await fetch(`/api/itsm/knowledge?${params.toString()}`);
+      if (res.status === 401) {
+        window.location.href = "/itsm/login";
+        return;
+      }
       if (!res.ok) {
-        throw new Error("Failed to load knowledge articles");
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || data.detail || "Failed to load knowledge articles");
       }
       const data = await res.json();
       setArticles(Array.isArray(data) ? data : []);
-    } catch {
-      setError("Unable to load knowledge articles at this time. Please try again.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Unable to load knowledge articles at this time. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -117,6 +122,11 @@ function KnowledgePageContent() {
     } finally {
       setDetailLoading(false);
     }
+  };
+
+  const recordHelpful = async (articleId: string) => {
+    setHelpfulFeedback(true);
+    await fetch(`/api/itsm/knowledge/${articleId}/helpful`, { method: "POST" }).catch(() => undefined);
   };
 
   const closeArticle = () => {
@@ -334,9 +344,11 @@ function KnowledgePageContent() {
                     <span className="font-bold text-[#6D28D9] bg-[#F1ECFE] px-2.5 py-0.5 rounded-full border border-[#A78BFA]">
                       {article.category}
                     </span>
-                    <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">
-                      {article.status}
-                    </span>
+                    {article.status && (
+                      <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">
+                        {article.status}
+                      </span>
+                    )}
                   </div>
                   <span className="flex items-center gap-1">
                     <Eye className="w-3 h-3 text-[#6B7488]" /> {article.view_count || 0} views
@@ -416,9 +428,11 @@ function KnowledgePageContent() {
                       <span className="text-[10px] font-bold uppercase tracking-wider text-[#6D28D9] bg-[#F1ECFE] px-2.5 py-0.5 rounded-full border border-[#A78BFA]">
                         {articleDetail.category}
                       </span>
-                      <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">
-                        {articleDetail.status}
-                      </span>
+                      {articleDetail.status && (
+                        <span className="text-[10px] font-bold text-emerald-800 bg-emerald-100 px-2 py-0.5 rounded">
+                          {articleDetail.status}
+                        </span>
+                      )}
                     </div>
                     <h2 className="text-lg font-extrabold text-[#0E1726]">{articleDetail.title}</h2>
                     <div className="flex items-center gap-3 text-xs text-[#6B7488] flex-wrap">
@@ -466,14 +480,14 @@ function KnowledgePageContent() {
                   <div className="flex items-center gap-2">
                     <span className="text-[#6B7488]">Was this article helpful?</span>
                     <button
-                      onClick={() => setHelpfulFeedback(true)}
+                      onClick={() => recordHelpful(activeArticleId)}
                       className={`px-3 py-1 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition ${
                         helpfulFeedback === true
                           ? "bg-emerald-50 text-emerald-700 border-emerald-300"
                           : "bg-white text-[#475069] border-[#E6E9F0] hover:bg-[#F5F7FA]"
                       }`}
                     >
-                      <ThumbsUp className="w-3.5 h-3.5" /> Yes
+                      <ThumbsUp className="w-3.5 h-3.5" /> {helpfulFeedback ? "Thanks!" : "Yes"}
                     </button>
                   </div>
 

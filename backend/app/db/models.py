@@ -1273,6 +1273,10 @@ class ITSMTicket(Base):
     def assignee_email(self) -> str | None:
         return self.assignee.email if self.assignee else None
 
+    @property
+    def linked_problem_ticket_number(self) -> str | None:
+        return self.linked_problem.ticket_number if self.linked_problem else None
+
     __table_args__ = (
         UniqueConstraint("tenant_id", "ticket_number", name="uq_itsm_tickets_tenant_number"),
         Index("idx_itsm_tickets_tenant_status", "tenant_id", "status"),

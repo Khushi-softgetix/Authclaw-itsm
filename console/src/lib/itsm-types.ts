@@ -34,6 +34,8 @@ export interface Incident {
   category: string;
   subcategory?: string | null;
   is_major_incident: boolean;
+  linked_problem_id?: string | null;
+  linked_problem_ticket_number?: string | null;
   sla_policy_id?: string | null;
   sla_response_due_at?: string | null;
   sla_response_met_at?: string | null;
@@ -459,6 +461,7 @@ export interface ProblemDetail extends ProblemSummary {
   closed_by_email?: string | null;
   related_incidents: RelatedIncidentItem[];
   problem_details?: ProblemDetailData | null;
+  related_changes?: ChangeSummary[];
 }
 
 export interface ProblemStats {
@@ -502,6 +505,19 @@ export interface ProblemActivity {
   created_at: string;
 }
 
+export interface ReportRecurringProblemPayload {
+  problem_short_description: string;
+  recurring_reason: string;
+  notes?: string | null;
+}
+
+export interface ReportRecurringProblemResponse {
+  problem_id: string;
+  problem_ticket_number: string;
+  already_reported: boolean;
+  message: string;
+}
+
 export interface ChangeSummary {
   id: string;
   change_number: string;
@@ -543,6 +559,26 @@ export interface ChangeAffectedCI {
   notes?: string | null;
 }
 
+export interface ChangeActivityItem {
+  id: string;
+  actor_id?: string | null;
+  actor_email?: string | null;
+  action: string;
+  from_status?: string | null;
+  to_status?: string | null;
+  message: string;
+  created_at: string;
+}
+
+export interface RelatedProblemSummary {
+  id: string;
+  ticket_number: string;
+  title: string;
+  status: string;
+  priority: string;
+  known_error?: boolean;
+}
+
 export interface ChangeDetail extends ChangeSummary {
   lead_time_hours?: number;
   outage_expected?: boolean;
@@ -550,6 +586,8 @@ export interface ChangeDetail extends ChangeSummary {
   backout_plan?: string | null;
   test_plan?: string | null;
   affected_cis: ChangeAffectedCI[];
+  activities?: ChangeActivityItem[];
+  related_problem?: RelatedProblemSummary | null;
 }
 
 export interface ChangeAssessmentUpdatePayload {
@@ -560,4 +598,92 @@ export interface ChangeAssessmentUpdatePayload {
   implementation_plan?: string;
   backout_plan?: string;
   test_plan?: string;
+}
+
+export interface ChangeLifecycleTransitionPayload {
+  action: string;
+  notes?: string | null;
+  earliest_start_at?: string | null;
+  latest_finish_at?: string | null;
+  validation_notes?: string | null;
+  implementation_notes?: string | null;
+}
+
+export interface LinkChangePayload {
+  change_id: string;
+}
+
+export interface UnlinkChangePayload {
+  change_id: string;
+}
+
+export interface CreateChangeFromProblemPayload {
+  title: string;
+  description?: string;
+  change_type?: string;
+  risk_level?: string;
+  impact_level?: string;
+  service_id?: string | null;
+  implementation_plan?: string | null;
+  backout_plan?: string | null;
+  test_plan?: string | null;
+  ci_ids?: string[];
+}
+
+export interface KBArticleVersionSummary {
+  id: string;
+  article_id: string;
+  version_number: number;
+  title: string;
+  summary?: string | null;
+  content_markdown: string;
+  keywords: string[];
+  change_summary?: string | null;
+  created_by: string;
+  created_by_email?: string | null;
+  created_at: string;
+}
+
+export interface KBArticleItem {
+  id: string;
+  title: string;
+  slug: string;
+  category: string;
+  status: "DRAFT" | "PUBLISHED" | "ARCHIVED" | string;
+  summary?: string | null;
+  current_published_version?: number | null;
+  version_number: number;
+  view_count: number;
+  helpful_count: number;
+  author_id?: string | null;
+  author_email?: string | null;
+  service_id?: string | null;
+  published_at?: string | null;
+  created_at?: string | null;
+  updated_at: string;
+}
+
+export interface KBArticleGovernanceDetail extends KBArticleItem {
+  content_markdown: string;
+  keywords: string[];
+  versions: KBArticleVersionSummary[];
+}
+
+export interface CreateKBArticlePayload {
+  title: string;
+  category: string;
+  content_markdown: string;
+  summary?: string | null;
+  keywords?: string[];
+  service_id?: string | null;
+}
+
+export interface UpdateKBArticlePayload {
+  title?: string;
+  category?: string;
+  content_markdown?: string;
+  summary?: string | null;
+  keywords?: string[];
+  change_summary?: string | null;
+  service_id?: string | null;
 }

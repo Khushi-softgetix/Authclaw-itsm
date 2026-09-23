@@ -7,6 +7,9 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 
+from app.schemas.itsm_changes import ChangeSummaryResponse
+
+
 class RelatedIncidentItem(BaseModel):
     id: UUID
     ticket_number: str
@@ -67,6 +70,7 @@ class ProblemDetailResponse(BaseModel):
     updated_at: datetime
     related_incidents_count: int = 0
     related_incidents: list[RelatedIncidentItem] = Field(default_factory=list)
+    related_changes: list[ChangeSummaryResponse] = Field(default_factory=list)
     problem_details: Optional[ProblemDetailData] = None
     resolution_summary: Optional[str] = None
     resolution_code: Optional[str] = None
@@ -75,6 +79,33 @@ class ProblemDetailResponse(BaseModel):
     closed_by_email: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class LinkChangeRequest(BaseModel):
+    change_id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class UnlinkChangeRequest(BaseModel):
+    change_id: UUID
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class CreateChangeFromProblemRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=512)
+    description: Optional[str] = None
+    change_type: Optional[str] = "STANDARD"
+    risk_level: Optional[str] = "LOW"
+    impact_level: Optional[str] = "LOW"
+    service_id: Optional[UUID] = None
+    implementation_plan: Optional[str] = None
+    backout_plan: Optional[str] = None
+    test_plan: Optional[str] = None
+    ci_ids: Optional[list[UUID]] = None
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class ProblemStatsResponse(BaseModel):
@@ -123,5 +154,22 @@ class ProblemActivityResponse(BaseModel):
     content: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ReportRecurringProblemRequest(BaseModel):
+    problem_short_description: str = Field(..., min_length=1, max_length=512, description="Short summary of recurring problem")
+    recurring_reason: str = Field(..., min_length=1, description="Reason / Recurring Issue explanation")
+    notes: Optional[str] = Field(default=None, description="Optional additional notes")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class ReportRecurringProblemResponse(BaseModel):
+    problem_id: UUID
+    problem_ticket_number: str
+    already_reported: bool = False
+    message: str
 
     model_config = ConfigDict(from_attributes=True)

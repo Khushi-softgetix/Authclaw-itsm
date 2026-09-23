@@ -11,25 +11,80 @@ import {
   Clock,
   ExternalLink,
   FileText,
+  GitPullRequest,
   History,
   Layers,
   Link2,
   Lock,
   MessageSquare,
+  Plus,
   RefreshCw,
   Save,
   Search,
   ShieldAlert,
   Sparkles,
   Ticket,
+  Trash2,
+  Unlink,
   User,
   Users,
   X,
 } from "lucide-react";
 import { formatDateTime } from "@/lib/itsm-format";
-import { ProblemActivity, ProblemDetail } from "@/lib/itsm-types";
+import { ChangeSummary, ProblemActivity, ProblemDetail } from "@/lib/itsm-types";
 import IncidentPriorityBadge from "@/components/itsm/incident-priority-badge";
 import IncidentStatusBadge from "@/components/itsm/incident-status-badge";
+
+function ChangeStatusBadge({ status }: { status: string }) {
+  const upper = (status || "").toUpperCase();
+  if (upper === "SCHEDULED") {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+        Scheduled
+      </span>
+    );
+  }
+  if (upper === "IN_PROGRESS" || upper === "IMPLEMENTING") {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-purple-50 text-purple-700 border border-purple-200">
+        {upper === "IMPLEMENTING" ? "Implementing" : "In Progress"}
+      </span>
+    );
+  }
+  if (upper === "COMPLETED" || upper === "CLOSED") {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+        {upper === "CLOSED" ? "Closed" : "Completed"}
+      </span>
+    );
+  }
+  if (upper === "CAB_REVIEW" || upper === "AWAITING_APPROVAL") {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+        CAB Review
+      </span>
+    );
+  }
+  if (upper === "APPROVED") {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+        Approved
+      </span>
+    );
+  }
+  if (upper === "FAILED" || upper === "CANCELLED" || upper === "REJECTED") {
+    return (
+      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+        {upper.replace(/_/g, " ")}
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+      {upper || "DRAFT"}
+    </span>
+  );
+}
 
 export default function ProblemDetailPage() {
   const params = useParams();
@@ -70,6 +125,35 @@ export default function ProblemDetailPage() {
   const [closeSubmitting, setCloseSubmitting] = useState<boolean>(false);
   const [closeError, setCloseError] = useState<string | null>(null);
 
+  // Related Changes state (Step 8)
+  const [relatedChanges, setRelatedChanges] = useState<ChangeSummary[]>([]);
+  const [changesLoading, setChangesLoading] = useState<boolean>(false);
+
+  // Link Existing Change modal state
+  const [linkModalOpen, setLinkModalOpen] = useState<boolean>(false);
+  const [availableChanges, setAvailableChanges] = useState<ChangeSummary[]>([]);
+  const [availableLoading, setAvailableLoading] = useState<boolean>(false);
+  const [selectedChangeIdToLink, setSelectedChangeIdToLink] = useState<string>("");
+  const [linkingSubmitting, setLinkingSubmitting] = useState<boolean>(false);
+  const [linkModalError, setLinkModalError] = useState<string | null>(null);
+
+  // Create Change from Problem modal state
+  const [createModalOpen, setCreateModalOpen] = useState<boolean>(false);
+  const [createTitle, setCreateTitle] = useState<string>("");
+  const [createDescription, setCreateDescription] = useState<string>("");
+  const [createChangeType, setCreateChangeType] = useState<string>("NORMAL");
+  const [createRiskLevel, setCreateRiskLevel] = useState<string>("LOW");
+  const [createImpactLevel, setCreateImpactLevel] = useState<string>("LOW");
+  const [createImplPlan, setCreateImplPlan] = useState<string>("");
+  const [createBackoutPlan, setCreateBackoutPlan] = useState<string>("");
+  const [createTestPlan, setCreateTestPlan] = useState<string>("");
+  const [createSubmitting, setCreateSubmitting] = useState<boolean>(false);
+  const [createModalError, setCreateModalError] = useState<string | null>(null);
+
+  // Unlink Change confirmation state
+  const [unlinkingChange, setUnlinkingChange] = useState<ChangeSummary | null>(null);
+  const [unlinkingSubmitting, setUnlinkingSubmitting] = useState<boolean>(false);
+
   const fetchActivities = useCallback(async () => {
     if (!problemId) return;
     try {
@@ -83,6 +167,22 @@ export default function ProblemDetailPage() {
       // Activity fetch failure non-blocking
     } finally {
       setActivitiesLoading(false);
+    }
+  }, [problemId]);
+
+  const fetchRelatedChanges = useCallback(async () => {
+    if (!problemId) return;
+    try {
+      setChangesLoading(true);
+      const res = await fetch(`/api/itsm/problems/${problemId}/changes`);
+      if (res.ok) {
+        const data = await res.json();
+        setRelatedChanges(data || []);
+      }
+    } catch {
+      // non-blocking
+    } finally {
+      setChangesLoading(false);
     }
   }, [problemId]);
 
@@ -106,6 +206,9 @@ export default function ProblemDetailPage() {
 
       const data: ProblemDetail = await res.json();
       setProblem(data);
+      if (data.related_changes) {
+        setRelatedChanges(data.related_changes);
+      }
 
       // Populate form state
       setInvestigationStatus(data.status || "OPEN");
@@ -124,7 +227,137 @@ export default function ProblemDetailPage() {
   useEffect(() => {
     fetchProblem();
     fetchActivities();
-  }, [fetchProblem, fetchActivities]);
+    fetchRelatedChanges();
+  }, [fetchProblem, fetchActivities, fetchRelatedChanges]);
+
+  // Modal open handlers
+  const openLinkModal = async () => {
+    setLinkModalError(null);
+    setSelectedChangeIdToLink("");
+    setLinkModalOpen(true);
+    try {
+      setAvailableLoading(true);
+      const res = await fetch("/api/itsm/changes?limit=50");
+      if (res.ok) {
+        const data = await res.json();
+        const activeLinkedIds = new Set(relatedChanges.map((c) => c.id));
+        setAvailableChanges((data || []).filter((c: ChangeSummary) => !activeLinkedIds.has(c.id)));
+      } else {
+        setLinkModalError("Failed to load available change requests");
+      }
+    } catch {
+      setLinkModalError("Network error loading change requests");
+    } finally {
+      setAvailableLoading(false);
+    }
+  };
+
+  const handleLinkChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedChangeIdToLink) {
+      setLinkModalError("Please select a Change Request to link");
+      return;
+    }
+    setLinkingSubmitting(true);
+    setLinkModalError(null);
+    try {
+      const res = await fetch(`/api/itsm/problems/${problemId}/link-change`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ change_id: selectedChangeIdToLink }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Failed to link change request");
+      }
+      const updated = await res.json();
+      setRelatedChanges(updated);
+      setLinkModalOpen(false);
+      fetchActivities();
+    } catch (err: unknown) {
+      setLinkModalError(err instanceof Error ? err.message : "Error linking change");
+    } finally {
+      setLinkingSubmitting(false);
+    }
+  };
+
+  const openCreateModal = () => {
+    setCreateModalError(null);
+    setCreateTitle(`Permanent fix: ${problem?.title || ""}`);
+    let desc = problem?.description || "";
+    if (problem?.problem_details?.root_cause_summary) {
+      desc += `\n\nRoot Cause Summary:\n${problem.problem_details.root_cause_summary}`;
+    }
+    setCreateDescription(desc);
+    setCreateImplPlan(problem?.problem_details?.permanent_solution || "");
+    setCreateBackoutPlan("");
+    setCreateTestPlan("");
+    setCreateChangeType("NORMAL");
+    setCreateRiskLevel("LOW");
+    setCreateImpactLevel("LOW");
+    setCreateModalOpen(true);
+  };
+
+  const handleCreateChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!createTitle.trim()) {
+      setCreateModalError("Change title is required");
+      return;
+    }
+    setCreateSubmitting(true);
+    setCreateModalError(null);
+    try {
+      const res = await fetch(`/api/itsm/problems/${problemId}/create-change`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: createTitle.trim(),
+          description: createDescription.trim(),
+          change_type: createChangeType,
+          risk_level: createRiskLevel,
+          impact_level: createImpactLevel,
+          implementation_plan: createImplPlan.trim() || undefined,
+          backout_plan: createBackoutPlan.trim() || undefined,
+          test_plan: createTestPlan.trim() || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Failed to create change request");
+      }
+      setCreateModalOpen(false);
+      await fetchRelatedChanges();
+      fetchActivities();
+    } catch (err: unknown) {
+      setCreateModalError(err instanceof Error ? err.message : "Error creating change");
+    } finally {
+      setCreateSubmitting(false);
+    }
+  };
+
+  const handleUnlinkChange = async () => {
+    if (!unlinkingChange) return;
+    setUnlinkingSubmitting(true);
+    try {
+      const res = await fetch(`/api/itsm/problems/${problemId}/unlink-change`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ change_id: unlinkingChange.id }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.detail || "Failed to unlink change request");
+      }
+      const updated = await res.json();
+      setRelatedChanges(updated);
+      setUnlinkingChange(null);
+      fetchActivities();
+    } catch (err: unknown) {
+      alert(err instanceof Error ? err.message : "Error unlinking change");
+    } finally {
+      setUnlinkingSubmitting(false);
+    }
+  };
 
   const handleSaveInvestigation = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -845,6 +1078,139 @@ export default function ProblemDetailPage() {
             )}
           </div>
 
+          {/* Related Change Requests Section (Step 8) */}
+          <div
+            className="p-6 rounded-[20px] border border-[#E6E9F0] bg-white shadow-[0_1px_2px_rgba(11,31,63,.05)] space-y-4"
+            id="pcm-related-changes-section"
+          >
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#E6E9F0] pb-3">
+              <div className="flex items-center gap-2">
+                <GitPullRequest className="w-4 h-4 text-[#6D28D9]" />
+                <h2 className="text-sm font-bold text-[#0E1726]">Related Change Requests</h2>
+                <span
+                  className="inline-flex items-center px-2 py-0.5 rounded-full bg-[#F3E8FF] text-[#7E22CE] text-xs font-semibold"
+                  id="pcm-related-changes-count"
+                >
+                  {relatedChanges.length} Linked
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={openLinkModal}
+                  id="pcm-link-existing-change-btn"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-[#CBD5E1] bg-white hover:bg-[#F8FAFC] text-[#0E1726] text-xs font-semibold shadow-sm transition cursor-pointer"
+                >
+                  <Link2 className="w-3.5 h-3.5 text-[#6B7488]" />
+                  <span>Link Existing Change</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={openCreateModal}
+                  id="pcm-create-change-from-problem-btn"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-[#6D28D9] hover:bg-[#5B21B6] text-white text-xs font-semibold shadow-sm transition cursor-pointer"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Create Change Request</span>
+                </button>
+              </div>
+            </div>
+
+            {changesLoading ? (
+              <div className="p-8 text-center text-[#6B7488] space-y-2">
+                <RefreshCw className="w-5 h-5 animate-spin mx-auto text-[#6D28D9]" />
+                <p className="text-xs">Loading linked changes...</p>
+              </div>
+            ) : relatedChanges.length === 0 ? (
+              <div
+                className="p-8 rounded-xl bg-[#FAF5FF]/50 border border-[#E9D5FF] text-center space-y-3"
+                id="pcm-no-related-changes"
+              >
+                <GitPullRequest className="w-8 h-8 text-[#A855F7] mx-auto opacity-75" />
+                <div className="max-w-md mx-auto space-y-1">
+                  <p className="text-xs font-semibold text-[#581C87]">
+                    No change requests linked to this problem yet.
+                  </p>
+                  <p className="text-[11px] text-[#7E22CE]">
+                    Link an existing change or create a new permanent fix to initiate CAB review and deployment.
+                  </p>
+                </div>
+                <div className="pt-1 flex items-center justify-center gap-2">
+                  <button
+                    type="button"
+                    onClick={openCreateModal}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-[#6D28D9] text-white text-xs font-medium hover:bg-[#5B21B6] transition shadow-xs cursor-pointer"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>Create Permanent Fix Change</span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs border-collapse">
+                  <thead>
+                    <tr className="border-b border-[#E6E9F0] text-[#6B7488] font-semibold">
+                      <th className="py-2.5 px-3">Change #</th>
+                      <th className="py-2.5 px-3">Title</th>
+                      <th className="py-2.5 px-3">Status</th>
+                      <th className="py-2.5 px-3">Type</th>
+                      <th className="py-2.5 px-3">Risk</th>
+                      <th className="py-2.5 px-3">Updated</th>
+                      <th className="py-2.5 px-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-[#E6E9F0]">
+                    {relatedChanges.map((chg) => (
+                      <tr key={chg.id} className="hover:bg-[#F8FAFC] transition">
+                        <td className="py-3 px-3 font-semibold text-[#6D28D9]">
+                          <Link
+                            href={`/itsm/problem-change-manager/changes/${chg.id}`}
+                            className="hover:underline inline-flex items-center gap-1 font-mono"
+                          >
+                            <span>{chg.change_number}</span>
+                            <ExternalLink className="w-3 h-3 text-[#94A3B8]" />
+                          </Link>
+                        </td>
+                        <td className="py-3 px-3 font-medium text-[#0E1726] max-w-xs truncate">
+                          {chg.title}
+                        </td>
+                        <td className="py-3 px-3">
+                          <ChangeStatusBadge status={chg.status} />
+                        </td>
+                        <td className="py-3 px-3">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-100 text-slate-700">
+                            {chg.change_type || "NORMAL"}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-50 text-slate-600 border border-slate-200">
+                            {chg.risk_level || "LOW"}
+                          </span>
+                        </td>
+                        <td className="py-3 px-3 text-[#6B7488]">
+                          {formatDateTime(chg.updated_at || chg.created_at)}
+                        </td>
+                        <td className="py-3 px-3 text-right">
+                          <button
+                            type="button"
+                            onClick={() => setUnlinkingChange(chg)}
+                            id={`pcm-unlink-change-btn-${chg.id}`}
+                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg border border-red-200 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-medium transition cursor-pointer"
+                            title="Unlink Change Request"
+                          >
+                            <Unlink className="w-3 h-3" />
+                            <span>Unlink</span>
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
           {/* Activity / History Timeline */}
           <div
             className="p-6 rounded-[20px] border border-[#E6E9F0] bg-white shadow-[0_1px_2px_rgba(11,31,63,.05)] space-y-4"
@@ -1262,6 +1628,352 @@ export default function ProblemDetailPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Link Existing Change Modal */}
+      {linkModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm"
+          id="pcm-link-change-modal"
+        >
+          <div className="bg-white rounded-2xl border border-[#E6E9F0] shadow-xl max-w-md w-full p-6 space-y-4">
+            <div className="flex items-center justify-between border-b border-[#E6E9F0] pb-3">
+              <div className="flex items-center gap-2">
+                <Link2 className="w-5 h-5 text-[#6D28D9]" />
+                <h3 className="text-sm font-bold text-[#0E1726]">Link Existing Change Request</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setLinkModalOpen(false)}
+                className="text-[#64748B] hover:text-[#0E1726]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {linkModalError && (
+              <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{linkModalError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleLinkChange} className="space-y-4 text-xs">
+              <p className="text-[#64748B] leading-relaxed">
+                Select an existing Change Request in this tenant to link as a resolution or permanent fix for Problem{" "}
+                <span className="font-semibold text-[#0E1726]">{problem?.ticket_number}</span>.
+              </p>
+
+              <div className="space-y-1.5">
+                <label htmlFor="pcm-select-change-to-link" className="block font-semibold text-[#0E1726]">
+                  Select Change Request <span className="text-red-500">*</span>
+                </label>
+                {availableLoading ? (
+                  <div className="p-3 text-center text-[#6B7488]">
+                    <RefreshCw className="w-4 h-4 animate-spin mx-auto text-[#6D28D9]" />
+                  </div>
+                ) : availableChanges.length === 0 ? (
+                  <div className="p-3 rounded-xl bg-slate-50 border border-slate-200 text-[#64748B] text-center">
+                    No available unlinked changes found.
+                  </div>
+                ) : (
+                  <select
+                    id="pcm-select-change-to-link"
+                    value={selectedChangeIdToLink}
+                    onChange={(e) => setSelectedChangeIdToLink(e.target.value)}
+                    required
+                    className="w-full px-3 py-2 rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] text-[#0E1726] font-medium focus:ring-2 focus:ring-[#6D28D9]/20 focus:border-[#6D28D9] text-xs"
+                  >
+                    <option value="">-- Choose a Change Request --</option>
+                    {availableChanges.map((chg) => (
+                      <option key={chg.id} value={chg.id}>
+                        {chg.change_number} — {chg.title} ({chg.status})
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#E6E9F0]">
+                <button
+                  type="button"
+                  onClick={() => setLinkModalOpen(false)}
+                  disabled={linkingSubmitting}
+                  className="px-4 py-2 rounded-xl border border-[#CBD5E1] bg-white text-[#475569] hover:bg-[#F8FAFC] font-semibold text-xs transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={linkingSubmitting || !selectedChangeIdToLink}
+                  id="pcm-submit-link-change-btn"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#6D28D9] hover:bg-[#5B21B6] disabled:opacity-50 text-white font-semibold text-xs shadow-sm transition"
+                >
+                  {linkingSubmitting ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Linking...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Link2 className="w-3.5 h-3.5" />
+                      <span>Link Change</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Create Change Request Modal */}
+      {createModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm"
+          id="pcm-create-change-modal"
+        >
+          <div className="bg-white rounded-2xl border border-[#E6E9F0] shadow-xl max-w-xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-[#E6E9F0] pb-3">
+              <div className="flex items-center gap-2">
+                <GitPullRequest className="w-5 h-5 text-[#6D28D9]" />
+                <h3 className="text-sm font-bold text-[#0E1726]">Create Change Request from Problem</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCreateModalOpen(false)}
+                className="text-[#64748B] hover:text-[#0E1726]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {createModalError && (
+              <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{createModalError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleCreateChange} className="space-y-3.5 text-xs">
+              <div className="p-3 rounded-xl bg-purple-50/60 border border-purple-100 text-purple-900 text-[11px] leading-relaxed">
+                This will create a new Change Request linked to Problem <strong>{problem?.ticket_number}</strong> with pre-populated root cause and solution details.
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="create-change-title-input" className="block font-semibold text-[#0E1726]">
+                  Change Title <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  id="create-change-title-input"
+                  value={createTitle}
+                  onChange={(e) => setCreateTitle(e.target.value)}
+                  required
+                  placeholder="e.g. Deploy permanent patch for session memory leak"
+                  className="w-full px-3 py-2 rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] text-[#0E1726] text-xs focus:ring-2 focus:ring-[#6D28D9]/20 focus:border-[#6D28D9]"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="space-y-1">
+                  <label htmlFor="create-change-type-select" className="block font-semibold text-[#0E1726]">
+                    Change Type
+                  </label>
+                  <select
+                    id="create-change-type-select"
+                    value={createChangeType}
+                    onChange={(e) => setCreateChangeType(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] text-[#0E1726] text-xs font-medium focus:ring-2 focus:ring-[#6D28D9]/20 focus:border-[#6D28D9]"
+                  >
+                    <option value="NORMAL">NORMAL</option>
+                    <option value="STANDARD">STANDARD</option>
+                    <option value="EMERGENCY">EMERGENCY</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label htmlFor="create-change-risk-select" className="block font-semibold text-[#0E1726]">
+                    Risk Level
+                  </label>
+                  <select
+                    id="create-change-risk-select"
+                    value={createRiskLevel}
+                    onChange={(e) => setCreateRiskLevel(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] text-[#0E1726] text-xs font-medium focus:ring-2 focus:ring-[#6D28D9]/20 focus:border-[#6D28D9]"
+                  >
+                    <option value="LOW">LOW</option>
+                    <option value="MEDIUM">MEDIUM</option>
+                    <option value="HIGH">HIGH</option>
+                    <option value="CRITICAL">CRITICAL</option>
+                  </select>
+                </div>
+
+                <div className="space-y-1">
+                  <label htmlFor="create-change-impact-select" className="block font-semibold text-[#0E1726]">
+                    Impact Level
+                  </label>
+                  <select
+                    id="create-change-impact-select"
+                    value={createImpactLevel}
+                    onChange={(e) => setCreateImpactLevel(e.target.value)}
+                    className="w-full px-2.5 py-1.5 rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] text-[#0E1726] text-xs font-medium focus:ring-2 focus:ring-[#6D28D9]/20 focus:border-[#6D28D9]"
+                  >
+                    <option value="LOW">LOW</option>
+                    <option value="MEDIUM">MEDIUM</option>
+                    <option value="HIGH">HIGH</option>
+                    <option value="CRITICAL">CRITICAL</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="create-change-description-input" className="block font-semibold text-[#0E1726]">
+                  Description
+                </label>
+                <textarea
+                  id="create-change-description-input"
+                  rows={3}
+                  value={createDescription}
+                  onChange={(e) => setCreateDescription(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] text-[#0E1726] text-xs resize-y focus:ring-2 focus:ring-[#6D28D9]/20 focus:border-[#6D28D9]"
+                />
+              </div>
+
+              <div className="space-y-1">
+                <label htmlFor="create-change-implementation-input" className="block font-semibold text-[#0E1726]">
+                  Implementation Plan
+                </label>
+                <textarea
+                  id="create-change-implementation-input"
+                  rows={3}
+                  value={createImplPlan}
+                  onChange={(e) => setCreateImplPlan(e.target.value)}
+                  placeholder="Step-by-step rollout instructions..."
+                  className="w-full px-3 py-2 rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] text-[#0E1726] text-xs resize-y focus:ring-2 focus:ring-[#6D28D9]/20 focus:border-[#6D28D9]"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1">
+                  <label htmlFor="create-change-backout-input" className="block font-semibold text-[#0E1726]">
+                    Backout Plan (Optional)
+                  </label>
+                  <textarea
+                    id="create-change-backout-input"
+                    rows={2}
+                    value={createBackoutPlan}
+                    onChange={(e) => setCreateBackoutPlan(e.target.value)}
+                    placeholder="Steps to revert if implementation fails..."
+                    className="w-full px-3 py-2 rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] text-[#0E1726] text-xs resize-y"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label htmlFor="create-change-test-input" className="block font-semibold text-[#0E1726]">
+                    Test / Verification Plan (Optional)
+                  </label>
+                  <textarea
+                    id="create-change-test-input"
+                    rows={2}
+                    value={createTestPlan}
+                    onChange={(e) => setCreateTestPlan(e.target.value)}
+                    placeholder="Verification steps to validate the fix..."
+                    className="w-full px-3 py-2 rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] text-[#0E1726] text-xs resize-y"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#E6E9F0]">
+                <button
+                  type="button"
+                  onClick={() => setCreateModalOpen(false)}
+                  disabled={createSubmitting}
+                  className="px-4 py-2 rounded-xl border border-[#CBD5E1] bg-white text-[#475569] hover:bg-[#F8FAFC] font-semibold text-xs transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={createSubmitting || !createTitle.trim()}
+                  id="pcm-submit-create-change-btn"
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#6D28D9] hover:bg-[#5B21B6] disabled:opacity-50 text-white font-semibold text-xs shadow-sm transition"
+                >
+                  {createSubmitting ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Creating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Create Change Request</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Unlink Change Confirmation Modal */}
+      {unlinkingChange && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm"
+          id="pcm-unlink-change-modal"
+        >
+          <div className="bg-white rounded-2xl border border-[#E6E9F0] shadow-xl max-w-sm w-full p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0 border border-amber-200">
+                <Unlink className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-[#0E1726]">Unlink Change Request</h3>
+                <p className="text-xs text-[#64748B]">Confirm decoupling from Problem</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-[#475569] leading-relaxed">
+              Are you sure you want to unlink Change Request{" "}
+              <strong className="text-[#0E1726]">{unlinkingChange.change_number}</strong> from Problem{" "}
+              <strong className="text-[#0E1726]">{problem?.ticket_number}</strong>?
+              <br />
+              <span className="text-[11px] text-[#64748B] block mt-1">
+                The Change Request will remain in the system and will not be deleted.
+              </span>
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#E6E9F0]">
+              <button
+                type="button"
+                onClick={() => setUnlinkingChange(null)}
+                disabled={unlinkingSubmitting}
+                className="px-4 py-2 rounded-xl border border-[#CBD5E1] bg-white text-[#475569] hover:bg-[#F8FAFC] font-semibold text-xs transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleUnlinkChange}
+                disabled={unlinkingSubmitting}
+                id="pcm-confirm-unlink-btn"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-semibold text-xs shadow-sm transition"
+              >
+                {unlinkingSubmitting ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Unlinking...</span>
+                  </>
+                ) : (
+                  <>
+                    <Unlink className="w-3.5 h-3.5" />
+                    <span>Confirm Unlink</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}

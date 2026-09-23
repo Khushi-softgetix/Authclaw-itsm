@@ -9,7 +9,10 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_tenant, get_tenant_db
+from app.schemas.itsm_changes import ChangeDetailResponse, ChangeSummaryResponse
 from app.schemas.itsm_problems import (
+    CreateChangeFromProblemRequest,
+    LinkChangeRequest,
     ProblemActivityResponse,
     ProblemCloseRequest,
     ProblemDetailResponse,
@@ -17,6 +20,7 @@ from app.schemas.itsm_problems import (
     ProblemResolveRequest,
     ProblemStatsResponse,
     ProblemSummaryResponse,
+    UnlinkChangeRequest,
 )
 from app.services.itsm_problem_service import ProblemService
 
@@ -217,6 +221,114 @@ def close_problem(
         problem_id=problem_id,
         payload=payload,
         actor_id=actor_id,
+    )
+
+
+@router.get(
+    "/{problem_id}/changes",
+    response_model=List[ChangeSummaryResponse],
+    summary="Get related Change Requests for a Problem ticket",
+    description="Retrieve all currently active Change Requests linked to the specified Problem ticket.",
+)
+def get_related_changes(
+    problem_id: UUID,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    actor_id = UUID(str(request.state.user_id))
+    t_id = UUID(tenant_id)
+    _verify_problem_manager_access(db, t_id, actor_id)
+
+    return ProblemService.get_related_changes(
+        db=db,
+        tenant_id=t_id,
+        problem_id=problem_id,
+    )
+
+
+@router.post(
+    "/{problem_id}/link-change",
+    response_model=List[ChangeSummaryResponse],
+    summary="Link an existing Change Request to Problem",
+    description="Associate an existing Change Request with a Problem ticket, enforcing tenant boundaries.",
+)
+def link_change(
+    problem_id: UUID,
+    payload: LinkChangeRequest,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    actor_id = UUID(str(request.state.user_id))
+    actor_email = getattr(request.state, "user_email", None)
+    t_id = UUID(tenant_id)
+    _verify_problem_manager_access(db, t_id, actor_id)
+
+    return ProblemService.link_change(
+        db=db,
+        tenant_id=t_id,
+        problem_id=problem_id,
+        change_id=payload.change_id,
+        actor_id=actor_id,
+        actor_email=actor_email,
+    )
+
+
+@router.post(
+    "/{problem_id}/unlink-change",
+    response_model=List[ChangeSummaryResponse],
+    summary="Unlink a Change Request from Problem",
+    description="Remove the link between a Change Request and Problem ticket without deleting the Change.",
+)
+def unlink_change(
+    problem_id: UUID,
+    payload: UnlinkChangeRequest,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    actor_id = UUID(str(request.state.user_id))
+    actor_email = getattr(request.state, "user_email", None)
+    t_id = UUID(tenant_id)
+    _verify_problem_manager_access(db, t_id, actor_id)
+
+    return ProblemService.unlink_change(
+        db=db,
+        tenant_id=t_id,
+        problem_id=problem_id,
+        change_id=payload.change_id,
+        actor_id=actor_id,
+        actor_email=actor_email,
+    )
+
+
+@router.post(
+    "/{problem_id}/create-change",
+    response_model=ChangeDetailResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new Change Request pre-filled from Problem",
+    description="Create a new Change Request derived from Problem details and automatically link them.",
+)
+def create_change_from_problem(
+    problem_id: UUID,
+    payload: CreateChangeFromProblemRequest,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    actor_id = UUID(str(request.state.user_id))
+    actor_email = getattr(request.state, "user_email", None)
+    t_id = UUID(tenant_id)
+    _verify_problem_manager_access(db, t_id, actor_id)
+
+    return ProblemService.create_change_from_problem(
+        db=db,
+        tenant_id=t_id,
+        problem_id=problem_id,
+        payload=payload,
+        actor_id=actor_id,
+        actor_email=actor_email,
     )
 
 

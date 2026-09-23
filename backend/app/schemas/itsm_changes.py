@@ -52,6 +52,29 @@ class ChangeAffectedCIItem(BaseModel):
     notes: Optional[str] = None
 
 
+class ChangeActivityItem(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    actor_id: Optional[UUID] = None
+    actor_email: Optional[str] = None
+    action: str
+    from_status: Optional[str] = None
+    to_status: Optional[str] = None
+    message: str
+    created_at: datetime
+
+
+class RelatedProblemSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    ticket_number: str
+    title: str
+    status: str
+    priority: str
+
+
 class ChangeDetailResponse(ChangeSummaryResponse):
     lead_time_hours: Optional[int] = 0
     outage_expected: Optional[bool] = False
@@ -59,6 +82,8 @@ class ChangeDetailResponse(ChangeSummaryResponse):
     backout_plan: Optional[str] = ""
     test_plan: Optional[str] = ""
     affected_cis: List[ChangeAffectedCIItem] = []
+    activities: List[ChangeActivityItem] = []
+    related_problem: Optional[RelatedProblemSummary] = None
 
 
 class ChangeAssessmentUpdateRequest(BaseModel):
@@ -69,3 +94,12 @@ class ChangeAssessmentUpdateRequest(BaseModel):
     implementation_plan: Optional[str] = None
     backout_plan: Optional[str] = None
     test_plan: Optional[str] = None
+
+
+class ChangeLifecycleTransitionRequest(BaseModel):
+    action: str
+    notes: Optional[str] = None
+    earliest_start_at: Optional[datetime] = None
+    latest_finish_at: Optional[datetime] = None
+    validation_notes: Optional[str] = None
+    implementation_notes: Optional[str] = None

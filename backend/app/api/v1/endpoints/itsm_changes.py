@@ -10,10 +10,13 @@ from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_tenant, get_tenant_db
 from app.schemas.itsm_changes import (
+    ChangeActivityItem,
     ChangeAssessmentUpdateRequest,
     ChangeDetailResponse,
+    ChangeLifecycleTransitionRequest,
     ChangeStatsResponse,
     ChangeSummaryResponse,
+    RelatedProblemSummary,
 )
 from app.services.itsm_change_service import ITSMChangeService
 
@@ -177,4 +180,99 @@ def update_change(
         change_id=change_id,
         payload=payload,
         actor_id=actor_id,
+    )
+
+
+@router.post(
+    "/{change_id}/transition",
+    response_model=ChangeDetailResponse,
+    summary="Transition Change Request lifecycle",
+    description="Execute validated lifecycle transition (submit_review, approve, reject, schedule, start_implementation, complete, close, cancel).",
+)
+def transition_change_lifecycle(
+    change_id: UUID,
+    payload: ChangeLifecycleTransitionRequest,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    """Transition change request through supported lifecycle state."""
+    actor_id = UUID(str(request.state.user_id))
+    t_id = UUID(tenant_id)
+    _verify_change_manager_access(db, t_id, actor_id)
+
+    return ITSMChangeService.transition_lifecycle(
+        db=db,
+        tenant_id=t_id,
+        change_id=change_id,
+        payload=payload,
+        actor_id=actor_id,
+    )
+
+
+@router.post(
+    "/{change_id}/lifecycle",
+    response_model=ChangeDetailResponse,
+    summary="Alias for Change Request lifecycle transition",
+    include_in_schema=False,
+)
+def transition_change_lifecycle_alias(
+    change_id: UUID,
+    payload: ChangeLifecycleTransitionRequest,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    """Alias for transitioning change lifecycle."""
+    return transition_change_lifecycle(change_id, payload, request, db, tenant_id)
+
+
+@router.get(
+    "/{change_id}/activities",
+    response_model=List[ChangeActivityItem],
+    summary="Get Change Request activity and audit history",
+    description="Retrieve chronological audit and transition history for a change request.",
+)
+def get_change_activities(
+    change_id: UUID,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    """Retrieve audit history and activities for a change request."""
+    actor_id = UUID(str(request.state.user_id))
+    t_id = UUID(tenant_id)
+    _verify_change_manager_access(db, t_id, actor_id)
+
+    return ITSMChangeService.get_change_activities(
+        db=db,
+        tenant_id=t_id,
+        change_id=change_id,
+    )
+
+
+@router.get(
+    "/{change_id}/problem",
+    response_model=Optional[RelatedProblemSummary],
+    summary="Get related Problem ticket for a Change Request",
+    description="Retrieve the active Problem ticket linked to this Change Request, if one exists.",
+)
+def get_related_problem(
+    change_id: UUID,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    """Retrieve related problem ticket for a change request."""
+    actor_id = UUID(str(request.state.user_id))
+    t_id = UUID(tenant_id)
+    _verify_change_manager_access(db, t_id, actor_id)
+
+    # Verify change exists in tenant
+    ITSMChangeService.get_change(db, t_id, change_id)
+
+    return ITSMChangeService.get_related_problem(
+        db=db,
+        tenant_id=t_id,
+        change_id=change_id,
     )

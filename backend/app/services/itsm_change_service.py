@@ -9,13 +9,16 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session, joinedload
 
-from app.db.models import ITSMChangeRequest, ITSMChangeRequestCI
+from app.db.models import AuditLogMetadata, ITSMChangeRequest, ITSMChangeRequestCI, ITSMTicket, ITSMTicketActivity, User
 from app.schemas.itsm_changes import (
+    ChangeActivityItem,
     ChangeAffectedCIItem,
     ChangeAssessmentUpdateRequest,
     ChangeDetailResponse,
+    ChangeLifecycleTransitionRequest,
     ChangeStatsResponse,
     ChangeSummaryResponse,
+    RelatedProblemSummary,
 )
 from app.services.audit_store import append_audit_event
 
@@ -203,8 +206,111 @@ class ITSMChangeService:
             backout_plan=chg.backout_plan,
             test_plan=chg.test_plan,
             affected_cis=affected_cis,
+            activities=cls.get_change_activities(db, tenant_id, change_id),
+            related_problem=cls.get_related_problem(db, tenant_id, change_id),
             created_at=chg.created_at,
             updated_at=chg.updated_at,
+        )
+
+    @staticmethod
+    def generate_change_number(db: Session, tenant_id: UUID) -> str:
+        """Concurrency-safe atomic sequential change number generation per tenant using itsm_ticket_counters."""
+        query = text(
+            """
+            INSERT INTO public.itsm_ticket_counters (id, tenant_id, ticket_type, prefix, last_number, updated_at)
+            VALUES (gen_random_uuid(), :tenant_id, 'CHANGE', 'CHG', 1, clock_timestamp())
+            ON CONFLICT (tenant_id, ticket_type)
+            DO UPDATE SET
+                last_number = public.itsm_ticket_counters.last_number + 1,
+                updated_at = clock_timestamp()
+            RETURNING prefix, last_number
+            """
+        )
+        row = db.execute(query, {"tenant_id": str(tenant_id)}).fetchone()
+        if not row:
+            raise RuntimeError("Failed to generate change number")
+        prefix, number = row[0], row[1]
+        candidate = f"{prefix}-{number:06d}"
+
+        # If candidate already exists in itsm_change_requests (e.g. from seed data), advance counter past max existing
+        exists = db.query(ITSMChangeRequest.id).filter(
+            ITSMChangeRequest.tenant_id == tenant_id,
+            ITSMChangeRequest.change_number == candidate,
+        ).first()
+        if exists:
+            all_nums = db.query(ITSMChangeRequest.change_number).filter(
+                ITSMChangeRequest.tenant_id == tenant_id,
+                ITSMChangeRequest.change_number.like(f"{prefix}-%"),
+            ).all()
+            max_num = number
+            for (cn,) in all_nums:
+                try:
+                    num_part = int(cn.split("-")[-1])
+                    if num_part > max_num:
+                        max_num = num_part
+                except (ValueError, IndexError):
+                    pass
+            new_last = max_num + 1
+            db.execute(
+                text(
+                    """
+                    UPDATE public.itsm_ticket_counters
+                    SET last_number = :new_last, updated_at = clock_timestamp()
+                    WHERE tenant_id = :tenant_id AND ticket_type = 'CHANGE'
+                    """
+                ),
+                {"new_last": new_last, "tenant_id": str(tenant_id)},
+            )
+            candidate = f"{prefix}-{new_last:06d}"
+
+        return candidate
+
+    @classmethod
+    def get_related_problem(
+        cls, db: Session, tenant_id: UUID, change_id: UUID
+    ) -> Optional[RelatedProblemSummary]:
+        """Find the active problem linked to this change via activity audit trail."""
+        activities = (
+            db.query(ITSMTicketActivity)
+            .filter(
+                ITSMTicketActivity.tenant_id == tenant_id,
+                ITSMTicketActivity.activity_type.in_(["CHANGE_LINKED", "CHANGE_UNLINKED"]),
+            )
+            .order_by(ITSMTicketActivity.created_at.asc())
+            .all()
+        )
+        target_str = str(change_id)
+        linked_problem_id: Optional[UUID] = None
+        for act in activities:
+            meta = act.activity_metadata or {}
+            if meta.get("change_id") == target_str:
+                if act.activity_type == "CHANGE_LINKED":
+                    linked_problem_id = act.ticket_id
+                elif act.activity_type == "CHANGE_UNLINKED":
+                    if linked_problem_id == act.ticket_id:
+                        linked_problem_id = None
+
+        if not linked_problem_id:
+            return None
+
+        problem = (
+            db.query(ITSMTicket)
+            .filter(
+                ITSMTicket.tenant_id == tenant_id,
+                ITSMTicket.id == linked_problem_id,
+                ITSMTicket.ticket_type == "PROBLEM",
+            )
+            .first()
+        )
+        if not problem:
+            return None
+
+        return RelatedProblemSummary(
+            id=problem.id,
+            ticket_number=problem.ticket_number,
+            title=problem.title,
+            status=problem.status,
+            priority=problem.priority,
         )
 
     @classmethod
@@ -301,6 +407,217 @@ class ITSMChangeService:
             except Exception as audit_err:
                 sp.rollback()
                 logger.warning("Failed to emit audit event for change assessment: %s", audit_err)
+        except Exception:
+            pass
+
+        return cls.get_change(db, tenant_id, change_id)
+
+    @classmethod
+    def get_change_activities(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        change_id: UUID,
+    ) -> list[ChangeActivityItem]:
+        """Fetch audit and lifecycle history for a Change Request."""
+        records = (
+            db.query(AuditLogMetadata)
+            .filter(
+                AuditLogMetadata.tenant_id == tenant_id,
+                AuditLogMetadata.policy_id == change_id,
+            )
+            .order_by(AuditLogMetadata.created_at.desc())
+            .limit(50)
+            .all()
+        )
+
+        activities: list[ChangeActivityItem] = []
+        user_ids = {r.actor_id for r in records if r.actor_id}
+        users_map = {}
+        if user_ids:
+            user_rows = db.query(User.id, User.email).filter(User.id.in_(user_ids)).all()
+            users_map = {u.id: u.email for u in user_rows}
+
+        for r in records:
+            actor_email = users_map.get(r.actor_id) if r.actor_id else None
+            activities.append(
+                ChangeActivityItem(
+                    id=r.record_id or r.id,
+                    actor_id=r.actor_id,
+                    actor_email=actor_email,
+                    action=r.action,
+                    message=r.reason or r.action,
+                    created_at=r.created_at,
+                )
+            )
+
+        if not activities:
+            chg = (
+                db.query(ITSMChangeRequest.created_at, ITSMChangeRequest.change_number)
+                .filter(
+                    ITSMChangeRequest.id == change_id,
+                    ITSMChangeRequest.tenant_id == tenant_id,
+                )
+                .first()
+            )
+            if chg:
+                activities.append(
+                    ChangeActivityItem(
+                        id=uuid4(),
+                        action="itsm.change.created",
+                        message=f"Change Request {chg.change_number} registered in system",
+                        created_at=chg.created_at,
+                    )
+                )
+
+        return activities
+
+    @classmethod
+    def transition_lifecycle(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        change_id: UUID,
+        payload: ChangeLifecycleTransitionRequest,
+        actor_id: UUID,
+    ) -> ChangeDetailResponse:
+        """Enforce transition rules and progress Change Request through supported lifecycle states."""
+        chg = (
+            db.query(ITSMChangeRequest)
+            .filter(
+                ITSMChangeRequest.id == change_id,
+                ITSMChangeRequest.tenant_id == tenant_id,
+            )
+            .first()
+        )
+        if not chg:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Change request '{change_id}' not found",
+            )
+
+        current_status = chg.status.upper() if chg.status else "DRAFT"
+        action = payload.action.strip().lower()
+
+        # Terminal state validation
+        if current_status in {"CLOSED", "CANCELLED"}:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot transition change from terminal state '{current_status}'",
+            )
+
+        # Transition matrix matching ITIL lifecycle
+        transitions = {
+            "submit_review": {
+                "allowed_from": {"DRAFT", "OPEN"},
+                "target_status": "CAB_REVIEW",
+                "default_msg": "Submitted for CAB review",
+            },
+            "approve": {
+                "allowed_from": {"CAB_REVIEW", "AWAITING_APPROVAL", "SUBMITTED", "DRAFT"},
+                "target_status": "APPROVED",
+                "default_msg": "Change approved for implementation",
+            },
+            "reject": {
+                "allowed_from": {"CAB_REVIEW", "AWAITING_APPROVAL", "SUBMITTED"},
+                "target_status": "DRAFT",
+                "default_msg": "Change rejected / returned for revisions",
+            },
+            "schedule": {
+                "allowed_from": {"APPROVED", "DRAFT", "OPEN", "SCHEDULED"},
+                "target_status": "SCHEDULED",
+                "default_msg": "Change scheduled for execution window",
+            },
+            "start_implementation": {
+                "allowed_from": {"SCHEDULED", "APPROVED"},
+                "target_status": "IMPLEMENTING",
+                "default_msg": "Change implementation started",
+            },
+            "complete": {
+                "allowed_from": {"IMPLEMENTING", "IN_PROGRESS"},
+                "target_status": "COMPLETED",
+                "default_msg": "Change implementation completed and validated",
+            },
+            "close": {
+                "allowed_from": {"COMPLETED"},
+                "target_status": "CLOSED",
+                "default_msg": "Change closed",
+            },
+            "cancel": {
+                "allowed_from": {"DRAFT", "OPEN", "CAB_REVIEW", "AWAITING_APPROVAL", "APPROVED", "SCHEDULED"},
+                "target_status": "CANCELLED",
+                "default_msg": "Change cancelled",
+            },
+        }
+
+        if action not in transitions:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported lifecycle action '{payload.action}'. Supported actions: {sorted(transitions.keys())}",
+            )
+
+        rule = transitions[action]
+        if current_status not in rule["allowed_from"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot perform action '{payload.action}' on change in status '{current_status}'. Allowed from: {sorted(rule['allowed_from'])}",
+            )
+
+        old_status = current_status
+        new_status = rule["target_status"]
+        chg.status = new_status
+        now = datetime.now(timezone.utc)
+        chg.updated_at = now
+
+        # Action-specific side effects
+        if action == "schedule":
+            if payload.earliest_start_at:
+                chg.earliest_start_at = payload.earliest_start_at
+            if payload.latest_finish_at:
+                chg.latest_finish_at = payload.latest_finish_at
+
+        if action == "start_implementation":
+            if not chg.actual_start_at:
+                chg.actual_start_at = now
+            if payload.implementation_notes:
+                chg.implementation_plan = payload.implementation_notes
+
+        if action == "complete":
+            if not chg.actual_finish_at:
+                chg.actual_finish_at = now
+            if payload.validation_notes:
+                chg.test_plan = payload.validation_notes
+
+        db.commit()
+        db.refresh(chg)
+
+        # Emit audit event to compliance audit store
+        reason_text = payload.notes.strip() if payload.notes and payload.notes.strip() else rule["default_msg"]
+        try:
+            sp = db.begin_nested()
+            try:
+                db.execute(
+                    text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                    {"tenant_id": str(tenant_id)},
+                )
+                append_audit_event(
+                    db,
+                    {
+                        "id": str(uuid4()),
+                        "idempotency_key": f"itsm:change:{chg.id}:lifecycle:{now.timestamp()}",
+                        "tenant_id": str(tenant_id),
+                        "timestamp": now,
+                        "actor_id": str(actor_id),
+                        "actor_type": "user",
+                        "action": f"itsm.change.{action}",
+                        "policy_id": str(chg.id),
+                        "reason": f"Change {chg.change_number} transitioned from {old_status} to {new_status}: {reason_text}",
+                    },
+                )
+                sp.commit()
+            except Exception as audit_err:
+                sp.rollback()
+                logger.warning("Failed to emit audit event for change lifecycle: %s", audit_err)
         except Exception:
             pass
 

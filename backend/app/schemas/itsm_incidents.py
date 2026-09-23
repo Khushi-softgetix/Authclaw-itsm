@@ -295,6 +295,8 @@ class IncidentResponse(BaseModel):
     category: str
     subcategory: Optional[str] = None
     is_major_incident: bool
+    linked_problem_id: Optional[UUID] = None
+    linked_problem_ticket_number: Optional[str] = None
     sla_policy_id: Optional[UUID] = None
     sla_response_due_at: Optional[datetime] = None
     sla_response_met_at: Optional[datetime] = None

@@ -391,6 +391,230 @@ class TestITSMChangeManagement(unittest.TestCase):
         )
         self.assertEqual(res.status_code, 404)
 
+    def test_16_lifecycle_submit_review(self):
+        # Create a new draft change to test the full lifecycle forward
+        draft_id = uuid4()
+        with self.migrator_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_change_requests (id, tenant_id, change_number, title, description, change_type, risk_level, impact_level, status, service_id, requested_by_id, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, 'CHG-990001', 'Test Lifecycle Progression', 'Testing full lifecycle progression', 'STANDARD', 'LOW', 'LOW', 'DRAFT', :service_id, :req_by, now(), now())"
+                ),
+                {"id": draft_id, "tenant_id": self.tenant_id, "service_id": self.service_id, "req_by": self.pcm_user_id},
+            )
+
+        res = self.client.post(
+            f"/v1/itsm/changes/{draft_id}/transition",
+            headers={"Authorization": f"Bearer {self.pcm_key}"},
+            json={"action": "submit_review", "notes": "Submitting for CAB review"},
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "CAB_REVIEW")
+
+    def test_17_lifecycle_approve(self):
+        # Create a CAB_REVIEW change
+        cab_id = uuid4()
+        with self.migrator_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_change_requests (id, tenant_id, change_number, title, description, change_type, risk_level, impact_level, status, service_id, requested_by_id, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, 'CHG-990002', 'CAB Review to Approved', 'Testing approval', 'STANDARD', 'LOW', 'LOW', 'CAB_REVIEW', :service_id, :req_by, now(), now())"
+                ),
+                {"id": cab_id, "tenant_id": self.tenant_id, "service_id": self.service_id, "req_by": self.pcm_user_id},
+            )
+
+        res = self.client.post(
+            f"/v1/itsm/changes/{cab_id}/transition",
+            headers={"Authorization": f"Bearer {self.pcm_key}"},
+            json={"action": "approve", "notes": "Approved by Change Manager"},
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "APPROVED")
+
+    def test_18_lifecycle_schedule(self):
+        # Create an APPROVED change
+        appr_id = uuid4()
+        with self.migrator_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_change_requests (id, tenant_id, change_number, title, description, change_type, risk_level, impact_level, status, service_id, requested_by_id, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, 'CHG-990003', 'Approved to Scheduled', 'Testing scheduling', 'STANDARD', 'LOW', 'LOW', 'APPROVED', :service_id, :req_by, now(), now())"
+                ),
+                {"id": appr_id, "tenant_id": self.tenant_id, "service_id": self.service_id, "req_by": self.pcm_user_id},
+            )
+
+        start_dt = "2026-10-01T02:00:00Z"
+        end_dt = "2026-10-01T04:00:00Z"
+        res = self.client.post(
+            f"/v1/itsm/changes/{appr_id}/transition",
+            headers={"Authorization": f"Bearer {self.pcm_key}"},
+            json={
+                "action": "schedule",
+                "earliest_start_at": start_dt,
+                "latest_finish_at": end_dt,
+                "notes": "Maintenance window booked",
+            },
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "SCHEDULED")
+        self.assertIsNotNone(data["earliest_start_at"])
+        self.assertIsNotNone(data["latest_finish_at"])
+
+    def test_19_lifecycle_start_implementation(self):
+        # Create a SCHEDULED change
+        sched_id = uuid4()
+        with self.migrator_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_change_requests (id, tenant_id, change_number, title, description, change_type, risk_level, impact_level, status, service_id, requested_by_id, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, 'CHG-990004', 'Scheduled to Implementing', 'Testing start implementation', 'STANDARD', 'LOW', 'LOW', 'SCHEDULED', :service_id, :req_by, now(), now())"
+                ),
+                {"id": sched_id, "tenant_id": self.tenant_id, "service_id": self.service_id, "req_by": self.pcm_user_id},
+            )
+
+        res = self.client.post(
+            f"/v1/itsm/changes/{sched_id}/transition",
+            headers={"Authorization": f"Bearer {self.pcm_key}"},
+            json={"action": "start_implementation", "implementation_notes": "Starting rollout on primary node"},
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "IMPLEMENTING")
+        self.assertIsNotNone(data["actual_start_at"])
+
+    def test_20_lifecycle_complete_with_validation(self):
+        # Create an IMPLEMENTING change
+        impl_id = uuid4()
+        with self.migrator_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_change_requests (id, tenant_id, change_number, title, description, change_type, risk_level, impact_level, status, service_id, requested_by_id, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, 'CHG-990005', 'Implementing to Completed', 'Testing completion', 'STANDARD', 'LOW', 'LOW', 'IMPLEMENTING', :service_id, :req_by, now(), now())"
+                ),
+                {"id": impl_id, "tenant_id": self.tenant_id, "service_id": self.service_id, "req_by": self.pcm_user_id},
+            )
+
+        res = self.client.post(
+            f"/v1/itsm/changes/{impl_id}/transition",
+            headers={"Authorization": f"Bearer {self.pcm_key}"},
+            json={"action": "complete", "validation_notes": "All smoke tests and latency checks passed"},
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "COMPLETED")
+        self.assertIsNotNone(data["actual_finish_at"])
+        self.assertEqual(data["test_plan"], "All smoke tests and latency checks passed")
+
+    def test_21_lifecycle_close(self):
+        # Create a COMPLETED change
+        comp_id = uuid4()
+        with self.migrator_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_change_requests (id, tenant_id, change_number, title, description, change_type, risk_level, impact_level, status, service_id, requested_by_id, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, 'CHG-990006', 'Completed to Closed', 'Testing closure', 'STANDARD', 'LOW', 'LOW', 'COMPLETED', :service_id, :req_by, now(), now())"
+                ),
+                {"id": comp_id, "tenant_id": self.tenant_id, "service_id": self.service_id, "req_by": self.pcm_user_id},
+            )
+
+        res = self.client.post(
+            f"/v1/itsm/changes/{comp_id}/transition",
+            headers={"Authorization": f"Bearer {self.pcm_key}"},
+            json={"action": "close", "notes": "Governance review complete, closing change"},
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "CLOSED")
+
+    def test_22_lifecycle_terminal_closed_rejects_transition(self):
+        # Create a CLOSED change
+        closed_id = uuid4()
+        with self.migrator_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_change_requests (id, tenant_id, change_number, title, description, change_type, risk_level, impact_level, status, service_id, requested_by_id, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, 'CHG-990007', 'Closed Change', 'Terminal check', 'STANDARD', 'LOW', 'LOW', 'CLOSED', :service_id, :req_by, now(), now())"
+                ),
+                {"id": closed_id, "tenant_id": self.tenant_id, "service_id": self.service_id, "req_by": self.pcm_user_id},
+            )
+
+        res = self.client.post(
+            f"/v1/itsm/changes/{closed_id}/transition",
+            headers={"Authorization": f"Bearer {self.pcm_key}"},
+            json={"action": "start_implementation"},
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("terminal state", res.json()["detail"].lower())
+
+    def test_23_lifecycle_reject_returns_to_draft(self):
+        cab_id = uuid4()
+        with self.migrator_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_change_requests (id, tenant_id, change_number, title, description, change_type, risk_level, impact_level, status, service_id, requested_by_id, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, 'CHG-990008', 'CAB Rejection Test', 'Testing rejection to draft', 'STANDARD', 'LOW', 'LOW', 'CAB_REVIEW', :service_id, :req_by, now(), now())"
+                ),
+                {"id": cab_id, "tenant_id": self.tenant_id, "service_id": self.service_id, "req_by": self.pcm_user_id},
+            )
+
+        res = self.client.post(
+            f"/v1/itsm/changes/{cab_id}/transition",
+            headers={"Authorization": f"Bearer {self.pcm_key}"},
+            json={"action": "reject", "notes": "Insufficient backout plan details"},
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "DRAFT")
+
+    def test_24_lifecycle_cancel(self):
+        draft_id = uuid4()
+        with self.migrator_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_change_requests (id, tenant_id, change_number, title, description, change_type, risk_level, impact_level, status, service_id, requested_by_id, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, 'CHG-990009', 'Cancel Test', 'Testing cancellation', 'STANDARD', 'LOW', 'LOW', 'DRAFT', :service_id, :req_by, now(), now())"
+                ),
+                {"id": draft_id, "tenant_id": self.tenant_id, "service_id": self.service_id, "req_by": self.pcm_user_id},
+            )
+
+        res = self.client.post(
+            f"/v1/itsm/changes/{draft_id}/transition",
+            headers={"Authorization": f"Bearer {self.pcm_key}"},
+            json={"action": "cancel", "notes": "Project cancelled by sponsor"},
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.json()
+        self.assertEqual(data["status"], "CANCELLED")
+
+    def test_25_lifecycle_unauthorized_role_rejected(self):
+        res = self.client.post(
+            f"/v1/itsm/changes/{self.change_1_id}/transition",
+            headers={"Authorization": f"Bearer {self.req_key}"},
+            json={"action": "approve"},
+        )
+        self.assertEqual(res.status_code, 403)
+
+    def test_26_lifecycle_tenant_isolation(self):
+        res = self.client.post(
+            f"/v1/itsm/changes/{self.change_b1_id}/transition",
+            headers={"Authorization": f"Bearer {self.pcm_key}"},
+            json={"action": "approve"},
+        )
+        self.assertEqual(res.status_code, 404)
+
+    def test_27_get_change_activities(self):
+        res = self.client.get(
+            f"/v1/itsm/changes/{self.change_1_id}/activities",
+            headers={"Authorization": f"Bearer {self.pcm_key}"},
+        )
+        self.assertEqual(res.status_code, 200)
+        activities = res.json()
+        self.assertIsInstance(activities, list)
+        self.assertGreaterEqual(len(activities), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

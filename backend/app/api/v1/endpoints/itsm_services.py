@@ -153,6 +153,7 @@ DEFAULT_SEED_SERVICES = [
             },
         ],
     },
+]
 
 
 def _seed_default_catalog_if_empty(db: Session, tenant_id: UUID) -> None:

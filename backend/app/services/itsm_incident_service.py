@@ -314,28 +314,75 @@ class IncidentService:
         }
 
     @staticmethod
-    def generate_ticket_number(db: Session, tenant_id: UUID, ticket_type: str = "INCIDENT") -> str:
+    def generate_ticket_number(
+        db: Session,
+        tenant_id: UUID,
+        ticket_type: str = "INCIDENT",
+        prefix: str | None = None,
+    ) -> str:
         """Concurrency-safe atomic sequence generation per tenant using itsm_ticket_counters."""
-        default_prefix = "INC" if ticket_type == "INCIDENT" else ticket_type[:3]
-        query = text(
-            """
-            INSERT INTO public.itsm_ticket_counters (id, tenant_id, ticket_type, prefix, last_number, updated_at)
-            VALUES (gen_random_uuid(), :tenant_id, :ticket_type, :prefix, 1, clock_timestamp())
-            ON CONFLICT (tenant_id, ticket_type)
-            DO UPDATE SET
-                last_number = public.itsm_ticket_counters.last_number + 1,
-                updated_at = clock_timestamp()
-            RETURNING prefix, last_number
-            """
-        )
-        row = db.execute(
-            query,
-            {"tenant_id": str(tenant_id), "ticket_type": ticket_type, "prefix": default_prefix},
+        if prefix:
+            default_prefix = prefix
+        elif ticket_type == "PROBLEM":
+            default_prefix = "PRB"
+        elif ticket_type == "INCIDENT":
+            default_prefix = "INC"
+        else:
+            default_prefix = ticket_type[:3]
+
+        # Check existing max ticket number in itsm_tickets to prevent collisions with seeded data
+        max_row = db.execute(
+            text(
+                "SELECT ticket_number FROM public.itsm_tickets "
+                "WHERE tenant_id = :tenant_id AND ticket_type = :ticket_type "
+                "ORDER BY ticket_number DESC LIMIT 1"
+            ),
+            {"tenant_id": str(tenant_id), "ticket_type": ticket_type},
         ).fetchone()
-        if not row:
-            raise RuntimeError("Failed to generate ticket number")
-        prefix, number = row[0], row[1]
-        return f"{prefix}-{number:06d}"
+
+        init_num = 0
+        if max_row and max_row[0]:
+            try:
+                init_num = int(str(max_row[0]).split("-")[-1])
+            except (ValueError, IndexError):
+                init_num = 0
+
+        for _ in range(50):
+            query = text(
+                """
+                INSERT INTO public.itsm_ticket_counters (id, tenant_id, ticket_type, prefix, last_number, updated_at)
+                VALUES (gen_random_uuid(), :tenant_id, :ticket_type, :prefix, :init_val, clock_timestamp())
+                ON CONFLICT (tenant_id, ticket_type)
+                DO UPDATE SET
+                    last_number = GREATEST(public.itsm_ticket_counters.last_number, :curr_max) + 1,
+                    updated_at = clock_timestamp()
+                RETURNING prefix, last_number
+                """
+            )
+            row = db.execute(
+                query,
+                {
+                    "tenant_id": str(tenant_id),
+                    "ticket_type": ticket_type,
+                    "prefix": default_prefix,
+                    "init_val": init_num + 1 if init_num > 0 else 1,
+                    "curr_max": init_num,
+                },
+            ).fetchone()
+            if not row:
+                raise RuntimeError("Failed to generate ticket number")
+            pfx, number = row[0], row[1]
+            candidate = f"{pfx}-{number:06d}"
+
+            # Safety check: ensure candidate is truly unique
+            exists = db.execute(
+                text("SELECT 1 FROM public.itsm_tickets WHERE tenant_id = :tenant_id AND ticket_number = :num"),
+                {"tenant_id": str(tenant_id), "num": candidate},
+            ).fetchone()
+            if not exists:
+                return candidate
+
+        raise RuntimeError(f"Failed to generate unique ticket number for {ticket_type}")
 
     @staticmethod
     def _validate_user_in_tenant(db: Session, tenant_id: UUID, user_id: UUID, role_context: str = "User") -> User:
@@ -797,6 +844,11 @@ class IncidentService:
     def get_incident(cls, db: Session, tenant_id: UUID, incident_id: UUID) -> ITSMTicket:
         ticket = (
             db.query(ITSMTicket)
+            .options(
+                joinedload(ITSMTicket.service),
+                joinedload(ITSMTicket.assignee),
+                joinedload(ITSMTicket.linked_problem),
+            )
             .filter(
                 ITSMTicket.id == incident_id,
                 ITSMTicket.tenant_id == tenant_id,

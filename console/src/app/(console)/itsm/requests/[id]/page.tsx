@@ -23,6 +23,7 @@ import IncidentPriorityBadge from "@/components/itsm/incident-priority-badge";
 import IncidentStatusBadge from "@/components/itsm/incident-status-badge";
 import ActivityTimeline from "@/components/itsm/activity-timeline";
 import StatusModal from "@/components/itsm/status-modal";
+import AttachmentSection, { AttachmentItem } from "@/components/itsm/attachment-section";
 
 function formatFieldLabel(key: string): string {
   return key
@@ -43,6 +44,7 @@ export default function ServiceRequestDetailPage() {
 
   const [request, setRequest] = useState<ServiceRequest | null>(null);
   const [activities, setActivities] = useState<IncidentActivity[]>([]);
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [errorType, setErrorType] = useState<"unauthorized" | "not_found" | "server_error" | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
@@ -56,9 +58,10 @@ export default function ServiceRequestDetailPage() {
       setLoading(true);
       setErrorType(null);
 
-      const [reqRes, actRes] = await Promise.all([
+      const [reqRes, actRes, attRes] = await Promise.all([
         fetch(`/api/itsm/requests/${requestId}`),
         fetch(`/api/itsm/requests/${requestId}/activities`),
+        fetch(`/api/itsm/requests/${requestId}/attachments`),
       ]);
 
       if (reqRes.status === 401 || actRes.status === 401) {
@@ -87,6 +90,11 @@ export default function ServiceRequestDetailPage() {
       if (actRes.ok) {
         const actData = await actRes.json();
         setActivities(Array.isArray(actData) ? actData : []);
+      }
+
+      if (attRes.ok) {
+        const attData = await attRes.json();
+        setAttachments(Array.isArray(attData) ? attData : []);
       }
     } catch {
       setErrorType("server_error");
@@ -332,6 +340,15 @@ export default function ServiceRequestDetailPage() {
               </p>
             )}
           </div>
+
+          {/* Attachments Section */}
+          <AttachmentSection
+            ticketId={request.id}
+            ticketType="requests"
+            attachments={attachments}
+            onAttachmentUploaded={() => fetchRequestData()}
+            canUpload={true}
+          />
 
           {/* Activity & Collaboration Section */}
           <div className="bg-white rounded-2xl border border-[#E6E9F0] p-6 shadow-xs space-y-4" id="request-activity-section">

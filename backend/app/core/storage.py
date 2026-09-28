@@ -19,13 +19,18 @@ def get_storage_base_dir() -> Path:
 class LocalStorageEngine:
     MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10 MB limit
 
+    ALLOWED_EXTENSIONS = {
+        ".png", ".jpg", ".jpeg", ".webp",
+        ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".txt", ".csv", ".log",
+    }
+
     @classmethod
     def save_file(cls, tenant_id: UUID, file_name: str, content: bytes) -> tuple[str, str, int]:
         """Validates, hashes, and stores file to local disk outside PostgreSQL.
 
         Returns (storage_path, checksum_sha256, file_size_bytes).
         """
-        if not content:
+        if not content or len(content) == 0:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Uploaded file is empty.",
@@ -40,7 +45,17 @@ class LocalStorageEngine:
         # Sanitize filename (prevent path traversal)
         safe_filename = os.path.basename(file_name).strip()
         if not safe_filename or safe_filename in {".", ".."}:
-            safe_filename = "attachment.bin"
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid file name.",
+            )
+
+        ext = Path(safe_filename).suffix.lower()
+        if not ext or ext not in cls.ALLOWED_EXTENSIONS:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"File type '{ext}' is not supported. Allowed formats: PNG, JPG, JPEG, WEBP, PDF, DOCX, XLSX, TXT.",
+            )
 
         checksum_sha256 = hashlib.sha256(content).hexdigest()
 

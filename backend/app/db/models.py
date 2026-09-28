@@ -1564,6 +1564,10 @@ class ITSMAttachment(Base):
     tenant = relationship("Tenant")
     uploaded_by = relationship("User")
 
+    @property
+    def uploaded_by_email(self) -> str | None:
+        return self.uploaded_by.email if self.uploaded_by else None
+
     __table_args__ = (
         Index("idx_itsm_attach_target", "tenant_id", "target_type", "target_id"),
     )

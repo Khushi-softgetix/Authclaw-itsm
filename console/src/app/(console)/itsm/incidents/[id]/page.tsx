@@ -28,14 +28,7 @@ import IncidentStepper from "@/components/itsm/incident-stepper";
 import ActivityTimeline from "@/components/itsm/activity-timeline";
 import StatusModal from "@/components/itsm/status-modal";
 import ReportRecurringProblemModal from "@/components/itsm/report-recurring-problem-modal";
-
-interface AttachmentItem {
-  id: string;
-  file_name: string;
-  file_size_bytes: number;
-  mime_type: string;
-  created_at: string;
-}
+import AttachmentSection, { AttachmentItem } from "@/components/itsm/attachment-section";
 
 export default function IncidentDetailPage() {
   const params = useParams();
@@ -439,40 +432,16 @@ export default function IncidentDetailPage() {
                 </div>
               </div>
 
-              {/* Attached Files Card for Agent */}
-              {attachments.length > 0 && (
-                <div className="pt-2 border-t border-[#E6E9F0] space-y-2">
-                  <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
-                    Attachments ({attachments.length})
-                  </span>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    {attachments.map((att) => (
-                      <a
-                        key={att.id}
-                        href={`/api/itsm/attachments/${att.id}/download`}
-                        download={att.file_name}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="flex items-center justify-between p-3 rounded-xl border border-[#E6E9F0] bg-[#FBFAF9] hover:bg-[#F3E8FF]/30 hover:border-[#6D28D9] transition group"
-                      >
-                        <div className="flex items-center gap-2.5 truncate">
-                          <Paperclip className="w-4 h-4 text-[#6D28D9] shrink-0" />
-                          <div className="truncate">
-                            <span className="text-xs font-semibold text-[#0E1726] group-hover:text-[#6D28D9] block truncate">
-                              {att.file_name}
-                            </span>
-                            <span className="text-[10px] text-[#6B7488]">
-                              {(att.file_size_bytes / 1024).toFixed(1)} KB
-                            </span>
-                          </div>
-                        </div>
-                        <Download className="w-4 h-4 text-[#8C95A8] group-hover:text-[#6D28D9] shrink-0" />
-                      </a>
-                    ))}
-                  </div>
-                </div>
-              )}
             </div>
+
+            {/* Attached Files Section for Agent */}
+            <AttachmentSection
+              ticketId={incident.id}
+              ticketType="incidents"
+              attachments={attachments}
+              onAttachmentUploaded={() => fetchIncidentData()}
+              canUpload={true}
+            />
 
             {/* Step 4: Resolution Information Card */}
             {(incident.status === "RESOLVED" || incident.status === "CLOSED") && (
@@ -763,40 +732,16 @@ export default function IncidentDetailPage() {
               </p>
             </div>
 
-            {/* Attached Files Card */}
-            {attachments.length > 0 && (
-              <div className="pt-2 border-t border-[#E6E9F0] space-y-2">
-                <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
-                  Attachments ({attachments.length})
-                </span>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  {attachments.map((att) => (
-                    <a
-                      key={att.id}
-                      href={`/api/itsm/attachments/${att.id}/download`}
-                      download={att.file_name}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="flex items-center justify-between p-3 rounded-xl border border-[#E6E9F0] bg-[#FBFAF9] hover:bg-[#F3E8FF]/30 hover:border-[#6D28D9] transition group"
-                    >
-                      <div className="flex items-center gap-2.5 truncate">
-                        <Paperclip className="w-4 h-4 text-[#6D28D9] shrink-0" />
-                        <div className="truncate">
-                          <span className="text-xs font-semibold text-[#0E1726] group-hover:text-[#6D28D9] block truncate">
-                            {att.file_name}
-                          </span>
-                          <span className="text-[10px] text-[#6B7488]">
-                            {(att.file_size_bytes / 1024).toFixed(1)} KB
-                          </span>
-                        </div>
-                      </div>
-                      <Download className="w-4 h-4 text-[#8C95A8] group-hover:text-[#6D28D9] shrink-0" />
-                    </a>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
+
+          {/* Attached Files Section for Requester */}
+          <AttachmentSection
+            ticketId={incident.id}
+            ticketType="incidents"
+            attachments={attachments}
+            onAttachmentUploaded={() => fetchIncidentData()}
+            canUpload={true}
+          />
 
           {/* Resolution Information Card */}
           {(incident.status === "RESOLVED" || incident.status === "CLOSED") && (

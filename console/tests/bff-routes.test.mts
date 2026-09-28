@@ -61,6 +61,10 @@ test("maps approved BFF routes and rejects broader proxy access", () => {
   assert.deepEqual(resolveBffRoute("POST", "itsm/admin/sla-policies"), { backendPath: "/v1/itsm/admin/sla-policies", body: "json", status: 201 });
   assert.deepEqual(resolveBffRoute("GET", "itsm/admin/business-calendars"), { backendPath: "/v1/itsm/admin/business-calendars", body: "none", status: undefined });
   assert.deepEqual(resolveBffRoute("POST", "itsm/admin/business-calendars"), { backendPath: "/v1/itsm/admin/business-calendars", body: "json", status: 201 });
-  assert.deepEqual(resolveBffRoute("GET", "itsm/admin/settings"), { backendPath: "/v1/itsm/admin/settings", body: "none", status: undefined });
+  assert.deepEqual(resolveBffRoute("GET", "itsm/attachments/att-1/download"), { backendPath: "/v1/itsm/attachments/att-1/download", body: "none", status: undefined });
+  assert.deepEqual(resolveBffRoute("GET", "itsm/incidents/inc-1/attachments"), { backendPath: "/v1/itsm/incidents/inc-1/attachments", body: "none", status: undefined });
+  assert.deepEqual(resolveBffRoute("POST", "itsm/incidents/inc-1/attachments"), { backendPath: "/v1/itsm/incidents/inc-1/attachments", body: "json", status: 201 });
+  assert.deepEqual(resolveBffRoute("GET", "itsm/requests/req-1/attachments"), { backendPath: "/v1/itsm/requests/req-1/attachments", body: "none", status: undefined });
+  assert.deepEqual(resolveBffRoute("POST", "itsm/requests/req-1/attachments"), { backendPath: "/v1/itsm/requests/req-1/attachments", body: "json", status: 201 });
   assert.equal(resolveBffRoute("GET", "itsm/admin/slas"), null);
 });

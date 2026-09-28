@@ -21,6 +21,7 @@ class AttachmentResponse(BaseModel):
     is_quarantined: bool = False
     quarantine_reason: Optional[str] = None
     uploaded_by_id: UUID
+    uploaded_by_email: Optional[str] = None
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

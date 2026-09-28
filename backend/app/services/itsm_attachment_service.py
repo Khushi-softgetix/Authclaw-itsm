@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.core.storage import LocalStorageEngine
 from app.db.models import ITSMAttachment, ITSMTicket
@@ -68,7 +68,13 @@ class ITSMAttachmentService:
         db.add(attachment)
         db.commit()
         db.refresh(attachment)
-        return attachment
+        return (
+            db.query(ITSMAttachment)
+            .options(joinedload(ITSMAttachment.uploaded_by))
+            .filter(ITSMAttachment.id == attachment.id)
+            .first()
+            or attachment
+        )
 
     @classmethod
     def list_attachments_for_target(
@@ -80,6 +86,7 @@ class ITSMAttachmentService:
     ) -> list[ITSMAttachment]:
         return (
             db.query(ITSMAttachment)
+            .options(joinedload(ITSMAttachment.uploaded_by))
             .filter(
                 ITSMAttachment.tenant_id == tenant_id,
                 ITSMAttachment.target_type == target_type.strip().upper(),
@@ -98,6 +105,7 @@ class ITSMAttachmentService:
     ) -> tuple[ITSMAttachment, Path]:
         attachment = (
             db.query(ITSMAttachment)
+            .options(joinedload(ITSMAttachment.uploaded_by))
             .filter(
                 ITSMAttachment.id == attachment_id,
                 ITSMAttachment.tenant_id == tenant_id,

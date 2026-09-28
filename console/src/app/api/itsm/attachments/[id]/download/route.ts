@@ -5,14 +5,18 @@ const BACKEND_URL = process.env.API_URL || "http://localhost:8000";
 
 type Context = { params: Promise<{ id: string }> };
 
-export async function GET(_request: Request, context: Context) {
+export async function GET(request: Request, context: Context) {
   const { id } = await context.params;
   const sessionCtx = await getSessionContext();
   if ("response" in sessionCtx) return sessionCtx.response;
 
   try {
+    const { searchParams } = new URL(request.url);
+    const preview = searchParams.get("preview");
+    const query = preview ? `?preview=${encodeURIComponent(preview)}` : "";
+
     const token = sessionCtx.session.apiKey;
-    const res = await fetch(`${BACKEND_URL}/v1/itsm/attachments/${id}/download`, {
+    const res = await fetch(`${BACKEND_URL}/v1/itsm/attachments/${id}/download${query}`, {
       method: "GET",
       headers: {
         Authorization: `Bearer ${token}`,

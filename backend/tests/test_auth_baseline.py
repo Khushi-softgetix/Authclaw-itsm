@@ -697,6 +697,9 @@ def test_oidc_validation_failure_emits_categorical_audit(monkeypatch, error, rea
 
 def test_oidc_success_emits_actor_and_tenant_audit(monkeypatch):
     db = MagicMock()
+    db.execute.return_value.first.return_value = SimpleNamespace(
+        itsm_role=None, has_itsm_access=False, has_governance_access=True,
+    )
     tenant = MagicMock(id="00000000-0000-4000-8000-000000000001")
     tenant.name = "tenant"
     user = MagicMock(id="00000000-0000-4000-8000-000000000002", email="user@example.com")
@@ -745,6 +748,9 @@ def test_oidc_success_emits_actor_and_tenant_audit(monkeypatch):
 )
 def test_password_login_preserves_persisted_invitation_role(monkeypatch, role, scopes):
     db = MagicMock()
+    db.execute.return_value.first.return_value = SimpleNamespace(
+        itsm_role=None, has_itsm_access=False, has_governance_access=True,
+    )
     tenant = MagicMock(
         id="00000000-0000-4000-8000-000000000001",
     )

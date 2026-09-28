@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import type { LucideIcon } from "lucide-react";
 import Link from "next/link";
 import { cookies } from "next/headers";
 import {
@@ -31,7 +32,7 @@ interface RoleDefinition {
   tagline: string;
   description: string;
   dashboardPath: string;
-  icon: any;
+  icon: LucideIcon;
   color: string;
   bgColor: string;
   borderColor: string;

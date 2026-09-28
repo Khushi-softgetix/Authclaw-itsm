@@ -100,8 +100,8 @@ export default function AdminTeamsPage() {
   };
 
   useEffect(() => {
-    fetchTeams();
-    fetchTenantUsers();
+    const request = window.setTimeout(() => { void fetchTeams(); void fetchTenantUsers(); }, 0);
+    return () => window.clearTimeout(request);
   }, []);
 
   const openCreateModal = () => {

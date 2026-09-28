@@ -56,7 +56,8 @@ export default function IncidentListPage() {
   }, [search]);
 
   useEffect(() => {
-    fetchIncidents();
+    const request = window.setTimeout(() => void fetchIncidents(), 0);
+    return () => window.clearTimeout(request);
   }, [fetchIncidents]);
 
   const filteredIncidents = incidents.filter((inc) => {

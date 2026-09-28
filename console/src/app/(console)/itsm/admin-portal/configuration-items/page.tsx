@@ -94,8 +94,8 @@ export default function AdminConfigurationItemsPage() {
   };
 
   useEffect(() => {
-    fetchItems();
-    fetchServices();
+    const request = window.setTimeout(() => { void fetchItems(); void fetchServices(); }, 0);
+    return () => window.clearTimeout(request);
   }, []);
 
   const openCreateModal = () => {

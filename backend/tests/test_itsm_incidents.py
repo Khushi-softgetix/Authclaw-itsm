@@ -168,6 +168,117 @@ class IncidentOperationsUnitTest(unittest.TestCase):
         start = datetime(2026, 1, 1, 16, tzinfo=timezone.utc)
         self.assertEqual(add_business_minutes(start, 120, calendar), datetime(2026, 1, 5, 10, tzinfo=timezone.utc))
 
+    def test_business_calendar_skips_closed_time_and_holidays(self):
+        calendar = SimpleNamespace(
+            timezone="UTC",
+            weekly_hours={day: {"start": "09:00", "end": "17:00"} for day in ("monday", "tuesday", "wednesday", "thursday", "friday")},
+            holidays=["2026-01-02"],
+        )
+        start = datetime(2026, 1, 1, 16, tzinfo=timezone.utc)
+        self.assertEqual(add_business_minutes(start, 120, calendar), datetime(2026, 1, 5, 10, tzinfo=timezone.utc))
+
+    def test_invalid_classification_is_rejected_and_valid_values_normalized(self):
+        for field in ("impact", "urgency"):
+            with self.subTest(field=field):
+                with self.assertRaises(ValidationError):
+                    IncidentCreateRequest(title="Incident", description="Evidence", **{field: "INVALID"})
+                with self.assertRaises(ValidationError):
+                    IncidentUpdateRequest(**{field: "INVALID"})
+                self.assertEqual(getattr(IncidentUpdateRequest(**{field: " high "}), field), "HIGH")
+
+    def test_resume_preserves_remaining_working_time_over_weekend(self):
+        paused = datetime(2026, 1, 2, 16, tzinfo=timezone.utc)  # Friday
+        resumed = datetime(2026, 1, 5, 10, tzinfo=timezone.utc)  # Monday
+        ticket = SimpleNamespace(
+            sla_paused_at=paused, sla_accumulated_pause_seconds=0,
+            sla_resolution_due_at=datetime(2026, 1, 5, 10, tzinfo=timezone.utc),
+            sla_response_due_at=datetime(2026, 1, 2, 16, 30, tzinfo=timezone.utc),
+            sla_policy=SimpleNamespace(calendar=self.calendar()),
+        )
+        resume_sla(ticket, resumed)
+        self.assertEqual(ticket.sla_resolution_due_at, datetime(2026, 1, 5, 12, tzinfo=timezone.utc))
+        self.assertEqual(ticket.sla_response_due_at, datetime(2026, 1, 5, 10, 30, tzinfo=timezone.utc))
+        self.assertIsNone(ticket.sla_paused_at)
+
+    def test_resume_does_not_erase_existing_breach_or_move_completed_response(self):
+        due = datetime(2026, 1, 1, 9, tzinfo=timezone.utc)
+        ticket = SimpleNamespace(
+            sla_paused_at=due + timedelta(hours=1), sla_accumulated_pause_seconds=0,
+            sla_resolution_due_at=due, sla_response_due_at=due,
+            sla_response_met_at=due, sla_policy=None,
+        )
+        resume_sla(ticket, due + timedelta(hours=2))
+        self.assertEqual(ticket.sla_resolution_due_at, due)
+        self.assertEqual(ticket.sla_response_due_at, due)
+
+    def test_calendar_preserves_seconds(self):
+        start = datetime(2026, 1, 2, 16, 59, 30, tzinfo=timezone.utc)
+        self.assertEqual(add_business_minutes(start, 1, self.calendar()),
+                         datetime(2026, 1, 5, 9, 0, 30, tzinfo=timezone.utc))
+
+    def test_sla_is_breached_after_deadline_even_outside_working_hours(self):
+        due = datetime(2026, 1, 2, 17, tzinfo=timezone.utc)
+        ticket = SimpleNamespace(sla_resolution_due_at=due, sla_response_due_at=None,
+                                 created_at=due - timedelta(hours=8),
+                                 sla_policy=SimpleNamespace(calendar=self.calendar(), resolution_target_minutes=480))
+        self.assertEqual(_sla(ticket, due + timedelta(hours=1))["status"], "BREACHED")
+
+    def test_calendar_uses_elapsed_utc_time_across_dst(self):
+        calendar = SimpleNamespace(timezone="America/New_York", holidays=[],
+                                   weekly_hours={"sunday": {"start": "00:00", "end": "05:00"}})
+        start = datetime(2026, 3, 8, 5, tzinfo=timezone.utc)
+        end = datetime(2026, 3, 8, 9, tzinfo=timezone.utc)
+        self.assertEqual(business_seconds_between(start, end, calendar), 4 * 3600)
+        self.assertEqual(add_business_minutes(start, 180, calendar), start + timedelta(hours=3))
+
+    def test_reopen_clears_completion_and_allows_sla_pause(self):
+        resolved = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        ticket = SimpleNamespace(id=uuid4(), status="RESOLVED", resolved_at=resolved,
+                                 sla_resolution_met_at=resolved, sla_policy_id=uuid4(),
+                                 sla_paused_at=None, is_major_incident=False,
+                                 resolution_code="FIXED", resolution_summary="Previous evidence")
+        db = MagicMock()
+        with patch.object(IncidentService, "get_incident", return_value=ticket), \
+             patch.object(IncidentService, "_record_activity"), \
+             patch.object(IncidentService, "_emit_audit_event"):
+            IncidentService.change_status(db, uuid4(), uuid4(), uuid4(),
+                                          IncidentStatusUpdateRequest(status="IN_PROGRESS"))
+        self.assertIsNone(ticket.resolved_at)
+        self.assertIsNone(ticket.sla_resolution_met_at)
+        self.assertEqual(ticket.resolution_summary, "Previous evidence")
+        pause_sla(ticket, resolved + timedelta(days=1))
+        self.assertIsNotNone(ticket.sla_paused_at)
+
+
+class IncidentOperationsUnitTest(unittest.TestCase):
+    def ticket(self, due=None, created=None):
+        return SimpleNamespace(sla_resolution_due_at=due, sla_response_due_at=None, created_at=created or datetime(2026, 1, 1, tzinfo=timezone.utc))
+
+    def test_sla_states_are_deterministic(self):
+        now = datetime(2026, 1, 1, 7, tzinfo=timezone.utc)
+        created = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        self.assertEqual(_sla(self.ticket(created + timedelta(hours=10), created), now)["status"], "WITHIN_SLA")
+        self.assertEqual(_sla(self.ticket(created + timedelta(hours=10), created), datetime(2026, 1, 1, 8, tzinfo=timezone.utc))["status"], "AT_RISK")
+        self.assertEqual(_sla(self.ticket(created + timedelta(hours=10), created), datetime(2026, 1, 1, 8, 1, tzinfo=timezone.utc))["status"], "AT_RISK")
+        self.assertEqual(_sla(self.ticket(created + timedelta(hours=10), created), datetime(2026, 1, 1, 10, 1, tzinfo=timezone.utc))["status"], "BREACHED")
+        self.assertEqual(_sla(self.ticket(), now)["status"], "NO_SLA")
+
+    def test_idle_policy_boundary_is_four_hours(self):
+        now = datetime(2026, 1, 1, 12, tzinfo=timezone.utc)
+        self.assertEqual(IDLE_THRESHOLD, timedelta(hours=4))
+        self.assertFalse(now - (now - timedelta(hours=3, minutes=59)) >= IDLE_THRESHOLD)
+        self.assertTrue(now - (now - timedelta(hours=4)) >= IDLE_THRESHOLD)
+        self.assertTrue(now - (now - timedelta(hours=4, seconds=1)) >= IDLE_THRESHOLD)
+
+    def test_business_calendar_skips_closed_time_and_holidays(self):
+        calendar = SimpleNamespace(
+            timezone="UTC",
+            weekly_hours={day: {"start": "09:00", "end": "17:00"} for day in ("monday", "tuesday", "wednesday", "thursday", "friday")},
+            holidays=["2026-01-02"],
+        )
+        start = datetime(2026, 1, 1, 16, tzinfo=timezone.utc)
+        self.assertEqual(add_business_minutes(start, 120, calendar), datetime(2026, 1, 5, 10, tzinfo=timezone.utc))
+
 class ITSMIncidentTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -731,47 +842,156 @@ class ITSMIncidentTestCase(unittest.TestCase):
         declared = self.client.post(
             f"/v1/itsm/incidents/{incident_id}/major-incident",
             json={
+                "communication_lead_id": str(user_id),
                 "communication_channel": "war-room",
                 "impacted_business_units": ["Payments"],
                 "executive_summary": "Customer payments unavailable",
-                "bridge_url": "https://bridge.example.com/payments-war-room",
+                "stakeholders": [
+                    {"name": "Payments Operations", "role": "Service owner", "contact": "#payments-ops"}
+                ],
+                "restoration_checkpoints": [
+                    {"title": "Restore payment authorization", "owner_id": str(user_id)}
+                ],
+                "command_decisions": [
+                    {
+                        "summary": "Prioritize payment authorization restoration",
+                        "owner_id": str(user_id),
+                        "context": "Authorization failures block all card payments",
+                    }
+                ],
+                "command_tasks": [
+                    {"title": "Validate payment recovery", "owner_id": str(user_id)}
+                ],
+                "command_communications": [
+                    {
+                        "audience": "Customer support leadership",
+                        "channel": "Incident status channel",
+                        "message": "Payments remain unavailable; restoration is in progress.",
+                        "approver_id": str(user_id),
+                        "status": "APPROVED",
+                        "recorded_at": "2026-09-11T10:00:00Z",
+                    }
+                ],
             },
             headers=headers,
         )
         self.assertEqual(declared.status_code, 201, declared.text)
         self.assertEqual(declared.json()["communication_channel"], "war-room")
-        self.assertEqual(declared.json()["bridge_url"], "https://bridge.example.com/payments-war-room")
-        self.assertEqual(declared.json()["executive_summary"], "Customer payments unavailable")
-        self.assertEqual(declared.json()["impacted_business_units"], ["Payments"])
-        self.assertEqual(declared.json()["postmortem_status"], "PENDING")
+        self.assertEqual(declared.json()["communication_lead_id"], str(user_id))
+        self.assertEqual(declared.json()["restoration_checkpoints"][0]["title"], "Restore payment authorization")
+        self.assertEqual(declared.json()["command_decisions"][0]["summary"], "Prioritize payment authorization restoration")
+        self.assertEqual(declared.json()["command_decisions"][0]["owner_id"], str(user_id))
+        self.assertEqual(declared.json()["command_decisions"][0]["context"], "Authorization failures block all card payments")
+        self.assertIsNotNone(declared.json()["command_decisions"][0]["recorded_at"])
+        self.assertEqual(declared.json()["command_tasks"][0]["owner_id"], str(user_id))
+        self.assertEqual(declared.json()["stakeholders"][0]["contact"], "#payments-ops")
+        self.assertEqual(declared.json()["command_communications"][0]["status"], "APPROVED")
+        self.assertEqual(declared.json()["command_communications"][0]["approver_id"], str(user_id))
 
-        updated = self.client.patch(
+        command_state = declared.json()
+        completed_at = "2026-09-11T10:30:00Z"
+        command_update = self.client.patch(
             f"/v1/itsm/incidents/{incident_id}/major-incident",
-            json={"postmortem_status": "IN_PROGRESS", "bridge_url": "https://bridge.example.com/updated"},
+            json={
+                "restoration_checkpoints": [
+                    {**command_state["restoration_checkpoints"][0], "completed_at": completed_at}
+                ],
+                "command_decisions": command_state["command_decisions"],
+                "command_tasks": [
+                    {**command_state["command_tasks"][0], "completed_at": completed_at}
+                ],
+                "stakeholders": [
+                    {**command_state["stakeholders"][0], "contact": "payments-incident-channel"}
+                ],
+                "command_communications": [
+                    {
+                        **command_state["command_communications"][0],
+                        "status": "COMMUNICATED",
+                    }
+                ],
+            },
             headers=headers,
         )
-        self.assertEqual(updated.status_code, 200, updated.text)
-        self.assertEqual(updated.json()["postmortem_status"], "IN_PROGRESS")
-        self.assertEqual(updated.json()["bridge_url"], "https://bridge.example.com/updated")
-
+        self.assertEqual(command_update.status_code, 200, command_update.text)
+        self.assertIsNotNone(command_update.json()["restoration_checkpoints"][0]["completed_at"])
+        self.assertIsNotNone(command_update.json()["command_tasks"][0]["completed_at"])
+        self.assertEqual(command_update.json()["stakeholders"][0]["contact"], "payments-incident-channel")
+        self.assertEqual(command_update.json()["command_communications"][0]["status"], "COMMUNICATED")
         read_command = self.client.get(
             f"/v1/itsm/incidents/{incident_id}/major-incident",
             headers=headers,
         )
         self.assertEqual(read_command.status_code, 200, read_command.text)
-        self.assertEqual(read_command.json()["postmortem_status"], "IN_PROGRESS")
-        self.assertEqual(read_command.json()["bridge_url"], "https://bridge.example.com/updated")
+        self.assertEqual(read_command.json()["command_decisions"], command_state["command_decisions"])
+        self.assertEqual(read_command.json()["stakeholders"][0]["contact"], "payments-incident-channel")
+        self.assertEqual(read_command.json()["command_communications"][0]["status"], "COMMUNICATED")
+
+        updated = self.client.patch(f"/v1/itsm/incidents/{incident_id}/major-incident", json={"postmortem_status": "IN_PROGRESS"}, headers=headers)
+        self.assertEqual(updated.status_code, 200, updated.text)
+        self.assertEqual(updated.json()["postmortem_status"], "IN_PROGRESS")
 
         invalid_pir = self.client.patch(f"/v1/itsm/incidents/{incident_id}/major-incident", json={"postmortem_status": "MADE_UP"}, headers=headers)
         self.assertEqual(invalid_pir.status_code, 422)
 
         _, foreign_user_id, foreign_key = self.create_fixture_tenant("major_foreign")
-        invalid_commander = self.client.patch(
+        invalid_owner = self.client.patch(
             f"/v1/itsm/incidents/{incident_id}/major-incident",
-            json={"incident_commander_id": str(foreign_user_id)},
+            json={"command_tasks": [{"title": "Cross-tenant task", "owner_id": str(foreign_user_id)}]},
             headers=headers,
         )
-        self.assertEqual(invalid_commander.status_code, 400)
+        self.assertEqual(invalid_owner.status_code, 400)
+        invalid_decision_owner = self.client.patch(
+            f"/v1/itsm/incidents/{incident_id}/major-incident",
+            json={"command_decisions": [{"summary": "Cross-tenant decision", "owner_id": str(foreign_user_id)}]},
+            headers=headers,
+        )
+        self.assertEqual(invalid_decision_owner.status_code, 400)
+        invalid_communication_approver = self.client.patch(
+            f"/v1/itsm/incidents/{incident_id}/major-incident",
+            json={
+                "command_communications": [
+                    {
+                        "audience": "Executives",
+                        "channel": "Email",
+                        "message": "Cross-tenant approval must be rejected",
+                        "approver_id": str(foreign_user_id),
+                    }
+                ]
+            },
+            headers=headers,
+        )
+        self.assertEqual(invalid_communication_approver.status_code, 400)
+        invalid_communication_status = self.client.patch(
+            f"/v1/itsm/incidents/{incident_id}/major-incident",
+            json={
+                "command_communications": [
+                    {
+                        "audience": "Executives",
+                        "channel": "Email",
+                        "message": "Invalid status",
+                        "status": "DELIVERED",
+                    }
+                ]
+            },
+            headers=headers,
+        )
+        self.assertEqual(invalid_communication_status.status_code, 422)
+        for label, payload in (
+            ("communication lead", {"communication_lead_id": str(foreign_user_id)}),
+            (
+                "restoration checkpoint",
+                {"restoration_checkpoints": [{"title": "Foreign checkpoint", "owner_id": str(foreign_user_id)}]},
+            ),
+        ):
+            with self.subTest(cross_tenant_owner=label):
+                self.assertEqual(
+                    self.client.patch(
+                        f"/v1/itsm/incidents/{incident_id}/major-incident",
+                        json=payload,
+                        headers=headers,
+                    ).status_code,
+                    400,
+                )
 
         foreign_headers = {"Authorization": f"Bearer {foreign_key}"}
         foreign_incident = self.client.post(
@@ -835,14 +1055,27 @@ class ITSMIncidentTestCase(unittest.TestCase):
         self.assertIn(str(agent_id), {item["id"] for item in references["users"]})
         self.assertNotIn(str(agent_id), {item["id"] for item in references["commanders"]})
         self.assertIn(str(manager_id), {item["id"] for item in references["commanders"]})
-
+        communication = {"id": str(uuid4()), "audience": "Service owners", "channel": "Bridge", "message": "Recovery is being validated", "status": "APPROVED", "recorded_at": "2026-09-15T10:00:00Z"}
+        rejected = self.client.patch(path, json={"command_communications": [communication]}, headers=headers)
+        self.assertEqual(rejected.status_code, 400, rejected.text)
+        rejected = self.client.patch(path, json={"command_communications": [{**communication, "approver_id": str(agent_id)}]}, headers=headers)
+        self.assertEqual(rejected.status_code, 400, rejected.text)
+        approved = self.client.patch(path, json={"command_communications": [{**communication, "approver_id": str(manager_id)}]}, headers=headers)
+        self.assertEqual(approved.status_code, 200, approved.text)
+        self.assertEqual(approved.json()["command_communications"][0]["status"], "APPROVED")
         other_manager_id, other_key = uuid4(), f"test-key-command-review-{uuid4().hex}"
         with self.migrator_engine.begin() as conn:
             conn.execute(text("INSERT INTO public.users (id,tenant_id,email,role,platform_role,is_active,created_at,updated_at) VALUES (:id,:tenant,'reviewer-controls@example.com','admin','NONE',true,now(),now())"), {"id": other_manager_id, "tenant": tenant_id})
             conn.execute(text("INSERT INTO public.itsm_user_access (id,tenant_id,user_id,itsm_role,has_itsm_access,has_governance_access,created_at,updated_at) VALUES (:id,:tenant,:user,'INCIDENT_MANAGER',true,false,now(),now())"), {"id": uuid4(), "tenant": tenant_id, "user": other_manager_id})
             conn.execute(text("INSERT INTO public.api_keys (id,tenant_id,key_hash,name,scopes,is_active,created_by,created_at,updated_at) VALUES (:id,:tenant,:hash,'reviewer-controls',ARRAY['read','write','admin'],true,:user,now(),now())"), {"id": uuid4(), "tenant": tenant_id, "hash": hash_key(other_key), "user": other_manager_id})
         other_headers = {"Authorization": f"Bearer {other_key}"}
-
+        saved = approved.json()["command_communications"][0]
+        retained = self.client.patch(path, json={"command_communications": [saved]}, headers=other_headers)
+        self.assertEqual(retained.status_code, 200, retained.text)
+        forged = self.client.patch(path, json={"command_communications": [{**saved, "message": "Changed without named approval"}]}, headers=other_headers)
+        self.assertEqual(forged.status_code, 403, forged.text)
+        fresh = self.client.patch(path, json={"command_communications": [{**saved, "id": str(uuid4())}]}, headers=other_headers)
+        self.assertEqual(fresh.status_code, 403, fresh.text)
         handed_off = self.client.patch(path, json={"incident_commander_id": str(other_manager_id)}, headers=headers)
         self.assertEqual(handed_off.status_code, 200, handed_off.text)
         self.assertEqual(self.client.get(path, headers=other_headers).status_code, 200)
@@ -1064,29 +1297,28 @@ class ITSMIncidentTestCase(unittest.TestCase):
         self.assertEqual(assigned.status_code, 200, assigned.text)
         classified = self.client.patch(
             f"/v1/itsm/incidents/{incident_id}",
-            json={"service_id": str(service_id), "category_id": str(category_id)},
+            json={"service_id": str(service_id), "category_id": str(category_id), "configuration_item_id": str(ci_id)},
             headers=headers,
         )
         self.assertEqual(classified.status_code, 200, classified.text)
-        self.assertEqual(classified.json()["service_id"], str(service_id))
-        self.assertEqual(classified.json()["category_id"], str(category_id))
-
-        cleared = self.client.patch(
-            f"/v1/itsm/incidents/{incident_id}",
-            json={"service_id": None, "category_id": None},
-            headers=headers,
-        )
-        self.assertEqual(cleared.status_code, 200, cleared.text)
-        self.assertIsNone(cleared.json()["service_id"])
-        self.assertIsNone(cleared.json()["category_id"])
+        self.assertEqual(classified.json()["configuration_item_id"], str(ci_id))
 
         declared = self.client.post(
             f"/v1/itsm/incidents/{incident_id}/major-incident",
-            json={"executive_summary": "Major service failure"},
+            json={"affected_service_ids": [str(service_id)], "affected_configuration_item_ids": [str(ci_id)]},
             headers=headers,
         )
         self.assertEqual(declared.status_code, 201, declared.text)
-        self.assertEqual(declared.json()["executive_summary"], "Major service failure")
+        self.assertEqual(declared.json()["affected_service_ids"], [str(service_id)])
+        self.assertEqual(declared.json()["affected_configuration_item_ids"], [str(ci_id)])
+        self.assertEqual(
+            self.client.patch(
+                f"/v1/itsm/incidents/{incident_id}/major-incident",
+                json={"affected_service_ids": [str(foreign_service_id)]},
+                headers=headers,
+            ).status_code,
+            400,
+        )
 
         self.assertEqual(self.client.get("/v1/itsm/incidents/operations/reference-data").status_code, 401)
 
@@ -1136,6 +1368,13 @@ class ITSMIncidentTestCase(unittest.TestCase):
         self.assertGreaterEqual(resumed.json()["sla_accumulated_pause_seconds"], 299)
         self.assertGreater(datetime.fromisoformat(resumed.json()["sla_resolution_due_at"]), due_before)
 
+        saved = self.client.post("/v1/itsm/incidents/operations/saved-views", json={"name": "Urgent payments", "filters": {"priority": "P1", "assignment_group": "Payments Support", "sort_by": "sla_due"}}, headers=headers)
+        self.assertEqual(saved.status_code, 201, saved.text)
+        saved_id = saved.json()["id"]
+        own_views = self.client.get("/v1/itsm/incidents/operations/saved-views?tenant_id=ignored", headers=headers)
+        self.assertEqual([view["name"] for view in own_views.json()], ["Urgent payments"])
+        self.assertEqual(self.client.get("/v1/itsm/incidents/operations/saved-views", headers={"Authorization": f"Bearer {foreign_key}"}).json(), [])
+        self.assertEqual(self.client.delete(f"/v1/itsm/incidents/operations/saved-views/{saved_id}", headers=headers).status_code, 204)
         self.assertEqual(self.client.get("/v1/itsm/incidents/operations/saved-views", headers=headers).json(), [])
 
 

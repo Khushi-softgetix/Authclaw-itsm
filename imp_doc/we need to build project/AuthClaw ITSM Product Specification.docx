@@ -1,0 +1,3612 @@
+
+AGENTSARCHITECTS.AI
+AUTHCLAW
+AI-Native IT Service Management Platform
+Comprehensive Product, Functional, Technical, Security and Operating Specification
+Prepared for Board Members and Investors
+Purpose
+Explain the product from business objective through internal architecture.
+Source basis
+ITSM project plan plus the current consolidated AuthClaw repository.
+Explicit exclusions
+No budgets, pricing, sales strategy, marketing plan or delivery dates.
+
+STRICTLY CONFIDENTIAL
+Contains internal product architecture, security controls, product boundaries and implementation assumptions.
+Specification baseline: 1 September 2026  ::  Version 1.0
+DOCUMENT GOVERNANCE
+Document Control and Interpretation
+The document is deliberately candid. It separates verified implementation evidence from planned ITSM scope and proposed technical choices.
+Item
+Specification
+Document owner
+Founder / Chief AI Officer, with Product, Architecture and Security stewardship
+Intended readers
+Board members, investors, product leadership, engineering leadership, security leadership and designated advisers
+Confidentiality
+Strictly confidential; not suitable for public distribution, procurement claims or external compliance assertions
+Primary source
+AI_Native_ITSM_Product_Project_Plan.xlsx, comprising 16 planning sheets and 135 planned capabilities
+AuthClaw source
+Consolidated AuthClaw architecture, code manifests, infrastructure definitions, product plans and implementation gap analysis
+Specification status
+Board-level product definition and internal system specification; not a contractual SLA or certification statement
+Excluded by instruction
+Budgets, pricing, commercial unit economics, sales/marketing plans, delivery dates and calendar schedules
+
+
+Status language used throughout
+"Available foundation" means a capability is evidenced in the current AuthClaw repository. "Specified" means it is defined in the ITSM workbook but not proven as implemented. "Proposed" means a design selection is recommended so the system can meet the stated product requirements; the interface and control objective are firmer than the vendor choice.
+
+Contents
+Section
+What it covers
+1. Executive Specification
+Product definition, objective and current truth
+2. Goal, Outcomes and Principles
+Strategic outcomes, design rules and measures
+3. Target Market and Use Context
+Operating profiles and users; no sales or marketing plan
+4. Scope and Boundaries
+Native scope, integration boundary and exclusions
+5. What Has Been Created
+Available AuthClaw foundation, completed design assets and gaps
+6. Detailed Product Capabilities
+All 19 functional domains
+7. End-to-End Operating Journeys
+Incident, request, change and bounded AI flows
+8. AI-Native Operating Model
+Autonomy ladder, memory, provider strategy and safety
+9. Technical Architecture
+AuthClaw reuse, required additions and service boundaries
+10. Data Architecture
+Systems of record, tenant isolation and lifecycle
+11 - 15. Control and Quality
+Security, identity, APIs, operations, NFRs and acceptance
+16 - 19. Governance
+Resources, decisions, risks and board conclusion
+Appendices A - L
+Full capability, workflow, role, data, API, AI, security, NFR, test and technology catalogs
+BOARD OVERVIEW
+1. Executive Specification
+A single view of what the company is building, why it matters, what already exists and what must be completed.
+1.1 Product in one sentence
+AuthClaw ITSM is a secure, AI-native, ITIL-aligned service management product that brings incidents, requests, changes, problems, knowledge, service configuration, workflows, approvals, analytics and governed AI execution into one tenant-isolated operating system for enterprise IT.
+1.2 Objective
+ Create one operational system of record for IT support and service delivery, replacing fragmented ticketing, manual coordination and disconnected evidence.
+ Make self-service and automated fulfillment the default for repeatable services while preserving policy, approvals and human accountability.
+ Reduce incident acknowledgement and resolution time by joining service context, knowledge, history, workflows and recommendations in the same workspace.
+ Improve change success and reduce repeat incidents through a service graph, deterministic controls, evidence-backed analysis and governed automation.
+ Extend AuthClaw from AI governance and compliance infrastructure into a full operational product, reusing the same identity, policy, gateway, audit, encryption and deployment foundations.
+1.3 What the product is -- and is not
+The product is
+The product is not
+A native ITSM product with incident, request, catalog, knowledge, SLA, problem, change, CMDB, on-call, workspace and analytics capabilities.
+A thin chatbot placed on top of another ticketing system.
+An API-first, workflow-driven, multi-tenant platform deployable as SaaS, private cloud or customer-hosted.
+A promise to reproduce every adjacent module of the largest legacy ITSM suites.
+An AI-assisted and eventually policy-bounded automation system with human gates, typed tools and complete decision traces.
+An unrestricted autonomous agent with direct database, shell, cloud or provider credentials.
+A continuation of AuthClaw's governance architecture and controls.
+A disconnected codebase that duplicates AuthClaw identity, audit and security services.
+1.4 Current truth
+
+Board-level status statement
+The current evidence shows a mature AuthClaw governance and compliance foundation, but the ITSM workbook marks all 135 ITSM capabilities as Planned. The company has created the detailed product definition, architecture, data model, workflows, permission model, security requirements, test gates and technology direction. It has not yet provided source evidence that the ITSM domain modules themselves are complete.
+
+Evidence class
+What exists or is defined
+Available AuthClaw foundation
+Go model gateway; FastAPI control plane; tenant identity/RBAC; OIDC; policy configuration; LangGraph agent service; redaction; HITL; immutable audit pipeline; PostgreSQL, Redis, Redpanda/Kafka and ClickHouse; Next.js console; Terraform-based AWS runtime; CI security/evidence gates.
+Specified ITSM product
+135 capabilities across 19 domains; 17 reference workflows; 18 role templates; canonical data model; 14 integration contracts; 10 AI agent/skill specifications; 27 security requirements; 24 NFR/SLO requirements; acceptance strategy and risk register.
+Proposed additions
+Durable workflow engine, ACL-aware search, vector retrieval, object storage and malware scanning, ITSM-specific domain modules, service graph/CMDB, notification adapters and operating telemetry.
+STRATEGIC INTENT
+2. Product Goal, Outcomes and Design Principles
+The specification optimizes for trusted service operations, not feature count alone.
+2.1 Primary product outcomes
+Outcome
+Meaning in the product
+Unified operations
+Every supported interaction becomes a governed record with a clear owner, state, service context, evidence trail and next action.
+Faster restoration
+Agents see history, related records, service impact, known errors, knowledge and suggested investigation steps without switching systems.
+Safe change velocity
+Change risk, conflicts, approvals, implementation evidence, rollback plans and post-implementation outcomes remain connected.
+Repeat-work reduction
+Recurring incidents lead to problems and known errors; repeatable requests lead to catalog workflows and bounded automation.
+Transparent leadership view
+Service performance, SLA compliance, change success, demand, backlog health, experience and AI outcomes use reproducible definitions.
+Governed AI
+AI may recommend, summarize and plan; actions are authorized by deterministic platform policy and verified after execution.
+2.2 Non-negotiable design principles
+API-first.  The web interface uses the same governed business services exposed through versioned APIs.
+Policy before autonomy.  No AI or workflow can bypass identity, permissions, segregation of duties, approval or change controls.
+Configuration over forks.  Forms, fields, taxonomies, SLAs, routing, notifications and supported workflows are versioned configuration -- not customer-specific branches.
+Evidence by default.  Privileged changes, automated decisions, AI tool calls, approvals and policy outcomes are reconstructable.
+Tenant isolation everywhere.  Identity, API, domain services, database, caches, queues, search, vector retrieval, object storage and analytics all enforce the same tenant boundary.
+Human-centred automation.  Automation removes repetitive work but keeps understandable status, safe fallbacks, manual handoff and accountable ownership.
+Independent deployability.  The ITSM product benefits from AuthClaw and an optional governed-memory adapter, but its core record and workflow functions remain independently operable.
+2.3 Success measures
+Dimension
+Board-visible measure
+Product interpretation
+Service speed
+Mean time to acknowledge; mean time to restore/resolve; median handling time
+Whether the platform removes delay rather than simply recording it
+Quality
+First-contact resolution; reopen rate; repeat incident rate; problem remediation closure
+Whether resolutions are durable and knowledge improves
+Change safety
+Change success, failed change, rollback and change-caused incident rates
+Whether governance supports delivery instead of becoming bureaucracy
+Self-service
+Deflection, catalog completion, automation rate and abandonment
+Whether employees can complete common outcomes without analyst intervention
+Commitments
+SLA/OLA compliance, breach risk, backlog age and queue health
+Whether obligations are visible and actively managed
+Experience
+Requester satisfaction, agent effort and accessibility success
+Whether the system is usable across both sides of service delivery
+AI trust
+Groundedness, override rate, task success, blocked unsafe actions and escalation quality
+Whether AI is useful, explainable and governed
+OPERATING FIT
+3. Target Market and Use Context
+This is product-fit analysis only; it is not a sales, marketing, pricing or channel strategy.
+3.1 Primary operating profiles
+ Mid-market and enterprise organizations that need a formal service desk, service catalog, change control, knowledge base and measurable service commitments.
+ Regulated or security-conscious organizations that require tenant isolation, SSO, auditable access, encrypted secrets, retention controls and evidence-backed AI.
+ Technology-led organizations seeking API-first integration with identity, collaboration, DevOps, cloud, monitoring and data platforms.
+ Organizations constrained by rigid legacy ITSM implementations and customer-specific code forks, but still needing enterprise governance.
+ Managed service or multi-business-unit environments that require delegated administration, scoped queues, domain separation and strong customer data boundaries.
+ Data-sovereignty and deployment-sensitive environments requiring SaaS, private-cloud or customer-hosted choices from a single codebase.
+3.2 Core user groups
+User group
+Primary need
+Product experience
+Employees / requesters
+Get help, find answers, order approved services and understand status
+Accessible portal, conversational assistance, catalog, knowledge and transparent progress
+Service desk agents
+Triage and resolve work with context and fewer handoffs
+Unified workspace, queues, activity, related records, SLA risk and cited recommendations
+Specialist resolvers / SRE
+Investigate services, execute runbooks and coordinate changes
+Service graph, diagnostics, work tasks, controlled tools and evidence capture
+Managers and service owners
+Control workload, commitments, quality and service health
+Role dashboards, escalations, schedules, trends and drill-down
+Process owners
+Govern incident, problem, change, request and knowledge practices
+Configurable lifecycle, policy, approvals, definitions and reporting
+Platform / tenant administrators
+Configure without creating upgrade forks
+Versioned configuration, feature flags, forms, workflows, connectors and promotion controls
+Security, risk and audit
+Prove access, integrity, policy, data handling and AI accountability
+Immutable evidence, negative authorization, exports, AI traces and control views
+Developers and integrators
+Automate and connect the platform safely
+Versioned APIs, webhooks, SDKs, typed actions and connector framework
+3.3 Deliberate market boundary
+The native core covers IT service management. Deep observability ingestion and correlation, endpoint management, advanced software/hardware asset management, vulnerability response, security operations and broad enterprise-service-management templates are integration surfaces or future extensions -- not conditions for the core ITSM product to be valuable.
+SCOPE
+4. Product Scope and Boundaries
+The core stays coherent by being explicit about native responsibilities, integrations and exclusions.
+4.1 Native product scope
+ Platform foundation: tenants, organizations, identity, permissions, forms, records, search, configuration, audit, retention and attachments.
+ Incident and major-incident management, including intake, priority, routing, SLA, collaboration, communications and post-incident review.
+ Problem management: clustering, root-cause analysis, known errors, corrective actions and recurrence trends.
+ Change management: models, risk, conflicts, calendars, approvals, CAB, implementation, rollback evidence and review.
+ Request management and service catalog: eligibility, variables, approvals, fulfillment, bundles, status and cancellation/compensation.
+ Knowledge management: authoring, review, publishing, search, feedback, freshness and AI-assisted drafting.
+ CMDB and service graph: configuration items, relationships, services, imports, reconciliation, health and impact context.
+ SLAs and operational commitments: business calendars, pause rules, warnings, breach management and historical snapshots.
+ Portal, agent workspace, queues, collaboration, on-call schedules, notifications, analytics, administration and developer interfaces.
+ Governed AI skills for triage, investigation, planning, summarization, knowledge, assistance and bounded actions.
+4.2 Integration or extension boundary
+Area
+Boundary decision
+Monitoring / AIOps
+Ingest normalized events and alerts; advanced cross-domain telemetry correlation remains a connector or later service-operations layer.
+Endpoint management
+Use connectors and approved actions; do not rebuild full device management in the initial native core.
+Software and hardware asset management
+Hold service-relevant CI and ownership context; advanced licensing, depreciation and procurement remain outside this document.
+Security operations
+Link security events/findings when useful, while dedicated case response and vulnerability programs remain separate products or integrations.
+Enterprise service management
+Reuse forms, tasks and workflows later through certified domain templates; do not dilute ITSM semantics in the core.
+Long-term agent memory
+Use native record/knowledge memory by default; optionally connect the governed memory component through a policy-scoped adapter.
+4.3 Explicit exclusions from this specification
+ Delivery dates and calendar schedule.
+ Project budgets, operating costs, model pricing, licensing economics and financial forecasts.
+ Sales positioning, marketing messages, campaigns, quotas, channels and commercial packaging.
+ Public compliance claims or certification commitments.
+ Customer-specific custom-code forks and unrestricted arbitrary-code execution.
+EVIDENCE AND STATUS
+5. What Has Been Created
+A candid inventory of the assets available today and the ITSM design work already completed.
+5.1 Reusable AuthClaw foundation evidenced in the repository
+Foundation
+Available capability
+ITSM reuse
+Operator console
+Next.js/React/TypeScript interface with authentication, RBAC views, compliance, gateway, policy, audit, findings, evidence, cloud and remediation surfaces.
+Shell for requester, agent, manager, admin and security experiences; shared auth and component system.
+Control plane
+FastAPI, SQLAlchemy and Alembic services for tenants, users, API keys, OIDC, policies, evidence, findings, workflows and connectors.
+Base service patterns, tenant context, configuration, identity and governed APIs.
+Provider gateway
+Go gateway for model routing, authentication, quotas, redaction, provider contracts, streaming and audit publication.
+Only approved model-egress path for every ITSM AI use case.
+Policy and redaction
+OPA/Rego integration, YAML policy configuration, Presidio/NER redaction, mask/hash/synthetic strategies and policy simulations.
+Permission, AI, tool, data-class and egress enforcement.
+Agent runtime
+Separate LangGraph service with RAG, document processing, risk classification, HITL, remediation plans and provider routing.
+Orchestrator for ITSM skills, keeping model dependencies isolated from transactional services.
+Audit backbone
+Redpanda/Kafka events, ClickHouse audit consumer, hash-chain integrity, PostgreSQL fallback and signed export/verification.
+Immutable evidence for record, workflow, approval, security and AI actions.
+Data and runtime
+PostgreSQL, Redis, ClickHouse, containers, Terraform AWS multi-region profiles, KMS/Secrets Manager and Route53 failover design.
+Shared deployment and operational foundation for ITSM services.
+Security and readiness
+OIDC, MFA patterns, envelope encryption, CI scanning, red-team workflows, latency/HA/compliance evidence validators and fail-closed startup checks.
+Baseline release gates and secure operating posture.
+5.2 ITSM product assets already created
+ A 16-sheet product plan covering vision, feature backlog, workflows, roles, architecture, data, integrations, AI agents, security, NFRs, workstreams, acceptance, risk and scope gates.
+ A catalog of 135 planned capabilities across 19 product domains: 79 P0, 52 P1 and 4 P2.
+ Reference lifecycle definitions for incident, major incident, problem, change, request, knowledge and agentic action flows.
+ A role and permission model with requester, resolver, manager, process-owner, administrator, security, audit and platform-operator separation.
+ A canonical logical data model with tenant ownership, sensitive-data classification, lifecycle, retention and API-resource mapping.
+ An integration contract plan with idempotency, retry, authentication, tenant binding and security acceptance conditions.
+ A governed AI specification where models propose and deterministic product policy authorizes and executes.
+ Security, privacy, audit, resilience, accessibility, performance and AI-safety release gates.
+5.3 What remains to be created or proven
+ ITSM-specific domain services and interfaces for incident, request, catalog, knowledge, SLA, CMDB, problem, change, major incident, on-call and operational analytics.
+ A durable workflow runtime integrated with AuthClaw policy, identity, audit and human approval services.
+ ACL-aware keyword and semantic search over ITSM records and knowledge, plus a tenant-safe vector retrieval layer.
+ Attachment/object-storage pipeline with signed access, malware quarantine, content policy and retention reconciliation.
+ Production-grade connectors for email, collaboration, directory, DevOps, monitoring, vault and data migration.
+ End-to-end evidence that representative ITSM journeys meet security, durability, performance, accessibility and AI evaluation criteria.
+CAPABILITY SPECIFICATION
+6. Detailed Product Capabilities
+The following domains form one coherent service-management product, not a collection of unrelated screens.
+6.1 Platform foundation
+The shared record, identity, form, search, configuration and audit layer on which every ITSM module depends.
+ Organizations, departments, locations, groups and delegated administrative domains with strict tenant isolation.
+ Enterprise SSO, lifecycle provisioning, RBAC/ABAC, record/field/action permissions and segregation of duties.
+ Metadata-driven forms with conditional visibility, validations, references, computed values and versioned schemas.
+ Human-readable immutable record numbers, common task fields, activity streams, attachments, watchers and relationships.
+ Global ACL-aware search, tenant settings, feature flags, retention, legal hold, export and verified purge.
+ Append-only audit for identity, admin, business, integration, workflow and AI actions.
+6.2 Incident management
+Restore normal service quickly while maintaining ownership, communication, context and measurable commitments.
+ Create incidents consistently from portal, agent UI, email, API, chat or monitoring sources.
+ Calculate priority from impact and urgency with controlled, reasoned overrides.
+ Classify by category, service and configuration item; route by skill, schedule, load, location, service and escalation policy.
+ Guard state transitions, pending reasons, reopening, resolution evidence and requester communication.
+ Link parents, children, duplicates, problems, changes, knowledge, services and CIs.
+ Run response, assignment, restoration and resolution commitments across calendars, pauses, holidays and warnings.
+6.3 Major incident management
+Coordinate high-impact events through one command workspace and evidence-based communication process.
+ Promote a candidate, assess impact and affected services, then assign incident commander and communications lead.
+ Maintain war-room timeline, decisions, tasks, stakeholders, bridge/chat links and restoration checkpoints.
+ Issue audience-controlled communications with cadence, approval and delivery status.
+ Create post-incident review, problems and corrective actions from the verified timeline.
+6.4 Problem management
+Convert recurring symptoms into known causes, workarounds and permanent corrective actions.
+ Create problems manually or from incident clusters, major incidents, analytics signals or APIs.
+ Use a controlled lifecycle for assessment, RCA, known error, remediation, verification and closure.
+ Provide 5-Whys/fishbone-style evidence workspaces, hypotheses, validation and service/CI links.
+ Publish governed known errors and connect corrective actions to change/request/task records.
+6.5 Change management
+Increase successful change throughput without sacrificing accountability or service safety.
+ Support normal, standard and emergency models with different evidence and control requirements.
+ Calculate reproducible risk from criticality, timing, history, blast radius, test evidence and conflicts.
+ Build deterministic serial, parallel, quorum and delegated approval paths with segregation of duties.
+ Expose calendars, freezes, blackouts, overlapping changes, shared dependencies and on-call constraints.
+ Provide CAB workbench, implementation tasks, checkpoints, evidence, rollback and post-implementation review.
+ Connect authenticated CI/CD events to approved changes without shared human credentials.
+6.6 Request management and service catalog
+Turn standard employee needs into discoverable, eligible, governed and reusable fulfillment journeys.
+ Represent an order as a request with one or more independently governed request items and fulfillment tasks.
+ Expose only eligible catalog items based on organization, role, location, employment and service policy.
+ Allow administrators to define variables, validation, approvals, workflow bindings, versions, previews and publication.
+ Support manager, owner, security and data-owner approvals through serial, parallel and quorum patterns.
+ Compose reusable human tasks, integrations, waits, validation and compensating actions.
+ Give requesters honest progress without leaking internal work notes or restricted details.
+6.7 Knowledge management
+Capture validated operational knowledge and make it securely discoverable at the point of need.
+ Draft, review, publish, expire and retire versioned articles by audience and taxonomy.
+ Provide reusable templates for how-to, troubleshooting, known error, FAQ and policy content.
+ Combine keyword, synonym, typo-tolerant and semantic search with pre-retrieval ACL enforcement.
+ Measure feedback, reuse, deflection and staleness; notify owners and exclude expired content by default.
+ Draft content from resolved work with citations and redaction, always requiring a human publish gate.
+6.8 CMDB and service graph
+Provide trusted configuration and service context for impact, risk, routing and AI grounding.
+ Model configuration-item classes, inheritance, lifecycle, identifiers, criticality and ownership.
+ Maintain typed, directional relationships such as depends-on, runs-on, hosted-on, connects-to and supports.
+ Reconcile sources deterministically using identity rules, source precedence, attribute ownership and conflict visibility.
+ Measure completeness, correctness, staleness, duplicates and orphan relationships.
+ Support dry-run imports and connectors with checkpoints, retry, idempotency and source attribution.
+ Represent business and technical services, offerings, consumers, owners, support groups, dependencies and operating hours.
+6.9 SLA and commitments
+Make service promises executable, visible and historically reproducible.
+ Define response, assignment, restoration, resolution and fulfillment targets with conditions and business calendars.
+ Run timers with deterministic start, pause, resume, stop and breach behavior across time zones and holidays.
+ Warn before breach, escalate by policy and preserve definition versions so historic results do not change.
+6.10 Self-service and portal
+Make requesting help or services understandable, accessible and efficient.
+ Personalized home, search, service catalog, knowledge, virtual assistance and status views.
+ Guided forms, eligibility checks, attachment handling, draft preservation and clear validation errors.
+ Requester-visible activity separated from internal notes and security-sensitive context.
+ WCAG-aligned keyboard, screen-reader, focus, contrast and error handling in critical journeys.
+6.11 Agent workspace
+Give resolvers one work surface with queues, context, collaboration and safe actions.
+ Role-scoped queues, saved filters, ownership, workload, priority and SLA-risk indicators.
+ Single-record workspace combining fields, activity, service/CI graph, relationships, attachments, knowledge and workflow state.
+ Quick actions and templates that invoke the same permission and validation services as full forms.
+ Collaboration, swarm, handoff and cited AI summaries without cross-team data leakage.
+6.12 Workflow and automation
+Make long-running service processes durable, observable, versioned and safe under failure.
+ Durable state, timers, approvals, human waits, retries, timeouts, idempotency and compensating actions.
+ Visual configuration for supported triggers, conditions, actions, branches and subflows -- without arbitrary code.
+ Deterministic business-rule ordering, execution trace and recursion guard.
+ Scheduled jobs with time-zone handling, concurrency policy, missed-run behavior and history.
+ Typed reusable actions and a policy-aware dry run showing proposed side effects before execution.
+6.13 Notifications and collaboration
+Deliver the right message to the right audience without duplication or information leakage.
+ Thread-safe inbound/outbound email with message correlation, retry, secure attachments and sender identity rules.
+ Rule-driven email, SMS, chat and web notifications with templates, localization, throttling, digest and delivery trace.
+ Tenant-bound collaboration integrations for support, approvals, updates and deep links using least-privilege OAuth.
+6.14 On-call management
+Identify and escalate to the correct responder across schedules, time zones and handoffs.
+ Primary/secondary rotations, overrides, holidays and follow-the-sun schedules.
+ Sequential or parallel escalation, acknowledgement timeout, retry and multi-channel notification.
+ Evidence-backed handoff summaries of open incidents, major incidents, risky changes and commitment risks.
+6.15 Analytics and reporting
+Create reproducible operational insight without destabilizing the transactional system.
+ Role dashboards for service desk, process managers, service owners, CMDB, executives and security.
+ Documented definitions for MTTA, MTTR, FCR, reopen, backlog age, SLA, satisfaction, deflection, change success and repeat incidents.
+ Historical metric snapshots that do not change when current records are edited later.
+ Permission-aware ad hoc analysis, filters, grouping, charts, drill-down and scheduled export.
+6.16 Integration platform
+Connect enterprise systems through secure, replayable and supportable contracts.
+ Versioned REST APIs, signed webhooks, internal domain events and generated client SDKs.
+ Connector framework with OAuth/workload identity, vault references, mapping, checkpoints, retry and health status.
+ Migration tools for users, groups, work records, knowledge, CIs and attachments with dry run and reconciliation.
+ No secret values returned to browsers, logs, tickets, prompts or exports.
+6.17 AI and agentic capabilities
+Apply AI where it improves decisions and execution while keeping the platform -- not the model -- in control.
+ Provider-neutral gateway, tenant model allowlists, redaction, retention policy and fallback.
+ Permission-aware RAG with source citations and no post-filter-only leakage design.
+ Triage, investigation, plan drafting, conflict explanation, RCA support, knowledge drafting, summaries and requester assistance.
+ Typed tools, precheck, authorization, human gate, idempotent execution, postcheck, rollback and complete trace.
+ Versioned evaluation sets for groundedness, task success, leakage, tool correctness, regression, latency and safety.
+6.18 Administration
+Enable safe tenant-level configuration with versioning, audit and rollback.
+ One console for organizations, roles, forms, taxonomy, workflows, SLAs, notifications, integrations, AI policy and feature flags.
+ Signed configuration transport with dependency checks, diffs and rollback; secrets never move inside configuration bundles.
+6.19 Developer platform
+Offer supported extension paths while protecting the core runtime and upgradeability.
+ Generated TypeScript and Python API clients with authentication, pagination, retries and idempotency helpers.
+ Supported webhooks, namespaced custom fields/tables, UI slots, typed workflow actions and connector SDK.
+ No extension may mutate the core schema or execute privileged arbitrary code outside policy.
+USER JOURNEYS
+7. End-to-End Operating Journeys
+The product is complete only when records, policy, workflow, communication, evidence and analytics work together.
+7.1 Incident restoration
+ A requester, email, API, chat or monitoring source creates a canonical incident. Source identity and tenant are verified; unsafe content or attachments are quarantined.
+ Rules and optional AI suggest category, service, CI, priority and assignment. Deterministic policy selects what may be applied automatically; the evidence and confidence remain visible.
+ The incident enters the correct queue, commitments start, owners are notified and the requester sees a safe status.
+ The resolver investigates using activity, service graph, related incidents, changes, known errors and knowledge. Read-only diagnostics or proposed runbooks pass through typed tools.
+ A high-impact case becomes a major-incident candidate. Authorized users declare it, assign command roles and initiate communications.
+ Resolution requires structured evidence. The requester is notified, reopen policy applies, outcome metrics update and a knowledge/problem candidate may be proposed.
+7.2 Service request fulfillment
+ The requester searches the catalog or uses conversation. The server checks identity, eligibility and mandatory variables before presenting an order summary.
+ The platform creates a request and one or more items using an idempotency key so duplicate submissions do not create duplicate work.
+ Approval policy calculates the required path from current context and segregation-of-duties rules.
+ A durable workflow performs human tasks, integrations, waits and verification. Failure leads to retry, compensation or manual intervention according to the action definition.
+ The requester sees meaningful progress without internal notes; completed actions, approvals and evidence remain linked to the item.
+7.3 Controlled change
+ An authorized initiator creates a change manually or from an authenticated delivery pipeline.
+ The product validates implementation, test, rollback and verification plans, then calculates reproducible risk and deterministic conflicts from service graph and calendars.
+ Approval and CAB policy apply by risk, service, environment and emergency status; the initiator cannot approve where segregation rules prohibit it.
+ Implementation tasks execute only inside the authorized window. Evidence, checkpoints and unexpected conditions are recorded; rollback or incident creation is available.
+ The post-implementation review records success, failure, incidents, rollback and lessons, feeding future risk and analytics.
+7.4 AI-assisted bounded action
+ A user or workflow submits a goal with tenant, identity, record, allowed context and expiry.
+ The agent retrieves only authorized evidence, labels untrusted content and creates a structured plan using registered tools.
+ The platform policy evaluates identity, role, data class, target, environment, action risk, separation of duties, required approval and limits.
+ An authorized human approves when required. The tool gateway resolves credentials by reference; the model never receives them.
+ Execution is idempotent. Postchecks verify the target state; a failed postcheck triggers compensation, rollback or escalation.
+ The final result includes evidence, policy decision, approvals, tool inputs/outputs, verification and unresolved questions.
+AI AND MEMORY
+8. AI-Native Operating Model
+AI is embedded in product workflows, but authority remains with the deterministic platform.
+8.1 AI capability ladder
+Level
+Allowed behavior
+Examples
+Required control
+Assist
+Summarize, classify, retrieve and draft without side effects
+Case summary, suggested category, cited knowledge answer
+ACL retrieval, redaction, citations, user review
+Recommend
+Propose an operational plan or decision
+Investigation plan, change plan, RCA hypotheses
+Confidence/evidence, deterministic rules remain authoritative
+Transactional with confirmation
+Prepare a state change and execute after explicit user confirmation
+Submit request, add safe update
+Identity binding, schema validation, confirmation and audit
+Bounded autonomous
+Execute allowlisted low-risk actions inside a pre-approved scope
+Known runbook with pre/postcheck
+Policy tier, idempotency, blast limit, rollback and complete trace
+Multi-agent orchestration
+Coordinate specialist agents using typed handoff envelopes
+Investigation plus fulfillment across domains
+No implicit privilege inheritance; constraints and expiry travel with the task
+8.2 Memory architecture
+Memory layer
+Purpose
+Storage / lifetime
+Governance rule
+Authoritative operational memory
+Tickets, activities, approvals, workflow state, knowledge, CIs, services and audit evidence
+PostgreSQL/object store; record-specific retention
+Source of truth; versioned, tenant-owned and permission-scoped
+Conversation / task context
+Current assistant conversation, open questions and current plan
+Short-lived agent checkpoint in PostgreSQL/Redis with TTL
+Minimum necessary context; never a substitute for the business record
+Retrieval memory
+Embeddings and search representations that locate relevant knowledge and records
+Vector/search indexes; rebuildable
+Store pointers and ACL metadata; tenant partition; source remains authoritative
+Learned operational signals
+Routing patterns, similarity, outcome statistics and evaluation baselines
+Derived features/analytics snapshots
+No hidden privilege inference; lineage and reproducibility required
+Optional governed long-term memory
+Cross-session context when explicitly enabled
+GMH-compatible adapter or equivalent
+Optional dependency; policy-scoped reads/writes; expiry, provenance and deletion supported
+8.3 Provider and model strategy
+ All model calls flow through the shared Go gateway; product services do not call providers directly.
+ Provider adapters support OpenAI, Anthropic, Cohere, Azure OpenAI, Google Gemini, AWS Bedrock and approved local/open-weight endpoints.
+ Routing is tenant- and use-case-aware. Tenants may restrict providers, regions, model classes, logging and external egress.
+ Fallback is explicit: retry, alternate approved model, non-AI deterministic path or human escalation. Record saving never depends on an AI response.
+ Prompt/response telemetry is redacted and retained according to the use case and tenant policy; the audit trace holds references and decisions rather than unrestricted sensitive bodies.
+8.4 AI safety invariants
+ Retrieved documents are data, never policy or system instructions.
+ The model receives typed tool descriptions, not database, cloud, shell or provider credentials.
+ Tool inputs are schema-validated, tenant-bound and re-authorized at execution time.
+ High-risk and destructive actions require step-up approval and expire.
+ No agent can approve its own action or inherit a user's broader rights through handoff.
+ Critical privilege-escalation success in the adversarial release set is not tolerated.
+ARCHITECTURE
+9. Technical Architecture and AuthClaw Reuse
+The architecture extends the existing AuthClaw control and governance plane with ITSM domain services and durable service workflows.
+9.1 Logical request and decision flow
+1. Experience
+2. Edge & identity
+3. Domain & workflow
+4. AI / policy
+5. Data & evidence
+Requester portal
+Agent workspace
+Admin console
+APIs
+Gateway / WAF
+OIDC / SAML
+Tenant context
+RBAC / quotas
+ITSM domain services
+Rules
+Durable workflows
+Workers
+Go model gateway
+OPA policy
+LangGraph agents
+Typed tools
+PostgreSQL
+Search/vector
+Object store
+Kafka/ClickHouse
+
+
+Core architectural rule
+The transactional ITSM services own business state. The workflow engine owns durable orchestration state. The model gateway owns model egress. The policy service owns authorization decisions. The audit pipeline owns tamper-resistant evidence. No component silently assumes another component's authority.
+9.2 Current AuthClaw technology reused directly
+Layer
+Current technology
+Reuse decision
+Web console
+Next.js 16, React 19, TypeScript, Tailwind, Shadcn/Radix, TanStack Query, Zustand, Recharts
+Extend into requester, agent, manager and admin experiences using the same component and authentication patterns.
+Control plane / APIs
+Python, FastAPI, Pydantic, SQLAlchemy, Alembic, PostgreSQL
+Keep tenant, identity, configuration and policy administration; add ITSM modules behind stable service boundaries.
+Model gateway
+Go, chi router, PostgreSQL, Redis, Kafka and provider adapters
+Retain as the only supported AI-provider egress and enforcement path.
+Agent services
+Python, LangGraph, provider adapters, Presidio, document-processing libraries
+Retain as a separate process and add ITSM skill graphs and typed tools.
+Policy / sensitive data
+OPA/Rego, YAML policies, Microsoft Presidio plus specialized detection
+Use one decision model across API, workflow and AI; redact before model egress and sensitive telemetry.
+Transactional storage
+PostgreSQL 17, RLS defense in depth, encrypted fields and Alembic migrations
+Use as system of record with tenant key on each tenant-owned table.
+Cache / ephemeral state
+Redis 7
+Use tenant-scoped keys for sessions, quotas, short-lived state and safe caches; never as authoritative record state.
+Events and audit
+Redpanda/Kafka, ClickHouse, hash chains, signed export and PostgreSQL fallback
+Expand event schemas for ITSM records, workflows, commitments and AI actions.
+Infrastructure
+Containers; Terraform on AWS using VPC, ALB, ECS, RDS, ElastiCache, KMS, Secrets Manager, CloudWatch and Route53 failover
+Use environment profiles and extend for ITSM stores/services; maintain a single codebase across deployment modes.
+Quality/security pipeline
+Pytest, Go tests, Playwright, contract tests, gitleaks-style secrets gates, SAST/SCA/IaC/container checks and evidence validators
+Add domain, workflow durability, search security, accessibility, migration and AI evaluation suites.
+9.3 New or expanded components required for ITSM
+Component
+Preferred direction
+Reason / control objective
+ITSM domain runtime
+Modular FastAPI services initially; separate only when scale or ownership requires
+Reuse AuthClaw patterns while preserving incident, request, change, problem, knowledge, SLA and CMDB boundaries.
+Durable workflow engine
+Temporal- or Camunda-style mature orchestration
+Human waits, timers, retry, replay and idempotency must survive process failure; do not build custom durability.
+Search
+OpenSearch/Elasticsearch-compatible full-text and faceting
+ACL-aware global search, knowledge relevance, synonyms and rebuildable derived indexes.
+Vector retrieval
+pgvector or managed search vector fields
+Permission-aware RAG with tenant namespaces and source pointers.
+Object storage
+S3/Blob/GCS-compatible with signed URLs
+Attachments, imports, exports and evidence packages require encrypted, scanned and lifecycle-managed binary storage.
+Notifications
+Provider adapters for email, chat, SMS and web
+Templates, retry, throttling, delivery status and isolation from internal notes.
+Observability
+OpenTelemetry with Prometheus/Grafana or managed equivalents
+Correlate UI, API, workflow, events and AI without logging sensitive bodies.
+9.4 Service boundaries
+ Identity and tenant authorization remain authoritative in the control plane.
+ ITSM domain modules validate business state and emit versioned domain events after committed changes.
+ Workflow definitions reference domain actions; workflows do not mutate database tables directly.
+ Search, vector and analytics are derived stores and can be rebuilt from authoritative records/events.
+ High-volume or high-risk workers run in separate pools so one connector or import cannot starve incident operations.
+ Every request propagates tenant, actor, correlation and trace identifiers across synchronous and asynchronous boundaries.
+DATA
+10. Data Architecture, Ownership and Lifecycle
+The product treats operational data, derived indexes, AI context and audit evidence differently.
+10.1 Systems of record
+Data class
+Authority
+Examples
+Key rule
+Transactional domain data
+PostgreSQL service-owned schema
+Incidents, requests, changes, problems, knowledge metadata, approvals, CIs, services, SLAs
+Strong validation, optimistic concurrency, tenant key and versioned migrations
+Workflow state
+Durable workflow engine
+Timers, waits, current step, retries, compensation
+Replayable and idempotent; business record stores status references, not engine internals
+Binary objects
+Encrypted object storage
+Attachments, imports, exports, evidence packages
+Metadata and authorization in database; signed time-bound access; scanning/quarantine
+Search and vector indexes
+Derived and rebuildable
+Full text, facets, embeddings and source pointers
+Pre-retrieval ACL/tenant filtering; never sole source of truth
+Audit evidence
+Append-only audit store plus immutable export
+Access, changes, approvals, AI/tool traces
+Restricted writers/readers, integrity verification and independent retention
+Analytics facts
+Snapshot/read model, ClickHouse at scale
+Metric periods, lifecycle events and trends
+Definitions are versioned; heavy queries do not burden transactional services
+10.2 Tenant isolation strategy
+ Tenant comes from authenticated context, never solely from a request body.
+ Every tenant-owned table, object prefix, cache key, queue message, search document, vector namespace and analytics fact carries tenant ownership.
+ Application repository filters are mandatory; PostgreSQL row-level security provides defense in depth.
+ Search and retrieval filter before ranking or model context construction; post-filter-only security is prohibited.
+ Cross-tenant negative tests cover guessed identifiers, caches, exports, events, object URLs, semantic retrieval and administrative support access.
+10.3 Data lifecycle
+Stage
+Required behavior
+Create / ingest
+Validate schema and identity; classify sensitivity; scan files; record source; apply tenant and retention metadata.
+Use
+Enforce record, field and action permissions; mask sensitive fields; log references and decision metadata rather than unrestricted bodies.
+Derive
+Index or embed only authorized content with source pointers, ACL metadata, model/version provenance and refresh status.
+Share / export
+Require scoped authorization and step-up where appropriate; use encrypted expiring delivery and integrity manifests.
+Retain / hold
+Apply record-specific retention; preserve version/audit evidence; legal hold blocks deletion.
+Delete
+Reconcile purge across database, objects, search, vector, cache and derivative stores while retaining only lawful minimal audit evidence.
+SECURITY
+11. Security, Privacy and Compliance by Design
+Security controls are product behavior and acceptance gates, not later hardening.
+11.1 Security model
+Control plane
+Required behavior
+Identity
+Enterprise OIDC/SAML, optional lifecycle provisioning, secure sessions, MFA/step-up and service/workload identities.
+Authorization
+Deny-by-default RBAC/ABAC with record, field and action scope; segregation of duties; delegated administration; one policy model for API, workflow and AI.
+Secrets
+Vault or cloud secret manager; workload identity; encrypted references; values never returned after save or placed in prompts, tickets, logs or configuration bundles.
+Encryption
+TLS in transit; managed storage and backup encryption; envelope encryption for sensitive fields and connector credentials; key versioning and rotation.
+Application security
+Schema validation, parameterized access, CSRF/XSS/SSRF protections, WAF, file scanning, dependency and container scanning.
+Privileged access
+Just-in-time or break-glass access with SSO, MFA, reason, time limit, session audit and independent review.
+AI security
+Untrusted-content separation, ACL retrieval, model/provider allowlists, tool schema validation, action policy, egress controls and adversarial evaluation.
+Audit integrity
+Append-only events with actor, target, action, time, tenant, correlation, policy, approval and before/after summary; hash verification and signed export.
+11.2 Shared-responsibility boundary
+The product can implement technical controls and generate evidence supporting GDPR obligations, SOC 2 readiness and security governance. It cannot by itself create an organization's legal basis, policies, training, vendor agreements, access reviews, incident response discipline, backup tests or independent audit report. The board must treat compliance claims as evidence-based and externally reviewed.
+11.3 Truthful compliance posture
+
+Internal claim boundary
+AuthClaw and the ITSM product may be described internally as designed with encryption, SSO, tenant isolation, audit, privacy and SOC 2 control evidence. They must not be represented as independently certified or as having completed a Type II examination unless the relevant external report exists. GDPR readiness also requires legal and operational review beyond product controls.
+11.4 Secure development and release evidence
+ Code review, protected branches, automated tests, dependency/security scanning, secret detection, infrastructure review and immutable artifact promotion.
+ Threat models for tenant isolation, inbound email, attachments, connectors, search/vector leakage, AI prompt injection and tool abuse.
+ Independent penetration testing covering web, API, identity, tenant and agentic-action boundaries before external production claims.
+ Backup restore, failover, key rotation, incident response and data-subject workflow exercises with captured evidence.
+ Software bill of materials, signed images/artifacts and provenance for release builds.
+ACCESS
+12. Identity, Roles and Permission Model
+Permissions are atomic and scoped; role names are templates, not hard-coded privilege bundles.
+12.1 Identity types
+Identity
+Purpose
+Control
+Human user
+Requester, agent, manager, administrator, security or audit activity
+SSO/session, tenant binding, role/group scope, MFA for sensitive actions
+Service / workload
+API client, connector, pipeline, worker or internal service
+OAuth/workload identity, explicit scopes, rotation and no shared human credentials
+Agent execution
+Temporary delegated AI task
+Actor plus task identity, policy envelope, allowed tools/context, limits and expiry
+Support operator
+Operate hosted service
+No routine tenant-content access; break-glass, reason, time bound and audit when required
+12.2 Authorization dimensions
+ Tenant and administrative domain
+ Role and group
+ Record type and ownership
+ Service, CI, queue or organizational scope
+ Field visibility and mutation
+ Action and lifecycle transition
+ Environment and target
+ Data classification
+ Segregation of duties
+ AI use case, tool and autonomy tier
+12.3 Decision behavior
+ Default deny; allow must be explicit and explainable.
+ UI visibility improves experience but is never the only enforcement layer.
+ The same policy semantics apply when an API, workflow, connector or AI agent requests an action.
+ Permissions are re-evaluated at execution time, not inherited from an earlier plan or stale approval.
+ Negative authorization events are audited with enough context to investigate without leaking protected data.
+INTERFACES
+13. APIs, Events and Integrations
+Every external and internal contract is tenant-bound, versioned, observable and safe to replay.
+13.1 API standards
+ Versioned OpenAPI contracts, resource-oriented endpoints and explicit action endpoints for guarded transitions.
+ Idempotency keys for create and action requests; event IDs for asynchronous deduplication.
+ Optimistic concurrency through versions or ETags so critical updates do not silently overwrite one another.
+ Pagination, filtering, sparse fields, consistent error envelopes and correlation identifiers.
+ Server-side eligibility, permissions and transition validation; crafted payloads cannot bypass policy.
+ Rate, concurrency, body-size and resource-consumption safeguards per tenant, identity and integration.
+13.2 Event standards
+ Versioned CloudEvents-like envelopes with event ID, tenant, actor/service, subject, type, time, correlation and schema version.
+ At-least-once delivery with idempotent consumers, retry, dead-letter queues, replay and lag monitoring.
+ Events carry minimum necessary data or protected references; they are not uncontrolled copies of record bodies.
+ Breaking schema change requires version transition or dual publishing; additive evolution is the default.
+13.3 Connector families
+Connector family
+Core use
+Identity / directory
+User and group provisioning, deprovisioning and approved access actions using SCIM/OAuth.
+Email and collaboration
+Incident/request intake, updates, approvals, notifications and deep links with tenant/workspace binding.
+DevOps
+Authenticated build, pull-request, deployment and change evidence; incident linkage.
+Monitoring / event
+Normalized signal intake, deduplication and correlation hooks.
+Cloud and infrastructure
+Read context and execute only approved typed runbooks through tenant-specific connections.
+Vault
+Resolve secrets by reference at execution time; log access, not value.
+SIEM and audit
+Stream normalized security/audit events with buffering and replay.
+Migration / export
+Checkpointed import and reconstruction-ready export with row-level results and integrity manifest.
+OPERATIONS
+14. Deployment, Reliability and Observability
+The same product code supports different deployment profiles without customer-specific forks.
+14.1 Deployment profiles
+Profile
+Characteristics
+Control objective
+Multi-tenant SaaS
+Shared control plane and horizontally scaled services with strict tenant boundaries
+Operational efficiency with isolation at every layer
+Dedicated / private cloud
+Customer- or region-dedicated runtime using the same containers and configuration model
+Residency, isolation and regulated deployment needs
+Customer-hosted
+Documented container/Kubernetes or managed-container profile with conformance tests
+No control regression and no product code fork
+Development / test
+Docker Compose with local PostgreSQL, Redis, OPA, Presidio, Redpanda, ClickHouse and mock model provider
+Repeatable local and CI integration testing without real credentials
+14.2 Reliability behavior
+ Stateless web/API/gateway replicas scale horizontally; stateful services use managed replication, backup and point-in-time recovery.
+ Core record operations degrade independently from AI, semantic search, reporting and external connectors.
+ Workflow state, timers and approvals survive worker or node restart; actions are idempotent and compensatable.
+ Queues and event buses use retry, dead-letter handling, backpressure and visibility into stuck work.
+ Search and vector indexes are rebuildable; object, database and audit recovery are explicitly verified.
+ Regional recovery proceeds in dependency order: identity/secrets, authoritative data, APIs, experiences, workflows and derived services.
+14.3 Observability
+Signal
+Required content
+Sensitive-data rule
+Logs
+Structured event, severity, service, tenant reference, correlation and outcome
+No credentials, unrestricted record bodies or prompt content
+Metrics
+Traffic, errors, latency, saturation, queue lag, workflow age, connector health and product KPIs
+Aggregate; avoid high-cardinality PII
+Traces
+UI-->API-->workflow-->event-->AI/tool spans and dependency timing
+Use identifiers and redacted attributes
+Audit
+Security/business accountability and reconstructable decisions
+Separate restricted access and retention from routine telemetry
+SLO alerts
+Availability, performance, durability, freshness, completeness and AI safety gates
+Alerts link to evidence; do not copy sensitive content
+QUALITY
+15. Non-Functional Requirements and Acceptance
+Product completeness includes speed, durability, accessibility, safety and supportability.
+15.1 Key internal engineering targets
+Area
+Target / invariant
+Degradation behavior
+Core availability
+Internal core API objective at or above 99.9% monthly
+Safe degraded or read-only mode where technically sound
+Core performance
+p95 core read at or below 500 ms; standard mutation at or below 800 ms, excluding async work
+Move enrichment and long work to queues
+Portal experience
+p75 largest-contentful-paint at or below 2.5 seconds on representative broadband
+Defer noncritical widgets
+Search
+p95 keyword at or below 1.5 seconds; semantic at or below 2.5 seconds
+Fall back from semantic to secure keyword search
+Workflow durability
+No lost timer or workflow state after process/node restart
+Replay durable state and avoid duplicate side effects
+Audit completeness
+All privileged, administrative and AI tool actions have actor, time, target and context identifiers
+Sensitive action may fail closed when evidence cannot be written
+Accessibility
+WCAG 2.2 AA-aligned core requester and agent journeys
+Critical inaccessible functionality blocks acceptance
+AI response
+Interactive AI p95 at or below 8 seconds; longer tasks asynchronous with progress
+Approved alternate model, deterministic path or human handoff
+AI safety
+No tolerated successful critical privilege escalation in the adversarial release set
+Disable affected use case, model or tool
+15.2 Test strategy
+Test layer
+What it proves
+Unit and property tests
+Domain rules, SLA time arithmetic, transition guards, reconciliation and validation are deterministic.
+API and event contracts
+Schemas, compatibility, idempotency, authentication and consumer/provider behavior stay stable.
+Authorization and isolation
+No cross-tenant, hidden-field, approval, search, export or agentic privilege bypass.
+Workflow fault injection
+Crash, retry, duplicate event, timeout and human wait do not lose state or repeat side effects.
+End-to-end journeys
+Portal/email/API intake through workflow, communication, resolution and evidence behave as one product.
+Search and AI evaluations
+Relevance, groundedness, leakage, citations, tool correctness, regressions and safe refusal meet thresholds.
+Performance / resilience / recovery
+Load, dependency failures, backup restore and regional recovery preserve correctness and target behavior.
+Accessibility and compatibility
+Keyboard, screen reader, focus, contrast, errors and supported browser journeys work.
+Independent security testing
+Web, API, auth, tenant and agentic boundaries withstand external exploit testing.
+15.3 Definition of done for a product capability
+ Business behavior and failure behavior are specified and tested.
+ UI, API, workflow, event and permission semantics agree.
+ Tenant isolation, field/action permissions and audit evidence are covered by negative tests.
+ Accessibility, observability, support diagnostics, documentation and migration/rollback are present.
+ AI-enabled capability has a versioned evaluation set, safe fallback, trace and human control appropriate to risk.
+ No critical security or data-integrity defect remains open for the capability's intended use.
+PEOPLE AND GOVERNANCE
+16. Resource Model and Product Governance
+This section identifies capabilities and decision rights; it intentionally does not estimate staffing quantities, cost or calendar duration.
+16.1 Existing AuthClaw ownership basis
+Owner
+Established area
+ITSM responsibility to preserve
+Kunal
+Gateway, platform/backend, audit pipeline, infrastructure and CI evidence
+Shared platform, provider gateway, tenant data controls, deployment and operational evidence
+Vidhi Sharma
+Agent runtime, RAG, document processing, redaction, risk and HITL
+ITSM AI skills, evaluation, memory boundaries, tool policy and safe orchestration
+Ravi Dhakad
+Console, RBAC views, API-key management, compliance/audit user experience
+Requester/agent/admin experiences, access UX and governance traceability
+Founder / Chief AI Officer
+Product direction, claims boundary and go/no-go accountability
+Scope, autonomy posture, architecture exceptions and board communication
+16.2 Capability roles required for the product
+Capability role
+Accountability
+Product / ITSM domain leadership
+Product semantics, ITIL practice alignment, scope, acceptance and process-owner validation
+Principal architecture
+Service boundaries, ADRs, deployment profiles, data ownership and compatibility
+Backend / domain engineering
+Incident, request, change, problem, knowledge, SLA, CMDB and shared task services
+Frontend / experience engineering
+Requester, agent, manager and admin journeys; performance and accessibility
+Workflow / platform engineering
+Durable orchestration, rules, schedulers, workers, idempotency and compensation
+AI / applied research engineering
+RAG, skills, evaluation, orchestration, memory and safe fallbacks
+Search / data engineering
+ACL search, vector indexes, analytics facts, migrations and data quality
+Security / privacy engineering
+Threat models, identity, policy, secrets, encryption, red team, privacy lifecycle and evidence
+Integration engineering
+Email, collaboration, directory, DevOps, monitoring, vault and migration connectors
+Quality engineering
+Automation across domain, contract, E2E, performance, chaos, accessibility and AI safety
+Platform / SRE
+Environments, observability, capacity, recovery, release artifacts and operational runbooks
+UX research / service design
+Employee, agent and process-owner usability; content design and accessibility
+Technical documentation / enablement
+Admin, API, integration, operating, recovery and governance documentation
+16.3 Decision rights
+Decision
+Accountable function
+Required consultation
+Product scope and native-vs-integration boundary
+Product leadership
+Architecture, ITSM domain leads, security and board sponsor
+Architecture exception or new platform dependency
+Principal architecture
+Component owners, security, SRE and data
+Autonomy tier / new AI tool
+Security + AI governance
+Product owner, process owner, audit and SRE
+Permission or segregation-of-duties model
+Security
+Process owner, product and audit
+Data classification, retention or residency
+Privacy/security
+Legal, product, data and platform
+Readiness / go-no-go
+Founder and designated steering group
+Product, engineering, QA, security and operations
+RISK
+17. Principal Risks, Dependencies and Mitigations
+The biggest risks come from scope, workflow correctness, data isolation, service context and privileged automation.
+Risk
+Why it matters
+Mitigation
+Attempting legacy-suite breadth too early
+Dilutes the native ITSM core and delays usable end-to-end journeys
+Hold the native/integration boundary; validate incident, request and change depth before adjacent domains.
+Over-generalized platform abstractions
+Framework work can grow without proving a real process
+Validate each abstraction against incident, request and change workflows before making it generic.
+Tenant isolation gaps
+Search, cache, events, vector retrieval or exports can leak data even when UI filtering is correct
+Central policy, tenant-aware keys/indexes and adversarial cross-tenant tests at every layer.
+Weak workflow durability
+Duplicate or lost approvals/actions undermine service and audit integrity
+Use a mature engine; idempotent actions; fault injection; replay and compensation evidence.
+Poor CMDB quality
+Impact, risk, routing and AI recommendations become misleading
+Source attribution, reconciliation, confidence, health metrics and visible stale-data warnings.
+AI presented as fact
+False certainty can create operational or governance harm
+Citations, evidence/confidence, safe refusal, human gates and use-case evaluation.
+Agent tools become a privileged bypass
+Automation could evade ordinary roles and change controls
+Typed tool gateway, reauthorization, segregation of duties, approval, vault references and postcheck.
+Customer-specific code forks
+Upgrades and security posture diverge
+Configuration-first product and stable, namespaced extension SDK with conformance tests.
+SLA calculation defects
+Service commitments and escalations become untrustworthy
+Deterministic time engine with daylight-saving, holiday, pause and boundary tests.
+Email/chat spoofing
+Untrusted senders could update privileged records
+Strong channel identity, correlation, OAuth/signed pipelines and limited unauthenticated behavior.
+Reporting pressure on transactional data
+Dashboards can harm service operations
+Snapshots/read models and ClickHouse/warehouse path for heavy analytics.
+Deployment-profile forks
+Private deployments can become unsupported products
+One codebase, environment profiles, signed configuration and conformance testing.
+BOARD DECISIONS
+18. Decisions and Questions Requiring Governance
+These are product-shaping choices -- not schedule or budget decisions.
+1
+Product boundary
+Confirm that deep AIOps, endpoint management, advanced asset management and SecOps remain integrations/extensions rather than core-native requirements.
+2
+Workflow standard
+Approve the principle of adopting a mature durable workflow engine rather than building custom orchestration durability.
+3
+Deployment promise
+Confirm which profiles are strategic commitments: multi-tenant SaaS, dedicated/private cloud and customer-hosted.
+4
+AI autonomy posture
+Approve the capability ladder and require policy-bounded, typed, reversible execution; prohibit unrestricted autonomy.
+5
+Memory posture
+Approve native record/knowledge memory as authoritative and an optional governed-memory adapter for cross-session use.
+6
+Technology consistency
+Confirm that AuthClaw identity, gateway, policy, agent, audit, encryption, console and infrastructure patterns remain the shared platform.
+7
+Data and compliance boundary
+Approve evidence-based internal claims and require independent legal/audit review before external certification language.
+8
+Configuration policy
+Confirm configuration-first delivery and prohibit customer-specific core-code forks except through governed product extensions.
+CONCLUSION
+19. Board-Level Product Conclusion
+AuthClaw ITSM is a logical portfolio extension because the hardest governance foundations already exist.
+The product thesis is coherent: combine a full ITSM operating model with AuthClaw's existing identity, policy, model gateway, agent, sensitive-data protection, audit and deployment foundation. This allows AI to be part of service operations without becoming an ungoverned side channel.
+The specification is intentionally deeper than a board overview because the key value -- and the key risk -- lies in how the parts join: records with workflows, workflows with permissions, AI with evidence, tools with approval, data with retention, and every action with audit.
+The current product plan is comprehensive, but the implementation status must stay candid. AuthClaw's shared platform is real and reusable; the ITSM product remains a defined build until domain modules and end-to-end acceptance evidence exist. The next governance task is to approve the scope boundaries, architecture invariants, autonomy posture and shared-platform decisions contained in this document.
+
+Recommended board interpretation
+Approve the product definition and architectural invariants as the internal north star. Treat the appendix as the source-controlled scope baseline. Require future progress reporting to show evidence by capability: implemented, integrated, security-tested, operationally proven and accepted -- without substituting activity or feature count for product readiness.
+
+APPENDICES
+Appendix A. Complete Capability Catalog
+This appendix reproduces the complete ITSM capability inventory at the specification baseline. Delivery dates and release sequencing are intentionally omitted. "Planned" reflects the source workbook status.
+ID
+Domain
+Capability
+Detailed requirement
+Priority
+Acceptance / done condition
+Status
+PLT-001
+Platform Foundation
+Multi-tenant organization model
+Organizations, business units, departments, locations, organizational units, groups and tenant hierarchy; support single-tenant mode.
+P0
+Tenant-scoped data is isolated; org hierarchy queries work.
+Planned
+PLT-002
+Platform Foundation
+SAML/OIDC SSO
+Enterprise SSO, IdP metadata, domain discovery, JIT provisioning, session controls.
+P0
+Configured IdP authenticates users and tenant session policy is enforced.
+Planned
+PLT-003
+Platform Foundation
+SCIM 2.0 provisioning
+Provision/deprovision users and groups; map memberships and role assignments.
+P1
+SCIM create/update/deactivate/group sync passes interoperability tests.
+Planned
+PLT-004
+Platform Foundation
+RBAC + scoped permissions
+Role, group, object, record, field and action permissions with default deny and least privilege.
+P0
+Unauthorized API/UI access is blocked and audited.
+Planned
+PLT-005
+Platform Foundation
+Delegated administration
+Domain/business-unit admins can manage only explicitly delegated scope.
+P1
+Delegated admin cannot read/mutate outside assigned domain.
+Planned
+PLT-006
+Platform Foundation
+Metadata-driven form engine
+Configurable fields, sections, conditional visibility, mandatory rules, references, computed fields.
+P0
+Admin changes form without code; UI/API validation stays consistent.
+Planned
+PLT-007
+Platform Foundation
+Human-readable numbering
+Configurable prefixes and unique sequences for INC/PRB/CHG/REQ/RITM/TASK/KB/CI.
+P1
+Numbers are unique, immutable, searchable.
+Planned
+PLT-008
+Platform Foundation
+Secure attachments
+Malware scanning hook, file type/size policy, encryption, signed access, retention, safe preview.
+P0
+Disallowed files are rejected; access is scoped and audited.
+Planned
+PLT-009
+Platform Foundation
+Journal and activity stream
+Internal work notes, public comments, state/field history, system actions, mentions and watchers.
+P0
+Actor/time/visibility/history retained; internal notes cannot leak.
+Planned
+PLT-010
+Platform Foundation
+Global search
+Cross-record ACL-aware search with facets, recency, synonyms and semantic option.
+P1
+Search returns only authorized records within latency target.
+Planned
+PLT-011
+Platform Foundation
+Locale/timezone/language framework
+Per-user timezone/locale, translated labels, date/number formats, content language tags.
+P2
+Same record renders correctly across timezones/locales.
+Planned
+PLT-012
+Platform Foundation
+Feature flags and tenant settings
+Staged rollout, tenant-specific enablement and environment configuration.
+P0
+Feature toggles without deployment and is audited.
+Planned
+PLT-013
+Platform Foundation
+Immutable audit trail
+Create/update/delete/auth/permission/admin/integration/AI/action events with tamper-resistant retention/export.
+P0
+Privileged actions emit immutable actor/target/correlation evidence.
+Planned
+PLT-014
+Platform Foundation
+Retention/legal hold/purge
+Per-record retention, legal hold, soft delete and reconciled purge from derived stores.
+P1
+Legal hold blocks purge; completed purge is verifiable.
+Planned
+INC-001
+Incident Management
+Multi-channel incident creation
+Portal, agent UI, email, API, chat and monitoring connector normalize into one incident schema.
+P0
+Source is retained and all channels create same canonical record.
+Planned
+INC-002
+Incident Management
+Impact x urgency priority matrix
+Configurable priority matrix with controlled override/reason and recalculation rules.
+P0
+Priority is deterministic; overrides are audited.
+Planned
+INC-003
+Incident Management
+Category/service/CI classification
+Hierarchical taxonomy, dependent choices, service/CI association and learned suggestions.
+P0
+Valid taxonomy dependencies and CI/service references are enforced.
+Planned
+INC-004
+Incident Management
+Assignment rules and queues
+Route by service, CI, category, location, VIP, schedule, load, skill and escalation.
+P0
+Routing selects valid queue/owner with trace.
+Planned
+INC-005
+Incident Management
+Incident state model
+New, assigned, in progress, pending, resolved, closed, canceled with configurable guarded transitions.
+P0
+Invalid transitions blocked in UI and API.
+Planned
+INC-006
+Incident Management
+Resolution validation
+Structured resolution code/notes, workaround/KB link, reopen policy and evidence rules.
+P0
+Cannot resolve without configured mandatory evidence.
+Planned
+INC-007
+Incident Management
+Swarming/collaboration
+Mentions, resolver swarm, watchers, linked chat/bridge, handoff notes and collaboration timeline.
+P1
+Collaboration does not change ownership unless policy says so.
+Planned
+INC-008
+Incident Management
+Parent/child/duplicate incidents
+Link duplicates and related incidents/problems/changes; configurable parent cascades.
+P1
+Relationships are bidirectional and auditable.
+Planned
+INC-009
+Incident Management
+Similar incidents/knowledge suggestions
+Surface authorized KB, known errors, recent similar incidents and service history.
+P1
+Recommendations cite authorized evidence.
+Planned
+INC-010
+Incident Management
+Incident SLA timers
+Response/assignment/restore/resolution timers, pause rules, business calendars and breach warnings.
+P0
+Timer math passes timezone/holiday/pause tests.
+Planned
+INC-011
+Incident Management
+Requester reopen policy
+Reopen within allowed window, preserve resolution and track reopen rate/reason.
+P1
+Reopen is auditable and SLA behavior follows policy.
+Planned
+MIM-001
+Major Incident
+Major incident candidate/declaration
+Promote candidate; capture impact, affected services, commander and comms lead.
+P0
+Declaration initializes major incident coordination workspace.
+Planned
+MIM-002
+Major Incident
+War-room workspace
+Timeline, tasks, stakeholders, services, bridge/chat links, decisions, updates and recovery checkpoints.
+P0
+Critical coordination context is available in one workspace.
+Planned
+MIM-003
+Major Incident
+Stakeholder communication plans
+Audience templates, cadence, approval, email/SMS/chat/status-page connectors and delivery status.
+P0
+Each communication records audience/channel/approver/time/status.
+Planned
+MIM-004
+Major Incident
+Post-incident review
+Timeline, impact, cause, lessons, actions, owners/dates; AI draft with evidence links.
+P1
+PIR sources are traceable and actions track to closure.
+Planned
+PRB-001
+Problem Management
+Create problem from incidents/analysis
+Manual, incident cluster, major incident, analytics signal or API.
+P0
+Problem retains source relationships and rationale.
+Planned
+PRB-002
+Problem Management
+Problem lifecycle/tasks
+Assess, RCA, fix in progress, resolved, closed with task orchestration.
+P0
+Transitions enforce RCA/fix evidence.
+Planned
+PRB-003
+Problem Management
+Root cause analysis workspace
+5 Whys/fishbone fields, evidence, hypotheses, timeline, validation and CI/service links.
+P0
+RCA method and evidence are reviewable.
+Planned
+PRB-004
+Problem Management
+Known error database
+Symptoms, affected services/CIs, workaround, fix status and review/expiry.
+P0
+Known errors are searchable from incident triage.
+Planned
+PRB-005
+Problem Management
+Incident clustering/trends
+Link incident frequency, time distribution, service impact and repeat patterns.
+P1
+Problem view quantifies related incident trend.
+Planned
+PRB-006
+Problem Management
+Corrective/preventive actions
+Create change/request/task from fix plan with owner/state/evidence/closure.
+P0
+Remediation actions are traceable to problem.
+Planned
+PRB-007
+Problem Management
+Proactive problem candidates
+Detect repeat/anomalous patterns and suggest problem creation with evidence/confidence.
+P1
+No silent auto-creation unless policy explicitly allows.
+Planned
+CHG-001
+Change Management
+Normal/standard/emergency change record
+Scope, affected services/CIs, implementation, test, rollback and validation plans.
+P0
+Required data varies correctly by change model.
+Planned
+CHG-002
+Change Management
+Explainable risk scoring
+CI criticality, outage, timing, past failure, blast radius, test evidence and conflicts.
+P0
+Risk score is reproducible with factor trace.
+Planned
+CHG-003
+Change Management
+Dynamic approval policies
+Risk/service/environment-based serial, parallel, quorum and delegated approvals.
+P0
+Approval path is deterministic and SoD-aware.
+Planned
+CHG-004
+Change Management
+Pre-authorized standard changes
+Template library, eligibility conditions and constrained auto-approval.
+P0
+Noncompliant standard change cannot use pre-authorization.
+Planned
+CHG-005
+Change Management
+Emergency change workflow
+Accelerated approval, mandatory reason/evidence and after-the-fact review.
+P0
+Emergency path remains controlled/auditable.
+Planned
+CHG-006
+Change Management
+Change calendar
+Service/CI/team/environment calendar, maintenance/blackout windows, freezes and overlays.
+P0
+Conflicts/windows are visible before authorization.
+Planned
+CHG-007
+Change Management
+Conflict detection
+Overlapping changes, shared dependencies, blackout violations, resource/on-call conflicts.
+P0
+Engine returns affected records and reasons.
+Planned
+CHG-008
+Change Management
+CAB workbench
+Agenda, change filters, risk summary, attendees, recommendations/votes, notes and decisions.
+P1
+CAB result updates change with decision trace.
+Planned
+CHG-009
+Change Management
+Implementation task orchestration
+Tasks, owners, prerequisites, checkpoints, evidence and completion gates.
+P0
+Required tasks/checkpoints block premature completion.
+Planned
+CHG-010
+Change Management
+Post-implementation review
+Success/failure, incidents caused, rollback, lessons and change-performance history.
+P0
+Outcome feeds future risk scoring.
+Planned
+CHG-011
+Change Management
+CI/CD change integration
+Pipeline APIs/webhooks auto-create/update evidence for deployments and approved changes.
+P1
+No shared human credentials; project identity is authenticated.
+Planned
+CHG-012
+Change Management
+AI change-plan draft
+Draft implementation/test/rollback/validation plan from approved patterns; human review required.
+P1
+Draft cites sources and cannot approve itself.
+Planned
+REQ-001
+Request Management
+Request + request items
+Order container with one/many items; each item has workflow, tasks, approvals and SLA.
+P0
+REQ/RITM/task hierarchy is traceable.
+Planned
+REQ-002
+Request Management
+Service catalog taxonomy
+Categories, searchable items, eligibility, owner, commercial metadata (excluded here) and audience.
+P0
+Only eligible items are discoverable/orderable.
+Planned
+REQ-003
+Request Management
+No-code catalog item builder
+Variables, conditions, validations, workflow binding, versioning, preview/test/publish.
+P0
+Admin publishes new item without code after validation.
+Planned
+REQ-004
+Request Management
+Request approval matrix
+Manager, owner, organizational units, data owner/security with serial/parallel/quorum patterns.
+P0
+Approval path uses current request context and is audited.
+Planned
+REQ-005
+Request Management
+Reusable fulfillment workflows
+Human tasks, integrations, waits, validation and compensation/rollback.
+P0
+Reusable subflow can serve multiple catalog items.
+Planned
+REQ-006
+Request Management
+Requester-friendly status
+Progress, blockers, next approver, timestamps and notifications without internal-only details.
+P0
+Displayed status matches workflow truth.
+Planned
+REQ-007
+Request Management
+Cancel/withdraw/compensate
+Policy-controlled cancellation with safe rollback/compensation for completed steps.
+P1
+Irreversible completed actions are explicitly disclosed.
+Planned
+REQ-008
+Request Management
+Service bundles/kits
+Bundle onboarding/offboarding/device/access requests into related child items.
+P2
+Bundle shares context while retaining child lifecycle.
+Planned
+REQ-009
+Request Management
+Catalog eligibility policy
+Geography, employment, department, role, license, device and, -center eligibility.
+P1
+Crafted API request cannot bypass eligibility.
+Planned
+REQ-010
+Request Management
+Conversational catalog ordering
+Chat gathers required fields, checks eligibility and summarizes before submit.
+P1
+AI never skips mandatory/approval controls.
+Planned
+KB-001
+Knowledge Management
+Article lifecycle
+Draft, review, publish, expire, retire with owner, reviewers, audience, taxonomy and versioning.
+P0
+Only approved published version is requester-visible.
+Planned
+KB-002
+Knowledge Management
+Rich editor/templates
+How-to, troubleshooting, known-error, FAQ/policy templates with safe rich content.
+P1
+Content safely renders and templates are reusable.
+Planned
+KB-003
+Knowledge Management
+Full-text + semantic search
+Keyword/facets/synonyms/typo tolerance/semantic retrieval with ACL-aware ranking.
+P0
+Restricted article/snippet never leaks.
+Planned
+KB-004
+Knowledge Management
+Feedback/usefulness
+Helpful/not helpful, comments, use, deflection linkage and stale-content flags.
+P1
+Owner gets actionable quality metrics.
+Planned
+KB-005
+Knowledge Management
+Review/expiry policy
+Periodic review, orphan detection, owner reassignment and expiry alerts.
+P1
+Expired content is excluded from default answers.
+Planned
+KB-006
+Knowledge Management
+AI-assisted drafting
+Draft article from resolved work with citations, tags and redaction; human publish gate.
+P1
+Generated content is traceable and requires review.
+Planned
+CMDB-001
+CMDB & Service Graph
+Extensible CI class model
+Base CI plus service, app, server, VM, DB, network, cloud, endpoint and software component classes.
+P0
+Class inheritance and tenant extensions are supported.
+Planned
+CMDB-002
+CMDB & Service Graph
+Typed CI relationships
+Depends on/runs on/hosted on/connects to/owned by/supports/part of with direction rules.
+P0
+Upstream/downstream impact queries are supported.
+Planned
+CMDB-003
+CMDB & Service Graph
+Identification and reconciliation
+Deterministic identity, source precedence, merge, duplicate detection and attribute ownership.
+P0
+Multi-source CI updates reconcile without destructive overwrite.
+Planned
+CMDB-004
+CMDB & Service Graph
+CMDB health metrics
+Completeness, correctness, compliance, staleness, duplicates and orphan relationships.
+P1
+Health score drills to failing CIs.
+Planned
+CMDB-005
+CMDB & Service Graph
+Bulk CI import
+CSV/JSON/API mapping, transform, dry-run, error queue, source attribution and reconciliation.
+P0
+Dry run shows insert/update/conflict before commit.
+Planned
+CMDB-006
+CMDB & Service Graph
+Connector framework
+Scheduled connectors for cloud, endpoint, directory, monitoring and asset sources.
+P1
+Checkpoint/retry/idempotency/source attribution work.
+Planned
+CMDB-007
+CMDB & Service Graph
+Business/technical service model
+Service offerings, owners, consumers, criticality, support groups, dependencies and hours.
+P0
+Incidents/changes calculate affected service context.
+Planned
+CMDB-008
+CMDB & Service Graph
+Impact analysis API
+Return upstream services likely impacted by CI/service issue or change with explainable graph path.
+P0
+Bounded graph path respects ACL and tenant.
+Planned
+CMDB-009
+CMDB & Service Graph
+Service dependency map
+Interactive relationship graph with depth/filter limits and incident/change overlays.
+P1
+Map is responsive and graph traversal is bounded.
+Planned
+SLA-001
+SLA & Commitments
+Configurable SLA/OLA/UC
+Conditions, targets, calendars, pause/resume/stop rules and retroactive policy.
+P0
+Timer engine passes deterministic boundary tests.
+Planned
+SLA-002
+SLA & Commitments
+Business calendars/holidays
+Tenant calendars, timezones, holidays, exceptions, 24x7/follow-the-sun.
+P0
+Business elapsed time handles DST/holidays.
+Planned
+SLA-003
+SLA & Commitments
+Breach prediction/escalation
+Threshold warnings, manager/on-call escalation and optional reassignment.
+P1
+Warning/breach fires once with timer trace.
+Planned
+WKS-001
+Agent Workspace
+My work/team queues
+Saved filters, SLA risk, priority, assignment, service, skill and aging.
+P0
+Queue results are ACL-aware.
+Planned
+WKS-002
+Agent Workspace
+Unified case workspace
+Form, activity, CIs/services, SLAs, tasks, approvals, KB, similar records and requester context.
+P0
+Core context is available without multiple screens.
+Planned
+WKS-003
+Agent Workspace
+Templates/macros/quick actions
+Response templates and safe multi-step quick actions: child/problem/change/KB/task.
+P1
+Quick actions are transactional and audited.
+Planned
+WKS-004
+Agent Workspace
+Agent copilot panel
+Summarize, explain SLA, suggest next step, draft reply, retrieve knowledge and handoff summary.
+P0
+Outputs cite evidence and respect field ACL.
+Planned
+SSP-001
+Self-Service
+Responsive employee portal
+Search, help, request, ticket status, approvals, announcements/outages and favorites.
+P0
+Desktop/mobile web and keyboard accessibility pass.
+Planned
+SSP-002
+Self-Service
+My incidents/requests
+Unified history, filters, status, comments, attachments, reopen/cancel where allowed.
+P0
+Only own/delegated records visible.
+Planned
+SSP-003
+Self-Service
+My approvals
+Approve/reject/delegate with context and step-up authentication for high risk.
+P0
+Decision captures actor/context/time.
+Planned
+SSP-004
+Self-Service
+Conversational support
+Knowledge Q&A, ticket/status, catalog ordering and human handoff with summary.
+P1
+Permissions persist across chat/handoff.
+Planned
+SSP-005
+Self-Service
+Service status/outage page
+Approved planned maintenance, major incident/outage information and subscriptions.
+P1
+Only approved status content is published.
+Planned
+SSP-006
+Self-Service
+WCAG-aligned UI
+Keyboard, semantic labels, focus, contrast, reduced motion and screen-reader support.
+P0
+Core journeys pass automated/manual accessibility gate.
+Planned
+AUT-001
+Workflow & Automation
+Durable workflow engine
+Stateful workflows with humans, timers, waits, retries, compensation, subflows, versions and correlation IDs.
+P0
+Workflow survives node restart and actions are idempotent.
+Planned
+AUT-002
+Workflow & Automation
+Visual workflow builder
+Triggers, conditions, actions, approvals, branches, subflows, testing, publish/version rollback.
+P0
+Non-developer builds/tests/publishes supported flow safely.
+Planned
+AUT-003
+Workflow & Automation
+Business rule engine
+Validation/defaults/assignment/actions with explicit order, trace and recursion guard.
+P0
+Rules execute deterministically and are traceable.
+Planned
+AUT-004
+Workflow & Automation
+Scheduled jobs
+Cron/interval jobs, timezone, concurrency, missed-run policy and history.
+P0
+Duplicate scheduled execution is prevented.
+Planned
+AUT-005
+Workflow & Automation
+Reusable action library
+HTTP/email/webhook/directory/cloud/record CRUD/approval/AI typed actions.
+P1
+Each action has typed schema and permission boundary.
+Planned
+AUT-006
+Workflow & Automation
+Execution policy/dry run
+Allow/deny by environment, tenant, risk and data class; preview side effects.
+P0
+High-risk actions cannot execute outside policy.
+Planned
+NTF-001
+Notifications
+Inbound/outbound email
+Thread-safe ingestion, templates, correlation, bounce/retry and secure attachment behavior.
+P0
+Spoofed sender cannot gain privileged mutation.
+Planned
+NTF-002
+Notifications
+Rule-driven multi-channel notifications
+Email/SMS/chat/web notifications with throttling, digest, templates and localization.
+P0
+No duplicate notification storms; delivery trace exists.
+Planned
+NTF-003
+Notifications
+Teams/Slack integration
+Create/view/update tickets, approvals, support chat and notifications.
+P1
+Workspace/tenant binding and least privilege scopes.
+Planned
+ONC-001
+On-Call Management
+On-call rotations
+Primary/secondary, timezone, overrides, holidays and follow-the-sun schedules.
+P1
+Current on-call resolves correctly at any time.
+Planned
+ONC-002
+On-Call Management
+Escalation policies
+Sequential/parallel escalation, ack timeout, retries and channels.
+P1
+Stops on acknowledgement and records timeline.
+Planned
+ONC-003
+On-Call Management
+Shift handoff summary
+Open incidents/MIMs/risky changes/SLA risks with AI-assisted summary.
+P2
+Summary cites source records and team scope.
+Planned
+ANA-001
+Analytics & Reporting
+Role-based dashboards
+Service desk, manager, change, problem, CMDB, service owner and executive dashboards.
+P0
+Permission-aware filters and drilldown.
+Planned
+ANA-002
+Analytics & Reporting
+Core KPI library
+MTTA, MTTR, FCR, reopen, backlog age, SLA, CSAT, deflection, change success and repeat incidents.
+P0
+Metric definitions are documented/reproducible.
+Planned
+ANA-003
+Analytics & Reporting
+Ad hoc report builder
+Saved datasets, filters, grouping, aggregation, charts and scheduled export.
+P1
+Field security applies to report builder.
+Planned
+ANA-004
+Analytics & Reporting
+Historical metric snapshots
+Daily/weekly/monthly snapshots independent of mutable current state.
+P1
+Historical metric doesn't change after later ticket edits.
+Planned
+ANA-005
+Analytics & Reporting
+CSAT surveys
+Post-resolution/fulfillment surveys, comments, sampling and opt-out.
+P1
+Secure survey results aggregate by allowed dimensions.
+Planned
+INT-001
+Integration Platform
+REST API v1
+CRUD/query/action APIs, pagination, filtering, sparse fields, optimistic concurrency and OpenAPI.
+P0
+Core UI mutations are API/service-backed and documented.
+Planned
+INT-002
+Integration Platform
+Webhook subscriptions
+Signed outbound events with retry/backoff/DLQ/replay/idempotency.
+P0
+Replay doesn't create duplicate side effects.
+Planned
+INT-003
+Integration Platform
+Internal domain event bus
+Versioned record/SLA/workflow/notification/AI/security events.
+P0
+At-least-once with idempotent consumers.
+Planned
+INT-004
+Integration Platform
+Vault integration
+Credential references only; cloud vault/CyberArk/HashiCorp-style interfaces; never plaintext in logs/config.
+P0
+Secret cannot be retrieved through product after save.
+Planned
+INT-005
+Integration Platform
+Entra ID/Google Workspace connectors
+Users/groups plus approved actions under least-privilege OAuth/service principals.
+P1
+Scopes and each action are audited.
+Planned
+INT-006
+Integration Platform
+Monitoring event intake
+Normalized alert/event endpoint and mapping/correlation hooks.
+P1
+Duplicate source events correlate by policy.
+Planned
+INT-007
+Integration Platform
+GitHub/GitLab/Azure DevOps/Jenkins connectors
+PR/build/deploy/change evidence and incident links.
+P1
+Signed events map to authenticated repo/project.
+Planned
+INT-008
+Integration Platform
+Migration toolkit
+Users/groups/incidents/requests/KB/CIs/attachments with mapping, dry run, checkpoint and reconciliation.
+P1
+Large import resumes and gives row-level report.
+Planned
+AI-001
+AI & Agentic
+Model gateway
+Provider-neutral model registry/routing, tenant allowlist, usage / latency, redaction and retention controls.
+P0
+All LLM calls flow through gateway and can be disabled per tenant.
+Planned
+AI-002
+AI & Agentic
+Permission-aware RAG
+Retrieve KB/tickets/known errors/CI/service context with pre-retrieval ACL filtering and citations.
+P0
+Unauthorized documents cannot enter context/output.
+Planned
+AI-003
+AI & Agentic
+Incident triage agent
+Suggest classification/service/CI/assignment and related major incident/problem candidates with confidence/evidence.
+P0
+Human can override; evidence is shown.
+Planned
+AI-004
+AI & Agentic
+Investigation agent
+Evidence-backed investigation plan, knowledge/history retrieval and permitted diagnostics.
+P0
+Conclusions cite evidence; side-effect tools require policy.
+Planned
+AI-005
+AI & Agentic
+Bounded resolution agent
+Execute approved low-risk runbooks with precheck/postcheck/rollback and human gate by risk.
+P1
+Allowlisted action+scope only; complete audit.
+Planned
+AI-006
+AI & Agentic
+Change planning agent
+Draft implementation/test/rollback plan and identify missing evidence.
+P1
+Cannot approve; sources cited.
+Planned
+AI-007
+AI & Agentic
+Conflict assessor
+Explain service graph, schedule and blackout conflicts alongside deterministic rule engine.
+P1
+AI doesn't override authoritative conflict rules.
+Planned
+AI-008
+AI & Agentic
+Problem/RCA assistant
+Cluster repeat incidents, summarize symptoms and propose hypotheses/evidence collection.
+P1
+Does not assert root cause without evidence.
+Planned
+AI-009
+AI & Agentic
+Knowledge generation agent
+Draft KB/known-error/PIR from resolved work with citations and redaction.
+P1
+No auto-publish.
+Planned
+AI-010
+AI & Agentic
+Request fulfillment agent
+Gather missing fields and execute approved low-risk fulfillment under eligibility/approval policy.
+P1
+Cannot bypass eligibility/approval/SoD.
+Planned
+AI-011
+AI & Agentic
+Case summarization
+Cited summaries for long timelines, escalation and handoffs.
+P0
+Private fields not exposed to unauthorized persona.
+Planned
+AI-012
+AI & Agentic
+Draft requester response
+Draft factual update from record + approved KB; no invented ETA.
+P1
+Unsupported claims are flagged/omitted.
+Planned
+AI-013
+AI & Agentic
+AI policy engine
+Use-case model/tool/data-class/autonomy/, /steps/approval policy.
+P0
+Policy evaluates before every model/tool invocation.
+Planned
+AI-014
+AI & Agentic
+Agent execution trace
+Persist task goal, evidence refs, tools, approvals, model/version,  outcomes and failures.
+P0
+Reviewer can reconstruct why action occurred.
+Planned
+AI-015
+AI & Agentic
+Human-in-the-loop checkpoints
+Dynamic approval/review by action risk, confidence, criticality and data sensitivity.
+P0
+Autonomy cannot exceed policy tier.
+Planned
+AI-016
+AI & Agentic
+AI evaluation harness
+Golden sets for task success, groundedness, leakage, tool correctness, regressions, and latency.
+P0
+Release blocks on critical evaluation regression.
+Planned
+AI-017
+AI & Agentic
+Governed memory boundary
+Native short-lived case context; optional GMH adapter for governed cross-session memory.
+P1
+ITSM works with GMH on/off; memory access is policy-scoped.
+Planned
+AI-018
+AI & Agentic
+Agent handoff protocol
+Typed envelope: task, evidence, permissions, constraints, unresolved questions, actions, provenance and expiry.
+P1
+Receiving agent cannot inherit privileges implicitly.
+Planned
+AI-019
+AI & Agentic
+Prompt injection/tool abuse defenses
+Untrusted-content labels, instruction hierarchy, tool validation, retrieval isolation and egress controls.
+P0
+Adversarial tests show no privilege escalation.
+Planned
+AI-020
+AI & Agentic
+AI usage analytics
+Tokens/usage / latency/task success/fallback/override/blocked action/model mix by tenant/use case.
+P1
+Usage data is tenant-isolated.
+Planned
+ADM-001
+Administration
+Admin console
+Tenant/org/roles/forms/taxonomy/workflows/SLAs/notifications/integrations/AI policy/flags.
+P0
+Admin changes are versioned/audited.
+Planned
+ADM-002
+Administration
+Configuration promotion
+Signed config bundles dev-->test-->prod with diff/dependency check/rollback; excludes secrets.
+P1
+Promotion is deterministic and secret-free.
+Planned
+DEV-001
+Developer Platform
+Typed API SDKs
+Generated TypeScript/Python clients from OpenAPI with auth, pagination, retries, idempotency.
+P2
+SDK contract tests match API.
+Planned
+DEV-002
+Developer Platform
+Extension points
+Webhooks, custom fields/tables namespace, UI slots, workflow actions and connector SDK.
+P1
+Extensions cannot mutate core runtime/schema unsafely.
+Planned
+Appendix B. Workflow Reference
+Reference lifecycle and exception behavior. Each workflow must be implemented through governed domain actions and a durable orchestration layer.
+ID
+Process
+Step / state
+Entry criteria
+Required actions
+Automation / AI
+Control
+Exit criteria
+Failure / exception
+WF-INC-01
+Incident
+New / Intake
+Valid requester/source + minimum description
+Normalize source, validate, classify basics, start SLA
+AI triage optional
+RBAC/input validation
+Created and routed
+Quarantine malformed/unsafe input
+WF-INC-02
+Incident
+Assigned
+Assignment resolved
+Notify queue; establish ownership
+Routing recommendation
+Queue/skill policy
+Accepted/auto-assigned
+Escalate if not acknowledged
+WF-INC-03
+Incident
+In Progress
+Owner assigned
+Investigate, communicate, update notes, create tasks
+Investigation copilot
+Tool actions policy-gated
+Resolved or pending
+Swarm/escalate/MIM candidate
+WF-INC-04
+Incident
+Pending
+Awaiting requester/vendor/change/problem
+Set reason and resume condition
+Reminder automation
+SLA pause policy
+Condition satisfied
+Auto-resume/escalate
+WF-INC-05
+Incident
+Resolved --> Closed
+Resolution evidence complete
+Notify requester; reopen window
+Resolution summary draft
+Closure policy
+Accepted/window expires
+Reopen with reason
+WF-MIM-01
+Major Incident
+Candidate --> Declared
+High impact/correlation
+Assess blast radius; assign commander/comms; start war room
+AI impact summary
+Authorized declaration role
+Declared/rejected
+Return to standard incident
+WF-MIM-02
+Major Incident
+Restore --> PIR
+Service restored
+PIR, problem/action items, timeline/comms review
+AI PIR draft
+Human review
+PIR approved/actions tracked
+Overdue action escalation
+WF-PRB-01
+Problem
+Assess --> RCA
+Problem created
+Validate scope, link incidents, hypotheses/evidence
+Clustering/RCA assist
+Problem manager
+Root cause/workaround evidence
+Continue investigation
+WF-PRB-02
+Problem
+Fix --> Close
+RCA validated
+Create change/tasks; validate permanent fix
+Suggested remediation
+Change controls
+Fix verified
+Backout/new hypothesis
+WF-CHG-01
+Change
+Draft --> Assess
+Initiator authorized
+Plan, risk, CIs/services, tests, rollback; conflict check
+AI plan/conflict assist
+RBAC/policy
+Approval path calculated
+Request more evidence
+WF-CHG-02
+Change
+Authorize --> Schedule
+Assessment complete
+Approvals/CAB, reserve window, notify
+AI explanation only
+SoD/approval/freeze rules
+Authorized/scheduled
+Reject/expire/reassess
+WF-CHG-03
+Change
+Implement --> Review
+Window active
+Execute tasks/checkpoints, capture evidence, validate outcome
+Bounded runbooks optional
+Execution policy
+Success/failure recorded
+Rollback/incident/problem
+WF-REQ-01
+Request
+Submit --> Approve
+Eligible item + required vars
+Create request/items; evaluate approvals
+Conversational collection
+Eligibility/SoD
+Approved/rejected
+Reject invalid/ineligible
+WF-REQ-02
+Request
+Fulfill --> Close
+Approved/no approval
+Execute tasks/integrations, validate, compensate if needed
+Bounded automation
+Action policy
+All items complete
+Manual intervention/cancel
+WF-KB-01
+Knowledge
+Draft --> Review --> Publish
+Author entitled
+Author/review/version/audience/expiry
+AI draft optional
+Publisher gate
+Published version
+Reject to draft
+WF-AI-01
+Agentic Action
+Plan --> Authorize
+Use case enabled
+Build evidence-backed structured plan + requested tools
+Agent planning
+AI policy + RBAC + SoD
+Approved action set
+Block/ask human
+WF-AI-02
+Agentic Action
+Execute --> Verify
+Authorized action set
+Execute idempotently; postcheck; compensate/rollback
+Agent runtime
+Tool gateway/vault
+Goal achieved/safe fail
+Rollback/stop/escalate
+Appendix C. Role and Permission Templates
+Role
+Purpose
+Typical read scope
+Create / update
+Approve
+Administer
+Sensitive restrictions
+Key audit events
+Requester
+Employee/end-user support
+Own/delegated incidents/requests, published KB/status
+Own comments/attachments; create incident/request
+Only separate delegated approvals
+No
+No internal notes or other-user records
+login, create/update, attachment, approval
+IT Agent / Fulfiller
+Resolve support work
+Assigned/team queue + related service context
+Incidents/tasks/work notes/requester updates
+Normally no policy approvals
+No
+No security/role/AI policy changes
+assignment/state/resolution/tool actions
+Incident Manager
+Coordinate incident process
+Domain incidents/service context
+Incident process fields/MIM candidate
+Declare MIM if entitled
+Limited incident config
+Cannot bypass privileged controls
+MIM declaration/escalation
+Incident Commander
+Lead major incident
+MIM, affected services/CIs/stakeholders
+MIM timeline/tasks/comms
+Comms if policy grants
+No
+No security/admin change
+MIM decisions/messages
+Problem Manager
+Own problem lifecycle
+Problems/incidents/changes/KB/CIs
+RCA/known errors/remediation
+Problem closure if policy grants
+Problem templates
+Change SoD still applies
+RCA/known-error publish/closure
+Change Initiator
+Submit changes
+Own/team changes + relevant CI/service
+Draft/update before lock points
+No
+No
+Cannot alter risk/approval policy
+change edits
+Change Manager
+Govern changes
+Authorized-domain changes/impact
+Assess/schedule/review
+Per policy
+Change models/CAB if delegated
+SoD prevents inappropriate self-approval
+risk override/approval/emergency
+CAB Member
+Review changes
+CAB agenda/evidence
+Comments/recommendation
+Vote/recommend only
+No
+No unrelated records
+CAB decision
+Knowledge Author
+Create knowledge
+Permitted draft/published KB + source cases
+Draft/update articles
+No publish unless publisher
+No
+Cannot widen audience beyond entitlement
+article edits
+Knowledge Publisher
+Govern knowledge
+KB in domain
+Review metadata
+Publish/retire
+Knowledge policy
+Cannot expose restricted source facts
+publish/retire/audience
+CMDB Admin
+Maintain configuration data
+CI/service graph domain
+Import/reconcile/merge/retire
+Reconciliation approval if configured
+CMDB schema/mappings
+No security admin by default
+merge/source precedence
+Service Owner
+Own service quality
+Owned service + related work/SLAs
+Service metadata/subscriptions
+Selected service approvals
+Service config
+Cannot bypass change controls
+criticality/SLA changes
+Integration Admin
+Configure connectors
+Connector config/logs
+Connections/mappings/schedules
+Activation if policy grants
+Integration catalog
+Never view secret values after save
+connection/secret-ref changes
+AI Admin
+Configure AI
+AI config/traces/evals by policy
+Model routing/use-case config
+AI policy if entitled
+AI settings
+No security-role assignment
+model/policy/autonomy changes
+Security Admin
+Security/compliance
+Security config/audit/identity metadata
+Policies/security settings
+Break-glass approvals
+Security config
+No business fulfillment unless separate role
+role/break-glass/retention/key events
+Auditor
+Independent review
+Read-only audit/reports
+No
+No
+No
+No mutation
+audit exports/searches
+Tenant Admin
+Tenant configuration
+Tenant data/config except restricted secrets
+Users/groups/forms/taxonomy/config
+Delegated admin approvals
+Tenant settings
+No platform-operator data
+admin changes
+Platform Operator
+Operate SaaS
+Operational metadata; tenant content only via break-glass
+Platform ops
+No customer business approvals
+Infrastructure/platform
+Strict support-access controls
+support access/deploy/break-glass
+Appendix D. Canonical Data Model
+Physical schemas may normalize or partition further. Any commercial or financial fields are outside this document.
+Entity
+Purpose
+Key fields
+Relationships
+Tenant key
+Lifecycle
+Sensitive data
+Retention
+Constraints
+API resource
+tenant
+Customer isolation domain
+id,name,region,status,config_profile
+owns tenant data
+id
+active/suspended/closed
+Commercial/config
+Contract/legal
+unique slug
+platform-only
+user
+Identity profile
+id,external_id,email,display_name,locale,timezone,status
+org,groups,roles,manager
+tenant_id
+active/inactive
+PII
+Identity policy
+external_id/email
+/users
+group
+Resolver/business group
+id,name,type,manager
+members,roles,queues,services
+tenant_id
+active/inactive
+Low
+Business
+name/domain
+/groups
+task
+Base work record
+id,number,type,state,priority,summary,assignee/group,timestamps
+parent/child,SLA,journal
+tenant_id
+generic lifecycle
+May contain PII
+Module policy
+number/state/assignment/time
+/tasks
+incident
+Service interruption
+task_id,impact,urgency,category,service_id,ci_id,resolution
+problem,MIM,changes
+tenant_id
+new-->closed
+Support content
+Configurable
+priority/service/assignment/time
+/incidents
+major_incident
+High-impact coordination
+incident_id,commander,comms_lead,impact,declared/restored
+services,stakeholders,PIR
+tenant_id
+candidate-->closed
+Operational
+Longer evidence
+declared/service
+/major-incidents
+problem
+Underlying cause
+task_id,RCA,workaround,known_error,fix
+incidents,changes,KB,CIs
+tenant_id
+assess-->closed
+Support content
+Configurable
+state/service/time
+/problems
+change_request
+Controlled change
+task_id,model,risk,schedule,plans
+CIs,services,approvals,tasks,incidents
+tenant_id
+draft-->closed
+Operational
+Long audit
+schedule/risk/state
+/changes
+request
+Order container
+task_id,requested_for,opened_by,state
+request_items
+tenant_id
+submitted-->closed
+PII possible
+Configurable
+requested_for/time
+/requests
+request_item
+Catalog fulfillment item
+task_id,request_id,item_version,variables,state
+tasks,approvals
+tenant_id
+pending-->closed
+Sensitive variables possible
+Catalog policy
+item/state
+/request-items
+catalog_item
+Orderable service/product
+id,version,name,category,eligibility,variable_schema,flow_version
+service/workflow
+tenant_id
+draft/published/retired
+Policy metadata
+Retain versions
+key/version
+/catalog-items
+knowledge_article
+Knowledge
+id,number,version,title,body,taxonomy,audience,owner,expiry
+source records/feedback
+tenant_id
+draft-->retired
+Can be sensitive
+Retain versions
+fulltext/audience
+/knowledge
+configuration_item
+Managed CI
+id,class,name,identifiers,criticality,owner,source,lifecycle
+relationships,services,work
+tenant_id
+planned-->retired
+Infra metadata
+Retain history
+identity indexes
+/cis
+ci_relationship
+Service graph edge
+parent_ci,child_ci,type,source,confidence,validity
+CIs
+tenant_id
+active/expired
+Infra metadata
+Retain history
+unique active edge
+/ci-relationships
+service
+Business/technical service
+id,name,type,owner,criticality,support_group,hours
+offerings,CIs,SLAs
+tenant_id
+active/retired
+Business metadata
+Long-lived
+name/type
+/services
+sla_definition
+SLA policy
+id,target_type,conditions,duration,calendar,pause/stop
+task_sla
+tenant_id
+draft/active/retired
+Low
+Retain versions
+active/version
+/sla-definitions
+task_sla
+Running SLA
+task_id,definition_version,start,pause,due,breach,elapsed
+task
+tenant_id
+running/paused/completed
+Low
+Task retention
+task/state/due
+/task-slas
+approval
+Decision record
+id,target,approver,state,requested/decided,comment
+change/request/task
+tenant_id
+requested-->decision
+PII possible
+Audit retention
+target/state/approver
+/approvals
+journal_entry
+Activity item
+id,task_id,type,visibility,author,body,timestamp
+task
+tenant_id
+append-only
+PII/secrets possible
+Record policy
+task/time
+/activities
+attachment
+File metadata
+id,target,object_key,filename,mime,size,hash,scan_status
+any record
+tenant_id
+uploaded/quarantined/available/deleted
+Potential sensitive
+Object policy
+target/hash
+/attachments
+workflow_definition
+Versioned automation
+id,key,version,schema,status,checksum
+catalog/change/etc
+tenant_id
+draft/published/retired
+Config
+Retain versions
+key/version
+/workflows
+workflow_execution
+Durable execution
+id,definition_version,target,state,current_step,correlation_id
+tasks/approvals/actions
+tenant_id
+running-->complete
+Context may be sensitive
+Operational retention
+target/state/time
+/workflow-executions
+integration_connection
+Connector config
+id,type,auth_ref,endpoint,scopes,status
+sync jobs/actions
+tenant_id
+active/disabled
+Secret reference only
+Config
+type/status
+/connections
+audit_event
+Security/admin trace
+id,event_type,actor,subject,action,hashes,correlation,time
+any
+tenant_id
+append-only
+Security sensitive
+Long/immutable
+time/type/actor
+restricted
+ai_execution
+AI task trace
+id,use_case,model,goal,evidence_refs,tool_calls,policy,outcome
+records/approvals
+tenant_id
+planned-->complete/blocked
+Prompts may be sensitive
+AI policy
+use_case/time/model
+restricted
+notification
+Delivery trace
+id,event,channel,recipient,template,status,provider_id
+source record
+tenant_id
+queued/sent/failed
+Contact data
+Operational
+status/time/recipient
+/notifications
+metric_snapshot
+Historical KPI fact
+metric,dimensions,period,value,definition_version
+source events
+tenant_id
+immutable
+Aggregated
+Analytics
+metric/period/dim
+/analytics
+Appendix E. API and Integration Contracts
+ID
+Interface
+Direction
+Use case
+Auth
+Core contract
+Idempotency
+Retry / rate
+Security
+Acceptance
+API-001
+REST /incidents
+Bi-directional
+Create/query/update/resolve incident; activities/relationships
+OAuth2/OIDC
+Versioned OpenAPI; ETag/version concurrency
+Idempotency-Key create/actions
+Tenant quota + 429
+Object/field ACL, tenant binding, audit
+Contract + negative auth tests
+API-002
+REST /requests /catalog-items
+Bi-directional
+Browse eligible catalog, order, track
+OIDC/OAuth2
+Eligibility server-side; typed variables
+Order idempotency key
+Quota
+No crafted-payload eligibility bypass
+Duplicate submit returns same order
+API-003
+REST /changes
+Bi-directional
+DevOps change create/update/evidence
+OAuth2 workload identity
+Restricted action endpoints
+Idempotent actions
+Quota
+SoD/approval cannot be bypassed
+Pipeline integration test
+API-004
+REST /cis
+Bi-directional
+CMDB import/query/impact
+OAuth2 service token
+Bulk + source attribution + dry run
+Source+external_id
+Batch limits
+Reconciliation + tenant isolation
+Conflict/reconcile tests
+API-005
+Knowledge/Search API
+Read/controlled write
+Portal/agent search, authoring
+OIDC/OAuth2
+ACL-aware results + versions
+Write idempotency
+Search quotas
+No snippet leakage
+ACL leakage suite
+API-006
+Webhook subscriptions
+Outbound
+Domain/SLA/workflow/security events
+HMAC + optional mTLS
+Versioned CloudEvents-like envelope
+event_id
+Backoff/DLQ/replay
+Signing rotation/allowlist optional
+Replay idempotent
+API-007
+Inbound event endpoint
+Inbound
+Monitoring/AIOps signals
+OAuth2/mTLS
+source_event_id,severity,resource hints,time,payload ref
+source_event_id
+Burst control
+Validate/quarantine untrusted payload
+Correlation tests
+API-008
+Email ingestion
+Inbound
+Create/update records from mailbox
+Provider OAuth/signed pipeline
+Thread/message correlation
+Message-ID
+Retry/dedupe
+Sender identity rules + file scan
+Spoof cannot privilege-update
+API-009
+Teams/Slack
+Bi-directional
+Chat support, approvals, notifications
+OAuth2
+Bot/actions/deep links
+provider event id
+Provider retry
+Workspace<-->tenant binding/min scopes
+Cross-tenant token rejected
+API-010
+Directory connector
+Bi-directional
+User/group sync and approved access action
+SCIM/OAuth2
+SCIM + typed actions
+external id
+Checkpoint/retry
+Vault, least privilege
+Deprovision reconciliation
+API-011
+DevOps connectors
+Bi-directional
+Build/PR/deploy/change evidence
+OAuth app/workload identity
+Signed webhooks + APIs
+provider event id
+Provider retry
+Repo/project allowlist
+Signature/project mapping tests
+API-012
+Vault connector
+Read by reference
+Resolve secret at execution
+Workload identity/mTLS
+secret_ref only
+N/A
+Short cache TTL
+Never log/return secret; audit access
+Redaction test
+API-013
+SIEM export
+Outbound
+Security/audit streaming
+mTLS/OAuth
+Normalized events
+event_id
+Buffered/replay
+Redact business content by policy
+Loss/replay monitoring
+API-014
+Tenant data export
+Outbound
+Portability/backup
+Admin + step-up
+Async CSV/JSON/NDJSON + attachment manifest
+export job id
+Async
+Encrypted expiring link + audit
+Core record reconstruction
+Appendix F. AI Agent and Skill Specifications
+Agent / skill
+Trigger
+Inputs
+Read context
+Tools
+Autonomy
+Human gate
+Outputs
+Safety / policy
+Evaluation
+Fail-safe
+Incident Triage
+New/untriaged incident
+Description/requester/channel/service hints
+Incident fields,taxonomy,CMDB,known errors,similar incidents
+Suggest classification/assignment/link candidates
+Recommend only
+Agent accepts/overrides
+Suggestions + confidence/evidence
+ACL-aware retrieval; no sensitive inference
+Classification/routing accuracy, override
+Low confidence --> default queue
+Incident Investigation
+Agent request/policy trigger
+Incident/activity/diagnostics/service/CI
+KB,known errors,related incidents,changes,service graph
+Read-only diagnostics/request data/draft plan
+Recommend/read-only
+Write/action approval
+Evidence-backed investigation plan
+Tool allowlist,prompt-injection defense
+Groundedness,next-step utility,tool correctness
+Stop on conflict/inaccessible data
+Incident Resolution
+Eligible low-risk case
+Validated goal/runbook/target identity
+Minimum case/runbook context
+Typed runbook actions
+Bounded autonomous
+Risk-based approval
+Action result + verification + resolution draft
+Pre/postcheck,rollback,idempotency,blast limit
+Task success,rollback,unauthorized action
+Failed postcheck --> rollback/escalate
+Change Plan
+Draft change
+Description/environment/service/CI/history
+Approved templates + prior successful changes + KB
+Draft plan only
+Recommend
+Initiator review
+Implementation/test/rollback draft
+No invented commands; assumptions labeled
+Completeness/edit distance/factuality
+Ask questions instead of guessing
+Conflict Assessor
+Assess/schedule change
+Schedule,graph,other changes,freeze
+CMDB/calendar/change records
+Read-only analysis
+Recommend
+Change manager
+Conflict list + graph/schedule evidence
+Deterministic engine authoritative
+Seeded conflict recall/explanation
+Flag stale/weak graph
+Problem/RCA Assistant
+RCA
+Linked incidents/changes/timeline
+Incident cluster,known errors,graph,KB
+Hypotheses/evidence requests
+Recommend
+Problem manager
+Hypothesis/evidence matrix
+No root-cause certainty without evidence
+False certainty/usefulness
+Explicit insufficient evidence
+Knowledge Drafting
+Resolved work
+Resolution/RCA/evidence
+Authorized source records
+Draft article only
+Recommend
+Publisher
+KB draft + tags + citations
+PII/secret redaction + audience policy
+Citation coverage/edit distance
+No auto-publish
+Requester Assistant
+Portal/chat
+Question,identity,own tickets,eligibility
+Published KB + own records + eligible catalog
+Search,draft incident/request,status
+Transactional with confirmation
+Confirm submit/high-impact
+Answer/order summary/ticket draft
+No internal notes; identity binding
+Deflection/completion/escalation quality
+Human handoff
+Shift Handoff
+Shift change
+Open work/MIMs/risky changes/SLA risk
+Team-authorized records
+Draft summary
+Recommend
+User review
+Prioritized handoff + links
+No cross-team leakage
+Critical coverage/false inclusion
+Deterministic list fallback
+AI Orchestrator
+Explicit agentic workflow
+Goal,policy,state
+Only delegated context
+Specialized agents/tools via gateway
+Policy-bounded
+Dynamic risk tier
+Structured plan/status/result
+Max steps/cost/time; no privilege inheritance
+Task success/escalation/resource usage/safety
+Hard stop on limit/permission
+Appendix G. Security, Privacy and Governance Requirements
+ID
+Domain
+Requirement
+Technical control
+Verification
+Priority
+Evidence
+Mapping
+Notes
+SEC-001
+Tenant Isolation
+Enforce tenant boundary everywhere
+Tenant context + repository enforcement + DB RLS defense-in-depth + tenant-aware cache/search/queue
+Cross-tenant automated tests
+P0
+Isolation test report
+SOC 2 / ISO 27001
+Never trust tenant ID from body alone
+SEC-002
+Authentication
+Enterprise SSO/session security
+OIDC/SAML, MFA via IdP, short-lived tokens, rotation, secure cookies
+SSO/session tests
+P0
+Auth test
+NIST concepts / SOC 2
+Step-up for high-risk actions
+SEC-003
+Authorization
+Least privilege RBAC/ABAC/SoD
+Central policy, deny default, field/action scopes
+Negative authorization suite
+P0
+Permission matrix
+SOC 2 / ISO 27001
+Same policy for API/workflow/AI
+SEC-004
+Secrets
+No shared plaintext credentials
+Vault/workload identity/secrets by reference/rotation
+Secret scanning/log review
+P0
+Vault evidence
+SOC 2 / ISO 27001
+Never put passwords in tickets/prompts/config
+SEC-005
+Encryption
+Encrypt transit/rest/backups
+TLS1.2+ (prefer 1.3), managed encryption, encrypted backups
+Config scan
+P0
+Encryption evidence
+SOC 2 / ISO 27001
+CMK option later
+SEC-006
+Audit
+Immutable privileged/business/AI audit
+Append-only audit, integrity, SIEM export
+Completeness sampling
+P0
+Audit evidence
+SOC 2 / ISO 27001
+Actor,target,time,correlation,before/after summary
+SEC-007
+Logging
+No sensitive leakage in logs
+Structured logging/redaction/prohibited fields/secret detector
+Automated scan
+P0
+Redaction test
+OWASP
+Use IDs over record bodies
+SEC-008
+Application Security
+Common web/API defenses
+Schema validation, parameterized DB, XSS/CSRF/SSRF controls, file scan
+SAST/DAST/fuzz
+P0
+Security report
+OWASP ASVS/API
+Connector payloads untrusted
+SEC-009
+Rate Limits
+Abuse/DoS/cost protection
+Per tenant/user/IP/service quotas/concurrency/cost guards
+Load/abuse test
+P1
+Quota config
+OWASP API
+Separate AI/action quotas
+SEC-010
+Privacy
+Minimize/classify/retain data
+Field classification/masking/retention/export/delete
+Privacy review
+P0
+Data inventory
+GDPR
+Legal retention exceptions documented
+SEC-011
+Residency
+Regional data placement
+Region-bound DB/object/search/vector/backup and model routing
+Deployment verify
+P1
+Residency design
+GDPR/contracts
+No cross-region telemetry with content
+SEC-012
+Backup/Recovery
+Encrypted backup/PITR/restore tests
+Managed backups + restore runbooks
+Restore test
+P0
+Recovery report
+SOC 2 availability
+RPO/RTO in NFR
+SEC-013
+Vulnerability Mgmt
+Secure SDLC
+SCA/SAST/DAST/container scan/SBOM/severity SLAs
+CI gate/scan
+P0
+Scan reports
+SOC 2/ISO
+Block critical exploitable issues
+SEC-014
+Supply Chain
+Signed immutable builds
+Pinned deps, SBOM, signed images/artifacts/provenance
+CI verification
+P1
+SBOM/signatures
+SLSA concepts
+No mutable prod tags
+SEC-015
+Infrastructure
+Runtime/network hardening
+Private networking,WAF,network policies,workload identity,non-root,egress control
+CSPM/IaC review
+P0
+IaC evidence
+CIS concepts
+Customer-hosted must preserve controls
+SEC-016
+Privileged Access
+JIT/break-glass production access
+SSO/MFA/JIT/session audit/support reason
+Access review
+P0
+PAM evidence
+SOC 2/ISO
+No shared admins
+SEC-017
+Attachments
+Secure file handling
+Signed upload,AV/quarantine,MIME controls,DLP hook
+Malicious-file tests
+P0
+Attachment report
+OWASP
+Never execute active upload
+SEC-018
+Integration Security
+Least-privilege connector identity
+OAuth/service principals/scopes/signed webhooks/egress policy
+Connector review
+P0
+Connector checklist
+SOC 2
+Separate connection per tenant
+SEC-019
+AI Security
+Prompt injection/data exfil defenses
+Instruction/data separation,untrusted labels,ACL retrieval,tool validation,output controls
+Adversarial AI tests
+P0
+Red-team report
+OWASP LLM guidance
+Retrieved content cannot redefine policy
+SEC-020
+AI Governance
+Model/tool/autonomy governance
+Model allowlist,data policy,autonomy tier,max steps/cost,human gate,trace
+Policy tests
+P0
+AI policy evidence
+NIST AI RMF concepts
+Platform auth overrides agent intent
+SEC-021
+AI Privacy
+Prompt/response retention/training controls
+Provider no-training where available, configurable logging/redaction/residency
+Provider/config review
+P0
+Provider controls
+GDPR/contracts
+Tenant can disable external models
+SEC-022
+Deletion/Export
+Verified portability/purge
+Async scoped export + reconciled purge across DB/search/vector/object/cache
+Reconciliation test
+P1
+Deletion/export proof
+GDPR
+Audit retains lawful minimal metadata
+SEC-023
+Incident Response
+Security IR and evidence preservation
+Security alerts/runbooks/customer notification workflow
+Tabletop
+P1
+IR runbook
+SOC2/ISO
+Link product incident if useful
+SEC-024
+BCP/DR
+Resilience/DR controls
+Multi-AZ,dependency inventory,regional recovery plan
+DR exercise
+P1
+DR report
+SOC 2 availability
+Multi-region optional by tier
+SEC-025
+Change Control
+Production deployment governance
+PR review, CI gates, approvals, artifact promotion/rollback/audit
+Release audit
+P0
+Release record
+SOC 2 change mgmt
+Dogfood change module later
+SEC-026
+Sensitive UX
+Discourage secrets in tickets
+Field masking/classification + user warnings and detectors
+UX/security test
+P1
+UX evidence
+GDPR
+Never request passwords
+SEC-027
+Pen Test
+Independent external pen test
+Web/API/auth/tenant/agentic boundaries
+Third-party test
+P0
+Pen test report
+SOC2 readiness
+Close high/critical before GA
+Appendix H. Non-Functional Requirements and Service Objectives
+ID
+Category
+Requirement / target
+Scope
+Measurement
+Priority
+Degradation
+Test type
+Notes
+NFR-001
+Availability
+Core API monthly internal SLO >=99.9%
+Core API/web
+Valid-request success SLI
+P0
+Safe degraded/read-only modes where possible
+Chaos/Uptime
+Commercial SLA separate
+NFR-002
+Performance
+p95 core read <=500ms; standard mutation <=800ms excluding async work
+Core APIs
+Traces/load test
+P0
+Queue async work/disable enrichment
+Load
+Search/AI separate targets
+NFR-003
+Portal Performance
+p75 LCP <=2.5s on representative broadband
+Requester portal
+RUM/synthetic
+P1
+Defer noncritical widgets
+Frontend perf
+Use realistic content
+NFR-004
+Search
+p95 keyword <=1.5s; semantic <=2.5s under target load
+Search
+Telemetry
+P1
+Fallback semantic-->keyword
+Load/Relevance
+Security filters mandatory
+NFR-005
+Scalability
+Reference SaaS supports >=1,000 tenants and millions of task records with partition/index strategy
+Platform
+Capacity test/schema review
+P1
+Scale workers/index/read replicas
+Capacity
+Commercial tier limits later
+NFR-006
+Concurrency
+Prevent record corruption under concurrent agent/requester updates
+Core
+Concurrency tests
+P0
+Optimistic conflict UI
+Concurrency
+No silent last-write-wins for critical fields
+NFR-007
+Workflow Durability
+No lost workflow/timer state after process/node restart
+Workflow
+Fault injection
+P0
+Replay durable state
+Chaos
+Idempotent actions
+NFR-008
+RPO
+Core transactional data target RPO <=15 min reference profile
+Data
+Backup/replication verify
+P0
+PITR restore
+DR
+Audit may be stronger
+NFR-009
+RTO
+Regional disaster reference target <=4h restoration
+Platform
+DR exercise
+P1
+Restore auth-->DB-->API-->portal-->async
+DR
+Premium lower RTO later
+NFR-010
+Accessibility
+WCAG 2.2 AA-aligned core requester/agent journeys
+Web
+Automated + manual
+P0
+Block inaccessible critical feature
+Accessibility
+Assess embedded third-party UI
+NFR-011
+Browser
+Current + previous Chrome/Edge/Firefox; current Safari for requester portal
+Web
+Cross-browser suite
+P1
+Document unsupported
+Compatibility
+Agent can prioritize Chrome/Edge initially
+NFR-012
+API Compatibility
+No breaking change inside supported major API; deprecation window documented
+Public API
+Contract tests
+P0
+Version endpoint/field
+Contract
+Schema evolution rules
+NFR-013
+Event Compatibility
+Versioned event schema; additive evolution default
+Events
+Consumer contract tests
+P1
+Dual publish if breaking migration
+Contract
+Immutable event_id
+NFR-014
+Import
+Large imports resumable/checkpointed with row-level error reporting
+Migration/CMDB
+Scale import test
+P1
+Pause/retry/batch
+Performance
+No single giant transaction
+NFR-015
+Export
+Async tenant export resumable with integrity manifest
+Portability
+Large export test
+P1
+Chunked files/job resume
+Perf/Security
+Expiring secure delivery
+NFR-016
+Audit Completeness
+100% privileged/admin/AI tool actions have actor/time/target/context IDs
+Audit
+Invariant test
+P0
+Fail sensitive action if policy requires audit write
+Security
+Define availability tradeoff per event
+NFR-017
+Observability
+All services emit structured logs, metrics and traces with correlation/tenant IDs
+Platform
+Telemetry coverage
+P0
+Buffer where safe
+Operational readiness
+Redact sensitive fields
+NFR-018
+Localization
+All UI strings externalized; backend timestamps UTC
+All
+Static/timezone tests
+P1
+Fallback language
+Functional
+No locale-formatted dates as storage
+NFR-019
+Maintainability
+ADRs, module boundaries, contracts, automated migrations and rollback strategy
+Codebase
+Architecture review
+P0
+Reject undocumented coupling
+Architecture
+Modular monolith acceptable
+NFR-020
+Testability
+Meaningful unit coverage target >=80% plus integration/contract/E2E for critical flows
+Codebase
+CI quality gates
+P0
+Block critical regressions
+CI
+Coverage is not scenario quality
+NFR-021
+AI Latency
+Interactive AI p95 target <=8s; longer agentic tasks async with progress
+AI
+Gateway telemetry
+P1
+Fallback model/non-AI path
+Performance
+Never block record save on AI
+NFR-022
+AI Groundedness
+Operational answers cite authorized evidence and meet use-case threshold
+AI
+Eval harness
+P0
+Refuse/ask when evidence insufficient
+AI Evaluation
+Use per-skill thresholds
+NFR-023
+AI Safety
+0 tolerated successful critical privilege-escalation cases in adversarial release set
+AI actions
+Red team/eval
+P0
+Disable use case/model/tool
+Security Eval
+Release blocker
+NFR-024
+Resource Governance
+Per-tenant AI/integration quotas, alerts, model routing and safe caching
+AI/Integrations
+Cost telemetry
+P1
+Downgrade/approval at threshold
+FinOps
+Never cross-user/tenant cache sensitive outputs
+Appendix I. Acceptance and Release-Gate Test Matrix
+Test area
+Scope
+Example scenarios
+Automation
+Environment
+Data strategy
+Pass criteria
+Blocking severity
+Owner
+Unit
+Domain rules/validators/calculations
+Priority, SLA math, transitions, risk factors
+High
+CI
+Synthetic
+Critical tests pass; meaningful coverage met
+Critical/High
+Developers
+API Contract
+Schemas/actions/versioning
+Create/update/query, ETag conflict, invalid payload
+High
+CI/Test
+Synthetic
+Consumer/provider contracts green
+High
+Backend QA
+Authorization
+Tenant/RBAC/field/action/SoD
+Cross-tenant ID, hidden field, approval bypass
+High
+Test/Staging
+Adversarial tenants
+0 unauthorized successes
+Critical
+Security QA
+Workflow Durability
+Retry/timer/human wait
+Worker crash, duplicate event, timeout
+High
+Test
+Synthetic
+No lost/duplicate side effect
+Critical
+Platform QA
+Incident E2E
+Intake-->routing-->SLA-->resolution
+Portal/email/API, pending, reopen, duplicate
+High
+Staging
+Synthetic personas
+P0/P1 journeys pass
+Critical/High
+QA
+Request/Catalog E2E
+Eligibility-->approval-->fulfillment
+Ineligible user, parallel approval, cancel, integration fail
+High
+Staging
+Synthetic org
+No policy bypass; correct state
+Critical/High
+QA
+Change E2E
+Normal/standard/emergency
+Risk, conflict, freeze, CAB, rollback
+High
+Staging
+Seeded CMDB/calendar
+Expected path/evidence exact
+Critical
+QA + Change SME
+CMDB Reconciliation
+Identity/source/merge
+Duplicate servers/conflicting source/stale CI
+High
+Test
+Generated
+No destructive merge; conflict visible
+High
+Data QA
+Search Security/Relevance
+Keyword/semantic/ACL
+Restricted KB, similar incident, typo
+High
+Staging
+Restricted seeded content
+0 leakage + relevance target
+Critical
+QA + AI
+AI Quality
+Golden skill datasets
+Triage/summarize/plan/answer
+High
+Eval
+Versioned gold set
+Thresholds >= baseline
+High
+AI QA
+AI Security
+Prompt/tool/privilege abuse
+Malicious KB/ticket/tool params/cross-tenant
+High
+Eval/Staging
+Adversarial corpus
+0 critical exploit successes
+Critical
+AI Security
+Agentic Action
+Precheck/execute/postcheck/rollback
+Password/group/runbook mocks/failure compensation
+High
+Sandbox staging
+Mock integrations
+Correct side effect once; rollback on failed postcheck
+Critical
+AI/Automation QA
+Performance
+API/search/workflow/import
+Concurrent users,event bursts,large tenant
+High
+Perf
+Scale data
+NFR targets with headroom
+High
+Performance Eng
+Resilience/Chaos
+Dependency failures
+DB failover, queue delay, search/model/webhook outage
+Med/High
+Staging/Perf
+Synthetic
+Safe degradation/recovery without corruption
+High
+SRE
+DR/Restore
+Backup/regional failure
+Restore DB/object/rebuild search and verify
+Medium
+DR
+Backups
+RPO/RTO/integrity pass
+Critical
+SRE/Security
+Accessibility
+Core web journeys
+Keyboard,screen reader,focus,contrast,errors
+Mixed
+Staging
+Representative
+Core WCAG criteria pass
+High
+UX QA
+Pen Test
+Web/API/auth/tenant/AI boundaries
+Independent exploit testing
+Manual
+Pre-prod
+Seeded non-prod
+High/critical remediated
+Critical
+Security
+Upgrade/Migration
+Schema/config upgrades
+Previous version-->new, rollback, config transport
+High
+Staging
+Prior snapshot
+No data loss; limits documented
+Critical/High
+Release Eng
+Appendix J. Technology Bill of Materials and Decision Status
+Area
+Technology / pattern
+Status
+Board meaning
+Web
+Next.js 16, React 19, TypeScript, Tailwind, Shadcn/Radix
+Available foundation
+Existing AuthClaw console stack; extend rather than replace
+Control plane
+Python, FastAPI, Pydantic, SQLAlchemy, Alembic
+Available foundation
+Existing tenant/configuration/API patterns
+High-throughput gateway
+Go and chi
+Available foundation
+Existing enforcement and model-egress path
+Agent orchestration
+Python and LangGraph
+Available foundation
+Existing separate agent runtime; add ITSM skill graphs
+Transactional database
+PostgreSQL 17 with RLS defense in depth
+Available foundation
+Authoritative tenant-owned records
+Ephemeral/cache
+Redis 7
+Available foundation
+Sessions, quotas, tenant-scoped cache and short-lived state
+Policy
+OPA/Rego plus versioned policy configuration
+Available foundation
+Single enforcement semantics across API/workflow/AI
+Sensitive-data handling
+Microsoft Presidio plus specialized detectors
+Available foundation
+Pre-egress and telemetry redaction
+Event backbone
+Redpanda/Kafka
+Available foundation
+Versioned events, retries, replay and audit publication
+Audit/analytics
+ClickHouse plus PostgreSQL hash-chain fallback
+Available foundation
+High-volume immutable evidence and operational facts
+Infrastructure
+Docker, Terraform, AWS ECS/RDS/ElastiCache/KMS/Secrets Manager/Route53
+Available foundation
+Existing deployment and security pattern; profiles remain portable
+Model providers
+OpenAI, Anthropic, Cohere, Azure OpenAI, Gemini, Bedrock, approved local endpoints
+Available foundation
+Provider-neutral and tenant-controlled routing
+Workflow durability
+Temporal- or Camunda-style engine
+Proposed ITSM addition
+Mature durable timers, waits, retries and compensation
+Search
+OpenSearch/Elasticsearch-compatible
+Proposed ITSM addition
+ACL-aware keyword/facet search and knowledge retrieval
+Vector retrieval
+pgvector or managed search vector fields
+Proposed ITSM addition
+Tenant-safe semantic retrieval with source pointers
+Object storage
+S3/Blob/GCS-compatible plus malware scanning
+Proposed ITSM addition
+Attachments, imports, exports and evidence packages
+Observability
+OpenTelemetry with Prometheus/Grafana or managed equivalents
+Proposed/expand
+End-to-end service and product telemetry
+Appendix K. Glossary
+Term
+Meaning in this specification
+ACL
+Access-control list or permission metadata used to determine whether a user may retrieve a record or document.
+Agent
+An AI-orchestrated task capability operating within an explicit goal, context, policy and tool boundary.
+CMDB
+Configuration Management Database: the controlled inventory of configuration items, services and relationships.
+CI
+Configuration item such as an application, server, database, network component or service.
+HITL
+Human in the loop: an explicit review or approval checkpoint before a recommendation or action proceeds.
+Idempotency
+A property that makes retries safe by ensuring the same request does not produce duplicate side effects.
+ITIL-aligned
+Designed around recognized service-management practices; not a claim of external certification.
+OLA
+Operational-level agreement: an internal commitment supporting a service-level agreement.
+RAG
+Retrieval-augmented generation: supplying a model with authorized, relevant evidence at answer time.
+RBA/ABAC
+Role-based and attribute-based access control.
+RLS
+Row-level security in PostgreSQL, used as defense in depth for tenant-isolated data.
+SLA
+Service-level agreement or target governing response, restoration, resolution or fulfillment.
+SoD
+Segregation of duties: preventing one identity from performing conflicting steps such as creating and self-approving a sensitive change.
+System of record
+The authoritative source whose state overrides search, vector, cache or analytics derivatives.
+Typed tool
+A registered action with a strict input/output schema, authorization rule, target binding and audit behavior.
+Appendix L. Source Traceability and Assumptions
+Source
+Use in this document
+Interpretation constraint
+AI_Native_ITSM_Product_Project_Plan.xlsx
+Vision, 135 features, workflows, roles, architecture, data, integrations, AI, security, NFRs, tests and risks
+All feature rows in the source are marked Planned; the document does not convert plan into implementation evidence.
+AuthClaw consolidated repository
+Current technology, architecture, control boundaries, infrastructure and implementation status
+Repository evidence is reused as foundation, not proof that ITSM domain modules exist.
+AuthClaw consolidation and launch plans
+Component provenance, ownership and intended canonical stack
+Any dates, budgets, story points or launch schedules were intentionally excluded.
+AuthClaw SRS gap analysis
+Evidence of existing gateway, agent, identity, audit, cloud, remediation and compliance capabilities
+"Complete" labels apply to AuthClaw SRS items, not the separate ITSM capability catalog.
+
+
+Final assumption
+Where the ITSM workbook listed multiple interchangeable technologies, this specification commits to the interface, security and reliability objective while labeling the concrete vendor choice as proposed. The shared AuthClaw technologies are treated as the default unless an architecture decision record demonstrates that another choice better preserves the same controls.

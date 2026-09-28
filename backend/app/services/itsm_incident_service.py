@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import (
     ITSMConfigurationItem,
+    ITSMIncidentSavedView,
     ITSMService,
     ITSMTeam,
     ITSMMajorIncident,
@@ -110,22 +111,65 @@ class IncidentService:
         return query.first()
 
     @staticmethod
-    def list_saved_views(db: Session, tenant_id: UUID, user_id: UUID) -> list:
-        return []
+    def list_saved_views(db: Session, tenant_id: UUID, user_id: UUID) -> list[ITSMIncidentSavedView]:
+        return (
+            db.query(ITSMIncidentSavedView)
+            .filter(
+                ITSMIncidentSavedView.tenant_id == tenant_id,
+                ITSMIncidentSavedView.user_id == user_id,
+            )
+            .order_by(ITSMIncidentSavedView.name.asc())
+            .all()
+        )
 
     @staticmethod
-    def create_saved_view(db: Session, tenant_id: UUID, user_id: UUID, payload: IncidentSavedViewCreateRequest):
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail="Incident saved views are not supported without migration 057",
+    def create_saved_view(
+        db: Session,
+        tenant_id: UUID,
+        user_id: UUID,
+        payload: IncidentSavedViewCreateRequest,
+    ) -> ITSMIncidentSavedView:
+        name = payload.name.strip()
+        view = (
+            db.query(ITSMIncidentSavedView)
+            .filter(
+                ITSMIncidentSavedView.tenant_id == tenant_id,
+                ITSMIncidentSavedView.user_id == user_id,
+                ITSMIncidentSavedView.name == name,
+            )
+            .first()
         )
+        if view:
+            view.filters = payload.filters.model_dump(mode="json", exclude_none=True)
+            view.updated_at = datetime.now(timezone.utc)
+        else:
+            view = ITSMIncidentSavedView(
+                id=uuid4(),
+                tenant_id=tenant_id,
+                user_id=user_id,
+                name=name,
+                filters=payload.filters.model_dump(mode="json", exclude_none=True),
+            )
+            db.add(view)
+        db.commit()
+        db.refresh(view)
+        return view
 
     @staticmethod
     def delete_saved_view(db: Session, tenant_id: UUID, user_id: UUID, view_id: UUID) -> None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Saved view not found",
+        view = (
+            db.query(ITSMIncidentSavedView)
+            .filter(
+                ITSMIncidentSavedView.id == view_id,
+                ITSMIncidentSavedView.tenant_id == tenant_id,
+                ITSMIncidentSavedView.user_id == user_id,
+            )
+            .first()
         )
+        if not view:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved view not found")
+        db.delete(view)
+        db.commit()
     @classmethod
     def _validate_major_command_users(
         cls,
@@ -573,6 +617,7 @@ class IncidentService:
             assignee_id=payload.assignee_id,
             assignment_group=assignment_group,
             service_id=payload.service_id,
+            configuration_item_id=payload.configuration_item_id,
             category_id=payload.category_id,
             category=payload.category,
             subcategory=payload.subcategory,
@@ -908,6 +953,13 @@ class IncidentService:
                 payload.configuration_item_id,
                 payload.service_id if "service_id" in payload.model_fields_set else ticket.service_id,
             )
+            if payload.configuration_item_id != ticket.configuration_item_id:
+                old_values["configuration_item_id"] = (
+                    str(ticket.configuration_item_id) if ticket.configuration_item_id else None
+                )
+                new_values["configuration_item_id"] = str(payload.configuration_item_id)
+                ticket.configuration_item_id = payload.configuration_item_id
+                changed_fields.append("configuration_item_id")
 
         if "category_id" in payload.model_fields_set and payload.category_id != ticket.category_id:
             if payload.category_id is not None:
@@ -1178,19 +1230,17 @@ class IncidentService:
         cls._validate_major_command_users(db, tenant_id, payload)
         cls._validate_major_command_user(db, tenant_id, commander_id, "Incident commander")
         cls._validate_communication_approvals(payload, actor_id)
+        values = payload.model_dump(mode="json")
+        values.pop("incident_commander_id", None)
+        values.pop("communication_lead_id", None)
         major = ITSMMajorIncident(
             id=uuid4(),
             tenant_id=tenant_id,
             ticket_id=ticket.id,
             incident_commander_id=commander_id,
-            bridge_url=payload.bridge_url,
-            communication_channel=payload.communication_channel,
-            declared_at=datetime.now(timezone.utc),
+            communication_lead_id=payload.communication_lead_id,
             declared_by_id=actor_id,
-            postmortem_status="PENDING",
-            executive_summary=payload.executive_summary,
-            impacted_business_units=payload.impacted_business_units or [],
-            customer_impact_description=payload.customer_impact_description,
+            **values,
         )
         ticket.is_major_incident = True
         ticket.updated_at = datetime.now(timezone.utc)
@@ -1216,19 +1266,11 @@ class IncidentService:
             raise HTTPException(status_code=400, detail="A declared major incident must retain an Incident Manager as commander")
         cls._validate_major_command_users(db, tenant_id, payload)
         cls._validate_communication_approvals(payload, actor_id, major.command_communications or [])
-        valid_fields = {
-            "incident_commander_id",
-            "bridge_url",
-            "communication_channel",
-            "executive_summary",
-            "impacted_business_units",
-            "customer_impact_description",
-            "postmortem_status",
-            "postmortem_url",
-        }
-        for field in valid_fields:
-            if field in changes:
-                setattr(major, field, changes[field])
+        json_changes = payload.model_dump(mode="json", exclude_unset=True)
+        for field, value in json_changes.items():
+            if field in {"incident_commander_id", "communication_lead_id"}:
+                value = changes[field]
+            setattr(major, field, value)
         if changes:
             ticket = cls.get_incident(db, tenant_id, incident_id)
             ticket.updated_at = datetime.now(timezone.utc)

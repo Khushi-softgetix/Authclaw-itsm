@@ -94,6 +94,14 @@ test("Incident Manager coordination uses tenant reference data for classificatio
   assert.match(classification, /configuration_item_id: configurationItemId \|\| null/);
   assert.match(assignment, /Choose an active operational team/);
   assert.match(assignment, /No active operational teams are configured/);
+  assert.match(assignment, /id="assignee-search"/);
+  assert.match(assignment, /Search by email or role/);
+  assert.match(assignment, /id="group-search"/);
+  assert.match(assignment, /Search active teams/);
+  assert.match(assignment, /role="combobox"/);
+  assert.match(assignment, /role="listbox"/);
+  assert.match(assignment, /filteredOptions\.map/);
+  assert.match(assignment, /activeIndex/);
   assert.match(assignment, /referenceEndpoint \? \(/);
   assert.match(assignment, /COMMON_GROUPS/);
   assert.match(drawer, /referenceEndpoint="\/api\/itsm\/incidents\/operations\/reference-data"/);

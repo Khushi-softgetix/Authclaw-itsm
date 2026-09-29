@@ -83,7 +83,8 @@ export default function IncidentListPage() {
   }, [search, statusFilter, priorityFilter, offset]);
 
   useEffect(() => {
-    fetchIncidents();
+    const request = window.setTimeout(() => void fetchIncidents(), 0);
+    return () => window.clearTimeout(request);
   }, [fetchIncidents]);
 
   // Derived metrics from loaded dataset

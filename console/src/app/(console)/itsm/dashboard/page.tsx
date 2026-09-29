@@ -9,7 +9,7 @@ export default async function DashboardRootPage() {
   }
 
   const apiUrl = process.env.API_URL || "http://localhost:8000";
-  let principal: any = null;
+  let principal: { itsm_role?: string; platform_role?: string } | null = null;
 
   try {
     const response = await fetch(`${apiUrl}/v1/auth/me`, {

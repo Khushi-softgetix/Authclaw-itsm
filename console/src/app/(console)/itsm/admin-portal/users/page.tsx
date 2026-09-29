@@ -66,7 +66,8 @@ export default function AdminPortalUsersPage() {
   };
 
   useEffect(() => {
-    fetchUsers();
+    const request = window.setTimeout(() => void fetchUsers(), 0);
+    return () => window.clearTimeout(request);
   }, []);
 
   const handleGrantAccessClick = () => {
@@ -188,7 +189,7 @@ export default function AdminPortalUsersPage() {
             <span className="text-[11px] font-semibold text-[#6B7488]">Access:</span>
             <select
               value={accessFilter}
-              onChange={(e) => setAccessFilter(e.target.value as any)}
+              onChange={(e) => setAccessFilter(e.target.value as "ALL" | "ENABLED" | "DISABLED")}
               className="px-2.5 py-1.5 rounded-lg border border-[#E6E9F0] bg-[#FBFAF9] text-xs text-[#0E1726] focus:bg-white focus:outline-none focus:border-[#6D28D9]"
             >
               <option value="ALL">All Access</option>

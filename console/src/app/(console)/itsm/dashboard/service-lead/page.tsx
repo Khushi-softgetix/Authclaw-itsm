@@ -41,7 +41,8 @@ export default function ServiceLeadDashboardPage() {
   };
 
   useEffect(() => {
-    loadData();
+    const request = window.setTimeout(() => void loadData(), 0);
+    return () => window.clearTimeout(request);
   }, []);
 
   const majorIncidents = incidents.filter(

@@ -63,7 +63,8 @@ export default function AdminServicesPage() {
   };
 
   useEffect(() => {
-    fetchServices();
+    const request = window.setTimeout(() => void fetchServices(), 0);
+    return () => window.clearTimeout(request);
   }, []);
 
   const openCreateModal = () => {

@@ -79,7 +79,8 @@ export default function IncidentDetailPage() {
   }, [incidentId]);
 
   useEffect(() => {
-    fetchIncidentData();
+    const request = window.setTimeout(() => void fetchIncidentData(), 0);
+    return () => window.clearTimeout(request);
   }, [fetchIncidentData]);
 
   if (loading && !incident) {

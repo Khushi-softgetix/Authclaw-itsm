@@ -134,9 +134,20 @@ test("ConsoleShell supports ITSM business roles", () => {
   );
 });
 
+test("Incident Manager shell follows the shared AuthClaw workspace frame", () => {
+  const shellPath = path.join(consoleDir, "src/components/incident-manager-shell.tsx");
+  const shellSource = fs.readFileSync(shellPath, "utf-8");
+
+  assert.ok(shellSource.includes("Active Tenant"), "Incident Manager sidebar must show tenant context");
+  assert.ok(shellSource.includes("Signed In As"), "Incident Manager header must expose signed-in identity");
+  assert.ok(shellSource.includes("NotificationBell"), "Incident Manager header must retain notifications");
+  assert.ok(shellSource.includes("Incident Management"), "Incident Manager shell must identify its workspace");
+  assert.ok(shellSource.includes("tenantName || tenantId"), "Tenant context must come from the authenticated principal");
+});
+
 test("Proxy middleware redirects unauthenticated /itsm routes to /itsm/login", () => {
   const proxyPath = path.join(consoleDir, "src/proxy.ts");
-  const proxySource = fs.readFileSync(proxyPath, "utf-8");
+  const proxySource = fs.readFileSync(proxyPath, "utf-8").replace(/\r\n/g, "\n");
 
   assert.ok(
     proxySource.includes('if (path.startsWith("/itsm")) {\n      return NextResponse.redirect(new URL("/itsm/login", request.url));\n    }'),

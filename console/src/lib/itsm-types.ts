@@ -27,6 +27,7 @@ export interface Incident {
   assignee_id?: string | null;
   assignment_group?: string | null;
   service_id?: string | null;
+  configuration_item_id?: string | null;
   category_id?: string | null;
   category: string;
   subcategory?: string | null;
@@ -67,7 +68,9 @@ export interface IncidentCreatePayload {
   impact?: string;
   urgency?: string;
   priority?: string;
+  priority_override_reason?: string;
   service_id?: string | null;
+  configuration_item_id?: string | null;
   category_id?: string | null;
   category?: string;
   subcategory?: string | null;
@@ -83,7 +86,9 @@ export interface IncidentUpdatePayload {
   impact?: string;
   urgency?: string;
   priority?: string;
+  priority_override_reason?: string;
   service_id?: string | null;
+  configuration_item_id?: string | null;
   category_id?: string | null;
   category?: string;
   subcategory?: string | null;
@@ -115,4 +120,205 @@ export interface TenantUser {
   email: string;
   role?: string;
   is_active?: boolean;
+}
+
+export interface IncidentSavedViewFilters {
+  search?: string;
+  status?: string;
+  priority?: string;
+  attention?: "WATCH" | "PRIORITY" | "SLA_AT_RISK" | "SLA_BREACHED" | "STUCK";
+  assignment_group?: string;
+  assignee_id?: string;
+  unassigned?: boolean;
+  sort_by?: "priority" | "sla_due" | "updated";
+}
+
+export interface IncidentSavedView {
+  id: string;
+  name: string;
+  filters: IncidentSavedViewFilters;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IncidentReferenceItem {
+  id: string;
+  name: string;
+  code?: string | null;
+  parent_id?: string | null;
+  service_id?: string | null;
+  status?: string | null;
+}
+
+export interface IncidentOperationsReferenceData {
+  users: TenantUser[];
+  commanders?: TenantUser[];
+  teams: IncidentReferenceItem[];
+  services: IncidentReferenceItem[];
+  configuration_items: IncidentReferenceItem[];
+  categories: IncidentReferenceItem[];
+}
+
+export type IncidentSlaEvaluationStatus =
+  | "NO_SLA"
+  | "WITHIN_SLA"
+  | "AT_RISK"
+  | "BREACHED";
+
+export interface IncidentOperationsItem {
+  incident_id: string;
+  ticket_number: string;
+  title: string;
+  priority: IncidentPriority;
+  status: IncidentStatus;
+  assignment_group?: string | null;
+  assignee_id?: string | null;
+  assignee_email?: string | null;
+  last_activity_at?: string | null;
+  idle_seconds?: number | null;
+  sla: {
+    status: IncidentSlaEvaluationStatus;
+    remaining_seconds?: number | null;
+  };
+  attention_reasons: Array<"HIGH_PRIORITY" | "SLA_AT_RISK" | "SLA_BREACHED" | "STUCK_IDLE">;
+  watch: "REQUIRES_ATTENTION" | "NONE";
+}
+
+export interface IncidentOperationsDashboard {
+  summary: {
+    open_incidents: number;
+    p1_p2: number;
+    sla_at_risk: number;
+    sla_breached: number;
+    stuck: number;
+    escalation_watch: number;
+  };
+  priority_watch: IncidentOperationsItem[];
+  sla_at_risk: IncidentOperationsItem[];
+  sla_breached: IncidentOperationsItem[];
+  stuck: IncidentOperationsItem[];
+  escalation_watch: IncidentOperationsItem[];
+  workload: {
+    by_assignment_group: Record<string, number>;
+    by_assignee: Record<string, number>;
+    assignment_groups: IncidentWorkloadEntry[];
+    assignees: IncidentWorkloadEntry[];
+  };
+  policy: {
+    risk_remaining_fraction: number;
+    idle_threshold_seconds: number;
+    escalation_note: string;
+  };
+}
+
+export interface IncidentOperationsQueueItem {
+  incident: Incident;
+  operations?: IncidentOperationsItem | null;
+}
+
+export interface IncidentOperationsQueue {
+  items: IncidentOperationsQueueItem[];
+  total: number;
+  offset: number;
+  limit: number;
+}
+
+export interface IncidentWorkloadEntry {
+  key: string;
+  label: string;
+  open_incidents: number;
+  p1_p2: number;
+  sla_at_risk: number;
+  sla_breached: number;
+  stuck: number;
+}
+
+export interface MajorIncident {
+  id: string;
+  tenant_id: string;
+  ticket_id: string;
+  incident_commander_id?: string | null;
+  communication_lead_id?: string | null;
+  bridge_url?: string | null;
+  communication_channel?: string | null;
+  declared_at: string;
+  declared_by_id: string;
+  postmortem_status: string;
+  postmortem_url?: string | null;
+  resolved_at?: string | null;
+  closed_at?: string | null;
+  executive_summary?: string | null;
+  impacted_business_units: string[];
+  affected_service_ids: string[];
+  affected_configuration_item_ids: string[];
+  customer_impact_description?: string | null;
+  restoration_checkpoints: MajorIncidentRestorationCheckpoint[];
+  command_decisions: MajorIncidentDecision[];
+  command_tasks: MajorIncidentTask[];
+  stakeholders: MajorIncidentStakeholder[];
+  command_communications: MajorIncidentCommunication[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MajorIncidentPayload {
+  incident_commander_id?: string | null;
+  communication_lead_id?: string | null;
+  bridge_url?: string | null;
+  communication_channel?: string | null;
+  impacted_business_units?: string[];
+  affected_service_ids?: string[];
+  affected_configuration_item_ids?: string[];
+  customer_impact_description?: string | null;
+  executive_summary?: string | null;
+  restoration_checkpoints?: MajorIncidentRestorationCheckpoint[];
+  command_decisions?: MajorIncidentDecision[];
+  command_tasks?: MajorIncidentTask[];
+  stakeholders?: MajorIncidentStakeholder[];
+  command_communications?: MajorIncidentCommunication[];
+  postmortem_status?: string;
+  postmortem_url?: string | null;
+}
+
+export interface MajorIncidentRestorationCheckpoint {
+  id?: string;
+  title: string;
+  owner_id?: string | null;
+  target_at?: string | null;
+  completed_at?: string | null;
+  note?: string | null;
+}
+
+export interface MajorIncidentDecision {
+  id?: string;
+  summary: string;
+  owner_id?: string | null;
+  context?: string | null;
+  recorded_at?: string;
+}
+
+export interface MajorIncidentTask {
+  id?: string;
+  title: string;
+  owner_id?: string | null;
+  due_at?: string | null;
+  completed_at?: string | null;
+  note?: string | null;
+}
+
+export interface MajorIncidentStakeholder {
+  id?: string;
+  name: string;
+  role?: string | null;
+  contact?: string | null;
+}
+
+export interface MajorIncidentCommunication {
+  id?: string;
+  audience: string;
+  channel: string;
+  message: string;
+  approver_id?: string | null;
+  status: "DRAFT" | "APPROVED" | "COMMUNICATED";
+  recorded_at?: string;
 }

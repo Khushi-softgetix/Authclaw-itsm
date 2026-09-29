@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, CheckCircle2, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowLeft, ShieldCheck, Sparkles } from "lucide-react";
 import { jsonRequest } from "@/lib/client-fetch";
 import { apiErrorMessage } from "@/lib/errors";
 import { IncidentCreatePayload, TenantUser } from "@/lib/itsm-types";
@@ -37,6 +37,7 @@ export default function CreateIncidentPage() {
   const [impact, setImpact] = useState<string>("MEDIUM");
   const [urgency, setUrgency] = useState<string>("MEDIUM");
   const [priority, setPriority] = useState<string>("");
+  const [priorityOverrideReason, setPriorityOverrideReason] = useState<string>("");
   const [category, setCategory] = useState<string>("GENERAL");
   const [subcategory, setSubcategory] = useState<string>("");
   const [assigneeId, setAssigneeId] = useState<string>("");
@@ -101,6 +102,7 @@ export default function CreateIncidentPage() {
 
       if (priority) {
         payload.priority = priority;
+        payload.priority_override_reason = priorityOverrideReason.trim();
       }
 
       const res = await fetch("/api/itsm/incidents", jsonRequest("POST", payload));
@@ -234,6 +236,7 @@ export default function CreateIncidentPage() {
                 </select>
               </div>
             </div>
+            {priority ? <div><label htmlFor="inc-priority-reason" className="mb-1.5 block text-xs font-semibold text-[#0E1726]">Priority override reason *</label><input id="inc-priority-reason" value={priorityOverrideReason} onChange={event=>setPriorityOverrideReason(event.target.value)} required placeholder="Explain why the calculated priority must be overridden" className="w-full rounded-lg border border-[#E6E9F0] bg-[#FBFAF9] px-3 py-2 text-xs outline-none focus:border-[#6D28D9] focus:bg-white"/></div> : null}
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>

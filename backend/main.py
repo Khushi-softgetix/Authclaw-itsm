@@ -105,6 +105,9 @@ from app.api.v1.endpoints.itsm_admin import router as itsm_admin_router
 from app.api.v1.endpoints.itsm_knowledge import router as itsm_knowledge_router
 from app.api.v1.endpoints.itsm_requests import router as itsm_requests_router
 from app.api.v1.endpoints.itsm_services import router as itsm_services_router
+from app.api.v1.endpoints.itsm_problems import router as itsm_problems_router
+from app.api.v1.endpoints.itsm_changes import router as itsm_changes_router
+from app.api.v1.endpoints.itsm_attachments import router as itsm_attachments_router
 from app.api.v1.endpoints.itsm_audit import router as itsm_audit_router
 
 app.include_router(tenants_router, prefix="/v1/tenants", tags=["tenants"])
@@ -147,6 +150,14 @@ app.include_router(itsm_requests_router, prefix="/api/itsm/requests", tags=["its
 app.include_router(itsm_services_router, prefix="/v1/itsm/services", tags=["itsm-services"])
 app.include_router(itsm_services_router, prefix="/api/itsm/services", tags=["itsm-services"], include_in_schema=False)
 app.include_router(itsm_audit_router, prefix="/v1/itsm/audit", tags=["itsm-audit"])
+app.include_router(itsm_services_router, prefix="/v1/itsm/service-catalog", tags=["itsm-service-catalog"])
+app.include_router(itsm_services_router, prefix="/api/itsm/service-catalog", tags=["itsm-service-catalog"], include_in_schema=False)
+app.include_router(itsm_problems_router, prefix="/v1/itsm/problems", tags=["itsm-problems"])
+app.include_router(itsm_problems_router, prefix="/api/itsm/problems", tags=["itsm-problems"], include_in_schema=False)
+app.include_router(itsm_changes_router, prefix="/v1/itsm/changes", tags=["itsm-changes"])
+app.include_router(itsm_changes_router, prefix="/api/itsm/changes", tags=["itsm-changes"], include_in_schema=False)
+app.include_router(itsm_attachments_router, prefix="/v1/itsm", tags=["itsm-attachments"])
+app.include_router(itsm_attachments_router, prefix="/api/itsm", tags=["itsm-attachments"], include_in_schema=False)
 
 # Ravi's imported console and existing client SDKs use `/api/v1`. Keep Kunal's
 # `/v1` routes canonical while exposing a compatibility alias during migration.
@@ -179,6 +190,9 @@ _compatibility_routers = [
     (itsm_admin_router, "/itsm/admin", "itsm-admin"),
     (itsm_knowledge_router, "/itsm/knowledge", "itsm-knowledge"),
     (itsm_requests_router, "/itsm/requests", "itsm-requests"),
+    (itsm_services_router, "/itsm/service-catalog", "itsm-service-catalog"),
+    (itsm_problems_router, "/itsm/problems", "itsm-problems"),
+    (itsm_changes_router, "/itsm/changes", "itsm-changes"),
 ]
 for _router, _path, _tag in _compatibility_routers:
     app.include_router(_router, prefix=f"/api/v1{_path}", tags=[_tag], include_in_schema=False)

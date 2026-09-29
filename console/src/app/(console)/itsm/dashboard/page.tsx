@@ -38,7 +38,7 @@ export default async function DashboardRootPage() {
     case "SERVICE_LEAD":
       redirect("/itsm/incident-manager");
     case "PROCESS_CHANGE_MANAGER":
-      redirect("/itsm/dashboard/process-change");
+      redirect("/itsm/problem-change-manager");
     case "PLATFORM_ADMINISTRATOR":
       redirect("/itsm/dashboard/platform-admin");
     case "AUDITOR":

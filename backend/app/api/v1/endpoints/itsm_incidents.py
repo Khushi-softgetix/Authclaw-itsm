@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -24,6 +24,7 @@ from app.schemas.itsm_incidents import (
     IncidentCreateRequest,
     IncidentResponse,
     IncidentStatusUpdateRequest,
+    IncidentSummaryStatsResponse,
     IncidentUpdateRequest,
     IncidentOperationsDashboardResponse,
     IncidentOperationsQueueResponse,
@@ -32,7 +33,12 @@ from app.schemas.itsm_incidents import (
     MajorIncidentDeclareRequest, MajorIncidentResponse, MajorIncidentUpdateRequest,
     IncidentSavedViewCreateRequest, IncidentSavedViewResponse,
 )
+from app.schemas.itsm_problems import (
+    ReportRecurringProblemRequest,
+    ReportRecurringProblemResponse,
+)
 from app.services.itsm_incident_service import IncidentService
+from app.services.itsm_problem_service import ProblemService
 from app.services.itsm_incident_operations import (
     OPEN_STATUSES,
     build_operations_dashboard,
@@ -295,6 +301,32 @@ def list_incidents(
         search=search,
         offset=offset,
         limit=limit,
+    )
+
+
+@router.get(
+    "/summary",
+    response_model=IncidentSummaryStatsResponse,
+    summary="Get incident KPI summary statistics",
+    description="Retrieve aggregated incident counts and average resolution times for tenant and requester.",
+)
+def get_incident_summary(
+    request: Request,
+    requester_id: Optional[UUID] = Query(default=None, description="Filter by requester user ID"),
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    actor_id = UUID(str(request.state.user_id))
+    t_id = UUID(tenant_id)
+    role = _get_itsm_role(db, t_id, actor_id)
+
+    if role == "REQUESTER":
+        requester_id = actor_id
+
+    return IncidentService.get_incident_summary(
+        db=db,
+        tenant_id=t_id,
+        requester_id=requester_id,
     )
 
 
@@ -609,3 +641,74 @@ def list_incident_activities(
         ]
 
     return activities
+
+
+@router.post(
+    "/{incident_id}/report-recurring-problem",
+    response_model=ReportRecurringProblemResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Report recurring problem from incident",
+    description="Service Agent reports a recurring problem from an incident, creating a Problem ticket and linking it.",
+)
+def report_recurring_problem(
+    incident_id: UUID,
+    payload: ReportRecurringProblemRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    actor_id = UUID(str(request.state.user_id))
+    t_id = UUID(tenant_id)
+
+    access_row = db.execute(
+        text("SELECT itsm_role, has_itsm_access FROM authn.lookup_itsm_user_access(:tenant_id, :user_id)"),
+        {"tenant_id": str(t_id), "user_id": str(actor_id)},
+    ).first()
+    if access_row and not access_row.has_itsm_access:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ITSM access disabled")
+
+    role = str(access_row.itsm_role).upper() if (access_row and access_row.itsm_role) else _get_itsm_role(db, t_id, actor_id)
+    allowed_roles = {"SERVICE_AGENT", "ADMIN", "PLATFORM_ADMINISTRATOR"}
+    if role not in allowed_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Service Agent role required to report recurring problem",
+        )
+
+    result = ProblemService.report_recurring_problem(
+        db=db,
+        tenant_id=t_id,
+        incident_id=incident_id,
+        actor_id=actor_id,
+        payload=payload,
+    )
+    if result.already_reported:
+        response.status_code = status.HTTP_200_OK
+    else:
+        response.status_code = status.HTTP_201_CREATED
+    return result
+
+
+@router.post(
+    "/{incident_id}/report-problem",
+    response_model=ReportRecurringProblemResponse,
+    status_code=status.HTTP_201_CREATED,
+    include_in_schema=False,
+)
+def report_problem_alias(
+    incident_id: UUID,
+    payload: ReportRecurringProblemRequest,
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    return report_recurring_problem(
+        incident_id=incident_id,
+        payload=payload,
+        request=request,
+        response=response,
+        db=db,
+        tenant_id=tenant_id,
+    )

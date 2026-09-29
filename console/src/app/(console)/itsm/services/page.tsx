@@ -26,95 +26,97 @@ import {
 import { formatDateTime } from "@/lib/itsm-format";
 import { ITSMServiceSummary } from "@/lib/itsm-types";
 
-// ============================================================================
-// Requester Static Catalog (Preserved for REQUESTER role)
-// ============================================================================
 interface ServiceCatalogItem {
   id: string;
-  title: string;
-  category: "hardware" | "software" | "security" | "general";
-  categoryLabel: string;
-  description: string;
-  estimatedTime: string;
-  fulfillmentType: "Automated" | "Manager Approval" | "IT Triage";
-  popular?: boolean;
+  tenant_id: string;
+  service_id: string;
+  service_name: string;
+  category_label: string;
+  name: string;
+  slug: string;
+  description: string | null;
+  estimated_delivery_hours: number;
+  estimated_time_label: string;
+  approval_required: boolean;
+  fulfillment_type: string;
+  fulfillment_group: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
-const REQUESTER_SERVICES_CATALOG: ServiceCatalogItem[] = [
+const REQUESTER_SERVICES_CATALOG = [
   {
     id: "laptop-req",
-    title: "New Developer Laptop / Workstation",
-    category: "hardware",
-    categoryLabel: "Hardware & Equipment",
+    name: "New Developer Laptop / Workstation",
+    category_label: "Hardware & Equipment",
     description: "Request a standard developer laptop (MacBook Pro or ThinkPad) with pre-installed enterprise tools.",
-    estimatedTime: "24-48 hrs",
-    fulfillmentType: "Manager Approval",
-    popular: true,
+    estimated_time_label: "24-48 hrs",
+    fulfillment_type: "Manager Approval",
+    approval_required: true,
   },
   {
     id: "monitor-req",
-    title: "External Monitor & Peripheral Kit",
-    category: "hardware",
-    categoryLabel: "Hardware & Equipment",
+    name: "External Monitor & Peripheral Kit",
+    category_label: "Hardware & Equipment",
     description: "4K external monitor, ergonomic mechanical keyboard, mouse, and USB-C docking station.",
-    estimatedTime: "24 hrs",
-    fulfillmentType: "IT Triage",
+    estimated_time_label: "24 hrs",
+    fulfillment_type: "IT Triage",
+    approval_required: false,
   },
   {
     id: "aws-sso",
-    title: "AWS Account & IAM Sandbox Access",
-    category: "software",
-    categoryLabel: "Software Access & SSO",
+    name: "AWS Account & IAM Sandbox Access",
+    category_label: "Software Access & SSO",
     description: "Temporary or permanent developer sandbox IAM role in AWS cloud infrastructure.",
-    estimatedTime: "2 hrs",
-    fulfillmentType: "Automated",
-    popular: true,
+    estimated_time_label: "2 hrs",
+    fulfillment_type: "Automated",
+    approval_required: true,
   },
   {
     id: "github-access",
-    title: "GitHub Enterprise Organization Seat",
-    category: "software",
-    categoryLabel: "Software Access & SSO",
+    name: "GitHub Enterprise Organization Seat",
+    category_label: "Software Access & SSO",
     description: "Invite seat to AuthClaw GitHub repositories with team permissions.",
-    estimatedTime: "1 hr",
-    fulfillmentType: "Automated",
+    estimated_time_label: "1 hr",
+    fulfillment_type: "Automated",
+    approval_required: false,
   },
   {
     id: "mfa-reset",
-    title: "Security Token & MFA Reset",
-    category: "security",
-    categoryLabel: "Security & MFA Reset",
+    name: "Security Token & MFA Reset",
+    category_label: "Security & MFA Reset",
     description: "Reset lost authenticator app registration or locked hardware security token (YubiKey).",
-    estimatedTime: "15 mins",
-    fulfillmentType: "IT Triage",
-    popular: true,
+    estimated_time_label: "15 mins",
+    fulfillment_type: "IT Triage",
+    approval_required: true,
   },
   {
     id: "vpn-cert",
-    title: "Corporate VPN & WireGuard Profile",
-    category: "security",
-    categoryLabel: "Security & MFA Reset",
+    name: "Corporate VPN & WireGuard Profile",
+    category_label: "Security & MFA Reset",
     description: "Generate or update encrypted WireGuard VPN client certificate for remote access.",
-    estimatedTime: "30 mins",
-    fulfillmentType: "Automated",
+    estimated_time_label: "30 mins",
+    fulfillment_type: "Automated",
+    approval_required: false,
   },
   {
     id: "wifi-guest",
-    title: "Office WiFi & Guest Network Passcode",
-    category: "general",
-    categoryLabel: "General IT Assistance",
+    name: "Office WiFi & Guest Network Passcode",
+    category_label: "General IT Assistance",
     description: "High-speed office WPA3-Enterprise credential provision or temporary visitor codes.",
-    estimatedTime: "Immediate",
-    fulfillmentType: "Automated",
+    estimated_time_label: "Immediate",
+    fulfillment_type: "Automated",
+    approval_required: false,
   },
   {
     id: "zoom-room",
-    title: "AV & Conference Room Setup",
-    category: "general",
-    categoryLabel: "General IT Assistance",
+    name: "AV & Conference Room Setup",
+    category_label: "General IT Assistance",
     description: "Technical setup support for all-hands presentations or video conference equipment.",
-    estimatedTime: "2 hrs",
-    fulfillmentType: "IT Triage",
+    estimated_time_label: "2 hrs",
+    fulfillment_type: "IT Triage",
+    approval_required: false,
   },
 ];
 
@@ -131,6 +133,9 @@ export default function ServicesPage() {
   const [tierFilter, setTierFilter] = useState<string>("ALL");
 
   // Requester State
+  const [catalogItems, setCatalogItems] = useState<ServiceCatalogItem[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState<boolean>(true);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
   const [requesterCategory, setRequesterCategory] = useState<string>("all");
   const [requesterSearch, setRequesterSearch] = useState<string>("");
 
@@ -153,6 +158,28 @@ export default function ServicesPage() {
       .finally(() => {
         setSessionLoading(false);
       });
+  }, []);
+
+  const fetchCatalogItems = useCallback(async () => {
+    try {
+      setCatalogLoading(true);
+      setCatalogError(null);
+      const res = await fetch("/api/itsm/service-catalog", { cache: "no-store" });
+      if (res.status === 401) {
+        window.location.href = "/itsm/login";
+        return;
+      }
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || data.detail || "Failed to load service catalog");
+      }
+      const data = await res.json();
+      setCatalogItems(Array.isArray(data) ? data : []);
+    } catch (err: unknown) {
+      setCatalogError(err instanceof Error ? err.message : "Failed to load service catalog");
+    } finally {
+      setCatalogLoading(false);
+    }
   }, []);
 
   const fetchServices = useCallback(async () => {
@@ -185,10 +212,14 @@ export default function ServicesPage() {
   }, [search, statusFilter, tierFilter]);
 
   useEffect(() => {
-    if (userRole !== "REQUESTER" && !sessionLoading) {
-      fetchServices();
+    if (!sessionLoading) {
+      if (userRole === "REQUESTER") {
+        fetchCatalogItems();
+      } else {
+        fetchServices();
+      }
     }
-  }, [userRole, sessionLoading, fetchServices]);
+  }, [userRole, sessionLoading, fetchCatalogItems, fetchServices]);
 
   if (sessionLoading) {
     return (
@@ -200,15 +231,31 @@ export default function ServicesPage() {
   }
 
   // =========================================================================
-  // REQUESTER PORTAL (Preserved Catalog View)
+  // REQUESTER PORTAL (Database-backed Catalog View with Fallback)
   // =========================================================================
   if (userRole === "REQUESTER") {
-    const filteredCatalog = REQUESTER_SERVICES_CATALOG.filter((item) => {
-      const matchesCategory = requesterCategory === "all" || item.category === requesterCategory;
+    const displayCatalog = catalogItems.length > 0 ? catalogItems : REQUESTER_SERVICES_CATALOG;
+    const filteredCatalog = displayCatalog.filter((item: any) => {
+      const catLower = (item.category_label || "").toLowerCase();
+      let matchesCategory = true;
+      if (requesterCategory === "hardware") {
+        matchesCategory = catLower.includes("hardware") || catLower.includes("equipment");
+      } else if (requesterCategory === "software") {
+        matchesCategory = catLower.includes("software") || catLower.includes("access") || catLower.includes("sso");
+      } else if (requesterCategory === "security") {
+        matchesCategory = catLower.includes("security") || catLower.includes("mfa") || catLower.includes("vpn");
+      } else if (requesterCategory === "general") {
+        matchesCategory = catLower.includes("general") || catLower.includes("assistance");
+      }
+
+      const q = requesterSearch.toLowerCase().trim();
       const matchesSearch =
-        !requesterSearch ||
-        item.title.toLowerCase().includes(requesterSearch.toLowerCase()) ||
-        item.description.toLowerCase().includes(requesterSearch.toLowerCase());
+        !q ||
+        (item.name && item.name.toLowerCase().includes(q)) ||
+        (item.title && item.title.toLowerCase().includes(q)) ||
+        (item.description && item.description.toLowerCase().includes(q)) ||
+        catLower.includes(q);
+
       return matchesCategory && matchesSearch;
     });
 
@@ -242,31 +289,41 @@ export default function ServicesPage() {
 
         {/* Category Tabs & Search Bar */}
         <div className="bg-white rounded-2xl border border-[#E6E9F0] p-4 shadow-sm space-y-4">
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-[#F0F2F6]">
-            {[
-              { id: "all", label: "All Services", icon: Layers },
-              { id: "hardware", label: "Hardware & Equipment", icon: Laptop },
-              { id: "software", label: "Software Access & SSO", icon: Key },
-              { id: "security", label: "Security & MFA Reset", icon: ShieldCheck },
-              { id: "general", label: "General IT Assistance", icon: LifeBuoy },
-            ].map((cat) => {
-              const Icon = cat.icon;
-              const active = requesterCategory === cat.id;
-              return (
-                <button
-                  key={cat.id}
-                  onClick={() => setRequesterCategory(cat.id)}
-                  className={`px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition flex items-center gap-2 ${
-                    active
-                      ? "bg-[#F1ECFE] text-[#6D28D9] border border-[#A78BFA]"
-                      : "text-[#6B7488] hover:text-[#0E1726] hover:bg-[#F5F7FA]"
-                  }`}
-                >
-                  <Icon className={`w-4 h-4 ${active ? "text-[#6D28D9]" : "text-[#6B7488]"}`} />
-                  <span>{cat.label}</span>
-                </button>
-              );
-            })}
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 border-b border-[#F0F2F6] flex-1">
+              {[
+                { id: "all", label: "All Services", icon: Layers },
+                { id: "hardware", label: "Hardware & Equipment", icon: Laptop },
+                { id: "software", label: "Software Access & SSO", icon: Key },
+                { id: "security", label: "Security & MFA Reset", icon: ShieldCheck },
+                { id: "general", label: "General IT Assistance", icon: LifeBuoy },
+              ].map((cat) => {
+                const Icon = cat.icon;
+                const active = requesterCategory === cat.id;
+                return (
+                  <button
+                    key={cat.id}
+                    onClick={() => setRequesterCategory(cat.id)}
+                    className={`px-3.5 py-2 rounded-xl text-xs font-semibold whitespace-nowrap transition flex items-center gap-2 ${
+                      active
+                        ? "bg-[#F1ECFE] text-[#6D28D9] border border-[#A78BFA]"
+                        : "text-[#6B7488] hover:text-[#0E1726] hover:bg-[#F5F7FA]"
+                    }`}
+                  >
+                    <Icon className={`w-4 h-4 ${active ? "text-[#6D28D9]" : "text-[#6B7488]"}`} />
+                    <span>{cat.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+
+            <button
+              onClick={fetchCatalogItems}
+              className="p-2 text-[#6B7488] hover:text-[#0E1726] hover:bg-[#F5F7FA] rounded-xl border border-[#E6E9F0] transition shrink-0"
+              title="Refresh service catalog"
+            >
+              <RefreshCw className={`w-4 h-4 ${catalogLoading ? "animate-spin text-[#6D28D9]" : ""}`} />
+            </button>
           </div>
 
           <div className="relative max-w-md">
@@ -281,53 +338,90 @@ export default function ServicesPage() {
           </div>
         </div>
 
-        {/* Services Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredCatalog.map((service) => (
-            <div
-              key={service.id}
-              className="bg-white rounded-2xl border border-[#E6E9F0] hover:border-[#A78BFA] p-6 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-4 group"
+        {/* Error Alert */}
+        {catalogError && (
+          <div className="p-4 rounded-xl bg-red-50 border border-red-200 text-red-700 text-xs flex items-center justify-between">
+            <span>{catalogError}</span>
+            <button
+              onClick={fetchCatalogItems}
+              className="text-xs font-bold text-red-800 hover:underline"
             >
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-[10px] uppercase font-bold tracking-wider text-[#6D28D9] bg-[#F1ECFE] px-2.5 py-0.5 rounded-full border border-[#A78BFA]">
-                    {service.categoryLabel}
-                  </span>
-                  {service.popular && (
-                    <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
-                      <Zap className="w-3 h-3 text-amber-500" /> Popular
-                    </span>
-                  )}
-                </div>
+              Retry
+            </button>
+          </div>
+        )}
 
-                <h3 className="text-sm font-bold text-[#0E1726] group-hover:text-[#6D28D9] transition">
-                  {service.title}
-                </h3>
-
-                <p className="text-xs text-[#6B7488] leading-relaxed line-clamp-3">
-                  {service.description}
-                </p>
-              </div>
-
-              <div className="pt-3 border-t border-[#F0F2F6] space-y-3">
-                <div className="flex items-center justify-between text-[11px] text-[#6B7488]">
-                  <span className="flex items-center gap-1">
-                    <Clock className="w-3.5 h-3.5" /> {service.estimatedTime} SLA
-                  </span>
-                  <span className="font-semibold text-[#475069]">{service.fulfillmentType}</span>
-                </div>
-
-                <Link
-                  href={`/itsm/incidents/new?category=${encodeURIComponent(service.categoryLabel)}&title=${encodeURIComponent(service.title)}`}
-                  className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 bg-[#6D28D9] hover:bg-[#5B21B6] text-white text-xs font-bold rounded-xl transition shadow-sm"
-                >
-                  <span>Request Service</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </Link>
-              </div>
+        {/* Services Grid */}
+        {catalogLoading && catalogItems.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-[#E6E9F0] p-12 text-center text-xs text-[#6B7488]">
+            <RefreshCw className="w-5 h-5 text-[#6D28D9] animate-spin mx-auto mb-2" />
+            <span>Loading service catalog...</span>
+          </div>
+        ) : filteredCatalog.length === 0 ? (
+          <div className="bg-white rounded-2xl border border-[#E6E9F0] p-12 text-center space-y-3">
+            <div className="w-12 h-12 rounded-full bg-[#F5F7FA] text-[#6B7488] flex items-center justify-center mx-auto">
+              <AlertCircle className="w-6 h-6" />
             </div>
-          ))}
-        </div>
+            <h3 className="text-sm font-bold text-[#0E1726]">No services found</h3>
+            <p className="text-xs text-[#6B7488] max-w-sm mx-auto">
+              {requesterSearch
+                ? "No catalog items match your search criteria."
+                : "No active service catalog items available for this category."}
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {filteredCatalog.map((service: any) => (
+              <div
+                key={service.id}
+                className="bg-white rounded-2xl border border-[#E6E9F0] hover:border-[#A78BFA] p-6 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-4 group"
+              >
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-[#6D28D9] bg-[#F1ECFE] px-2.5 py-0.5 rounded-full border border-[#A78BFA]">
+                      {service.category_label || service.categoryLabel}
+                    </span>
+                    {(service.approval_required || service.popular) && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                        <Zap className="w-3 h-3 text-amber-500" />{" "}
+                        {service.approval_required ? "Approval Required" : "Popular"}
+                      </span>
+                    )}
+                  </div>
+
+                  <h3 className="text-sm font-bold text-[#0E1726] group-hover:text-[#6D28D9] transition">
+                    {service.name || service.title}
+                  </h3>
+
+                  <p className="text-xs text-[#6B7488] leading-relaxed line-clamp-3">
+                    {service.description || "Request standard IT provisioning for your workspace."}
+                  </p>
+                </div>
+
+                <div className="pt-3 border-t border-[#F0F2F6] space-y-3">
+                  <div className="flex items-center justify-between text-[11px] text-[#6B7488]">
+                    <span className="flex items-center gap-1">
+                      <Clock className="w-3.5 h-3.5" /> {service.estimated_time_label || service.estimatedTime || "24 hrs"} SLA
+                    </span>
+                    <span className="font-semibold text-[#475069]">
+                      {service.fulfillment_type || service.fulfillmentType || "IT Triage"}
+                    </span>
+                  </div>
+
+                  <Link
+                    href={`/itsm/incidents/new?category=${encodeURIComponent(
+                      service.category_label || service.categoryLabel || ""
+                    )}&title=${encodeURIComponent(service.name || service.title || "")}`}
+                    className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 bg-[#6D28D9] hover:bg-[#5B21B6] text-white text-xs font-bold rounded-xl transition shadow-sm"
+                  >
+                    <span>Request Service</span>
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </Link>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     );
   }

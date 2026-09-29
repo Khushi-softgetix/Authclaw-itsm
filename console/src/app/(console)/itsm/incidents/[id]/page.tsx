@@ -4,11 +4,19 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
+  AlertTriangle,
   ArrowLeft,
   BookOpen,
   CheckCircle2,
+  Clock,
+  Download,
+  Edit3,
+  ExternalLink,
+  FileText,
+  Flame,
   Layers,
   LifeBuoy,
+  Paperclip,
   RefreshCw,
   ShieldAlert,
 } from "lucide-react";
@@ -19,6 +27,8 @@ import IncidentStatusBadge from "@/components/itsm/incident-status-badge";
 import IncidentStepper from "@/components/itsm/incident-stepper";
 import ActivityTimeline from "@/components/itsm/activity-timeline";
 import StatusModal from "@/components/itsm/status-modal";
+import ReportRecurringProblemModal from "@/components/itsm/report-recurring-problem-modal";
+import AttachmentSection, { AttachmentItem } from "@/components/itsm/attachment-section";
 
 export default function IncidentDetailPage() {
   const params = useParams();
@@ -26,11 +36,13 @@ export default function IncidentDetailPage() {
 
   const [incident, setIncident] = useState<Incident | null>(null);
   const [activities, setActivities] = useState<IncidentActivity[]>([]);
+  const [attachments, setAttachments] = useState<AttachmentItem[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [errorType, setErrorType] = useState<"unauthorized" | "not_found" | "server_error" | null>(null);
   const [userRole, setUserRole] = useState<string | null>(null);
   const [showStatusModal, setShowStatusModal] = useState<boolean>(false);
   const [targetModalStatus, setTargetModalStatus] = useState<string | undefined>(undefined);
+  const [showRecurringModal, setShowRecurringModal] = useState<boolean>(false);
 
   const fetchIncidentData = useCallback(async (role?: string) => {
     if (!incidentId) return;
@@ -45,9 +57,10 @@ export default function IncidentDetailPage() {
         ? `/api/itsm/incidents/${incidentId}?agent_view=true`
         : `/api/itsm/incidents/${incidentId}`;
 
-      const [incRes, actRes] = await Promise.all([
+      const [incRes, actRes, attRes] = await Promise.all([
         fetch(incidentUrl),
         fetch(`/api/itsm/incidents/${incidentId}/activities`),
+        fetch(`/api/itsm/incidents/${incidentId}/attachments`),
       ]);
 
       if (incRes.status === 401 || actRes.status === 401) {
@@ -76,6 +89,11 @@ export default function IncidentDetailPage() {
       if (actRes.ok) {
         const actData = await actRes.json();
         setActivities(Array.isArray(actData) ? actData : []);
+      }
+
+      if (attRes.ok) {
+        const attData = await attRes.json();
+        setAttachments(Array.isArray(attData) ? attData : []);
       }
     } catch {
       setErrorType("server_error");
@@ -263,6 +281,15 @@ export default function IncidentDetailPage() {
             >
               Update Status
             </button>
+            <button
+              onClick={() => setShowRecurringModal(true)}
+              id="agent-report-recurring-problem-action"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-purple-200 bg-purple-50 hover:bg-purple-100 text-[#6D28D9] text-xs font-semibold transition shadow-xs"
+              title="Report Recurring Problem"
+            >
+              <AlertTriangle className="w-3.5 h-3.5 text-[#6D28D9]" />
+              Report Recurring Problem
+            </button>
             <Link
               href={`/itsm/knowledge?incident=${incident.id}`}
               id="agent-knowledge-search-action"
@@ -366,6 +393,21 @@ export default function IncidentDetailPage() {
                     {incident.updated_at ? formatDateTime(incident.updated_at) : (incident.created_at ? formatDateTime(incident.created_at) : "Not set")}
                   </span>
                 </div>
+                {incident.linked_problem_id && (
+                  <div>
+                    <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
+                      Linked Problem
+                    </span>
+                    <Link
+                      href={`/itsm/problem-change-manager/problems/${incident.linked_problem_id}`}
+                      className="font-mono font-bold text-[#6D28D9] hover:underline mt-0.5 inline-flex items-center gap-1"
+                      id="incident-linked-problem-badge"
+                    >
+                      <span>{incident.linked_problem_ticket_number || "View Problem"}</span>
+                      <ExternalLink className="w-3 h-3 text-[#94A3B8]" />
+                    </Link>
+                  </div>
+                )}
               </div>
 
               {/* Short description */}
@@ -389,7 +431,17 @@ export default function IncidentDetailPage() {
                     : "No description provided."}
                 </div>
               </div>
+
             </div>
+
+            {/* Attached Files Section for Agent */}
+            <AttachmentSection
+              ticketId={incident.id}
+              ticketType="incidents"
+              attachments={attachments}
+              onAttachmentUploaded={() => fetchIncidentData()}
+              canUpload={true}
+            />
 
             {/* Step 4: Resolution Information Card */}
             {(incident.status === "RESOLVED" || incident.status === "CLOSED") && (
@@ -575,6 +627,17 @@ export default function IncidentDetailPage() {
             }}
           />
         )}
+
+        {showRecurringModal && incident && (
+          <ReportRecurringProblemModal
+            incident={incident}
+            onClose={() => setShowRecurringModal(false)}
+            onSuccess={(updated) => {
+              setIncident(updated);
+              fetchIncidentData();
+            }}
+          />
+        )}
       </div>
     );
   }
@@ -668,7 +731,17 @@ export default function IncidentDetailPage() {
                 {incident.description}
               </p>
             </div>
+
           </div>
+
+          {/* Attached Files Section for Requester */}
+          <AttachmentSection
+            ticketId={incident.id}
+            ticketType="incidents"
+            attachments={attachments}
+            onAttachmentUploaded={() => fetchIncidentData()}
+            canUpload={true}
+          />
 
           {/* Resolution Information Card */}
           {(incident.status === "RESOLVED" || incident.status === "CLOSED") && (

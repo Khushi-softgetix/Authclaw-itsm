@@ -353,28 +353,75 @@ class IncidentService:
         }
 
     @staticmethod
-    def generate_ticket_number(db: Session, tenant_id: UUID, ticket_type: str = "INCIDENT") -> str:
+    def generate_ticket_number(
+        db: Session,
+        tenant_id: UUID,
+        ticket_type: str = "INCIDENT",
+        prefix: str | None = None,
+    ) -> str:
         """Concurrency-safe atomic sequence generation per tenant using itsm_ticket_counters."""
-        default_prefix = "INC" if ticket_type == "INCIDENT" else ticket_type[:3]
-        query = text(
-            """
-            INSERT INTO public.itsm_ticket_counters (id, tenant_id, ticket_type, prefix, last_number, updated_at)
-            VALUES (gen_random_uuid(), :tenant_id, :ticket_type, :prefix, 1, clock_timestamp())
-            ON CONFLICT (tenant_id, ticket_type)
-            DO UPDATE SET
-                last_number = public.itsm_ticket_counters.last_number + 1,
-                updated_at = clock_timestamp()
-            RETURNING prefix, last_number
-            """
-        )
-        row = db.execute(
-            query,
-            {"tenant_id": str(tenant_id), "ticket_type": ticket_type, "prefix": default_prefix},
+        if prefix:
+            default_prefix = prefix
+        elif ticket_type == "PROBLEM":
+            default_prefix = "PRB"
+        elif ticket_type == "INCIDENT":
+            default_prefix = "INC"
+        else:
+            default_prefix = ticket_type[:3]
+
+        # Check existing max ticket number in itsm_tickets to prevent collisions with seeded data
+        max_row = db.execute(
+            text(
+                "SELECT ticket_number FROM public.itsm_tickets "
+                "WHERE tenant_id = :tenant_id AND ticket_type = :ticket_type "
+                "ORDER BY ticket_number DESC LIMIT 1"
+            ),
+            {"tenant_id": str(tenant_id), "ticket_type": ticket_type},
         ).fetchone()
-        if not row:
-            raise RuntimeError("Failed to generate ticket number")
-        prefix, number = row[0], row[1]
-        return f"{prefix}-{number:06d}"
+
+        init_num = 0
+        if max_row and max_row[0]:
+            try:
+                init_num = int(str(max_row[0]).split("-")[-1])
+            except (ValueError, IndexError):
+                init_num = 0
+
+        for _ in range(50):
+            query = text(
+                """
+                INSERT INTO public.itsm_ticket_counters (id, tenant_id, ticket_type, prefix, last_number, updated_at)
+                VALUES (gen_random_uuid(), :tenant_id, :ticket_type, :prefix, :init_val, clock_timestamp())
+                ON CONFLICT (tenant_id, ticket_type)
+                DO UPDATE SET
+                    last_number = GREATEST(public.itsm_ticket_counters.last_number, :curr_max) + 1,
+                    updated_at = clock_timestamp()
+                RETURNING prefix, last_number
+                """
+            )
+            row = db.execute(
+                query,
+                {
+                    "tenant_id": str(tenant_id),
+                    "ticket_type": ticket_type,
+                    "prefix": default_prefix,
+                    "init_val": init_num + 1 if init_num > 0 else 1,
+                    "curr_max": init_num,
+                },
+            ).fetchone()
+            if not row:
+                raise RuntimeError("Failed to generate ticket number")
+            pfx, number = row[0], row[1]
+            candidate = f"{pfx}-{number:06d}"
+
+            # Safety check: ensure candidate is truly unique
+            exists = db.execute(
+                text("SELECT 1 FROM public.itsm_tickets WHERE tenant_id = :tenant_id AND ticket_number = :num"),
+                {"tenant_id": str(tenant_id), "num": candidate},
+            ).fetchone()
+            if not exists:
+                return candidate
+
+        raise RuntimeError(f"Failed to generate unique ticket number for {ticket_type}")
 
     @staticmethod
     def _validate_user_in_tenant(db: Session, tenant_id: UUID, user_id: UUID, role_context: str = "User") -> User:
@@ -852,6 +899,11 @@ class IncidentService:
     def get_incident(cls, db: Session, tenant_id: UUID, incident_id: UUID) -> ITSMTicket:
         ticket = (
             db.query(ITSMTicket)
+            .options(
+                joinedload(ITSMTicket.service),
+                joinedload(ITSMTicket.assignee),
+                joinedload(ITSMTicket.linked_problem),
+            )
             .filter(
                 ITSMTicket.id == incident_id,
                 ITSMTicket.tenant_id == tenant_id,
@@ -1458,3 +1510,52 @@ class IncidentService:
             .order_by(ITSMTicketActivity.created_at.asc())
             .all()
         )
+
+    @classmethod
+    def get_incident_summary(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        requester_id: Optional[UUID] = None,
+    ) -> dict[str, Any]:
+        base_query = db.query(ITSMTicket).filter(
+            ITSMTicket.tenant_id == tenant_id,
+            ITSMTicket.ticket_type == "INCIDENT",
+        )
+        if requester_id:
+            base_query = base_query.filter(ITSMTicket.requester_id == requester_id)
+
+        open_count = base_query.filter(
+            ITSMTicket.status.notin_(["RESOLVED", "CLOSED", "CANCELLED"])
+        ).count()
+
+        resolved_count = base_query.filter(
+            ITSMTicket.status.in_(["RESOLVED", "CLOSED"])
+        ).count()
+
+        pending_count = base_query.filter(
+            ITSMTicket.status == "PENDING"
+        ).count()
+
+        resolved_tickets = base_query.filter(
+            ITSMTicket.status.in_(["RESOLVED", "CLOSED"])
+        ).all()
+
+        total_seconds = 0.0
+        valid_count = 0
+        for ticket in resolved_tickets:
+            end_time = ticket.resolved_at or ticket.closed_at
+            if end_time and ticket.created_at and end_time >= ticket.created_at:
+                delta = (end_time - ticket.created_at).total_seconds()
+                total_seconds += delta
+                valid_count += 1
+
+        avg_hours = round(total_seconds / (valid_count * 3600.0), 1) if valid_count > 0 else 0.0
+
+        return {
+            "open_tickets_count": open_count,
+            "resolved_tickets_count": resolved_count,
+            "pending_action_count": pending_count,
+            "avg_resolution_hours": avg_hours,
+        }
+

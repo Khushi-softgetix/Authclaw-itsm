@@ -495,6 +495,13 @@ def secure_authentication_boundary(conn, backend_runtime: Role) -> None:
             f"TO {definer}"
         )
     )
+    conn.execute(
+        text(
+            f"GRANT SELECT, INSERT ON public.audit_log_metadata, public.audit_outbox "
+            f"TO {definer}; "
+            f"GRANT USAGE, SELECT ON SEQUENCE public.audit_outbox_id_seq TO {definer}"
+        )
+    )
     conn.execute(text(f"GRANT USAGE ON SCHEMA authn TO {runtime}"))
 
     tables = conn.execute(
@@ -526,6 +533,7 @@ def secure_authentication_boundary(conn, backend_runtime: Role) -> None:
         "resolve_api_key(text)",
         "resolve_trust_center_share(text)",
         "access_request_onboarding_started(text,timestamptz)",
+        "append_audit_event_v2(uuid,uuid,text,timestamp with time zone,uuid,text,text,text,uuid,text,text,text,integer,integer,integer,integer,text[],jsonb)",
     )
     for function_signature in definer_functions:
         secured_function = conn.execute(
@@ -536,6 +544,12 @@ def secure_authentication_boundary(conn, backend_runtime: Role) -> None:
         ).scalar_one_or_none()
         if secured_function:
             conn.execute(text(f"ALTER FUNCTION {secured_function} OWNER TO {definer}"))
+            conn.execute(
+                text(
+                    f"ALTER FUNCTION {secured_function} SECURITY DEFINER "
+                    f"SET search_path TO pg_catalog, public"
+                )
+            )
             conn.execute(
                 text(f"REVOKE ALL ON FUNCTION {secured_function} FROM PUBLIC")
             )

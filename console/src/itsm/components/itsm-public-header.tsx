@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Ticket, Menu, X, ArrowRight, ExternalLink } from "lucide-react";
+import { Ticket, Menu, X, ArrowRight } from "lucide-react";
 
 export function ItsmPublicHeader() {
   const pathname = usePathname();
@@ -20,10 +20,9 @@ export function ItsmPublicHeader() {
 
   const navLinks = [
     { label: "Home", href: "/itsm" },
-    { label: "Solutions", href: "/itsm#solutions" },
+    { label: "Capabilities", href: "/itsm#capabilities" },
     { label: "Roles", href: "/itsm/roles" },
-    { label: "Pricing", href: "/itsm#pricing" },
-    { label: "About", href: "/itsm#about" },
+    { label: "Trust", href: "/itsm#trust" },
   ];
 
   return (
@@ -31,7 +30,7 @@ export function ItsmPublicHeader() {
       className={`sticky top-0 z-50 transition-all duration-200 ${
         isScrolled
           ? "bg-white/95 backdrop-blur-md border-b border-[#E6E9F0] shadow-[0_1px_2px_rgba(11,31,63,.05)]"
-          : "bg-[#FBFAF9] border-b border-transparent"
+          : "bg-white border-b border-transparent"
       }`}
     >
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6 sm:px-8">

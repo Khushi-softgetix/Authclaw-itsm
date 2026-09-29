@@ -819,7 +819,8 @@ def remediate_workflow(
 
     emit_audit_event(
         workflow_id, tenant_id, wf.request_id or "",
-        "COMPLETE→AWAITING_APPROVAL", "create_approval", "pending"
+        "COMPLETE→AWAITING_APPROVAL", "create_approval", "pending",
+        extra_trace=[f"approval_id={approval_id}", "approval_status=PENDING"],
     )
 
     runner = ComplianceWorkflowRunner(db)

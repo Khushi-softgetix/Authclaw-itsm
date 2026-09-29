@@ -9,7 +9,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.core.auth import ensure_itsm_role, get_current_tenant, get_tenant_db, require_itsm_roles
+from app.core.auth import (
+    deny_itsm_auditor_access,
+    deny_itsm_auditor_mutation,
+    ensure_itsm_role,
+    get_current_tenant,
+    get_tenant_db,
+    require_itsm_roles,
+)
 from app.schemas.itsm_incidents import (
     IncidentActivityCreateRequest,
     IncidentActivityResponse,
@@ -90,6 +97,8 @@ def incident_manager_operations_queue(
     ),
     assignment_group: Optional[str] = Query(default=None),
     assignee_id: Optional[UUID] = Query(default=None),
+    service_id: Optional[UUID] = Query(default=None),
+    category_id: Optional[UUID] = Query(default=None),
     unassigned: bool = Query(default=False, description="Only incidents without an individual assignee"),
     search: Optional[str] = Query(default=None),
     command_scope: bool = Query(default=False),
@@ -128,6 +137,8 @@ def incident_manager_operations_queue(
         priority=priority,
         assignment_group=assignment_group,
         assignee_id=assignee_id,
+        service_id=service_id,
+        category_id=category_id,
         unassigned_only=unassigned,
         search=search,
         incident_ids=incident_ids,
@@ -164,14 +175,22 @@ def incident_manager_dashboard(
 def _get_itsm_role(db: Session, tenant_id: UUID, user_id: UUID) -> str:
     try:
         row = db.execute(
-            text("SELECT itsm_role FROM authn.lookup_itsm_user_access(:tenant_id, :user_id)"),
+            text("SELECT itsm_role, has_itsm_access FROM authn.lookup_itsm_user_access(:tenant_id, :user_id)"),
             {"tenant_id": str(tenant_id), "user_id": str(user_id)},
         ).first()
-        if row and row.itsm_role:
+        if row and row.has_itsm_access and row.itsm_role:
             return str(row.itsm_role).upper()
-    except Exception:
-        pass
-    return "ADMIN"
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to verify ITSM access",
+        ) from exc
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="User does not have active ITSM access in this tenant",
+    )
 
 
 @router.post(
@@ -190,6 +209,8 @@ def create_incident(
     actor_id = UUID(str(request.state.user_id))
     t_id = UUID(tenant_id)
     role = _get_itsm_role(db, t_id, actor_id)
+
+    deny_itsm_auditor_mutation(request, db, role, "incident.create")
 
     if role == "REQUESTER":
         if not payload.urgency or str(payload.urgency).strip().upper() not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
@@ -254,6 +275,8 @@ def list_incidents(
     actor_id = UUID(str(request.state.user_id))
     t_id = UUID(tenant_id)
     role = _get_itsm_role(db, t_id, actor_id)
+
+    deny_itsm_auditor_access(request, db, role, "incident.list")
 
     if role == "REQUESTER":
         requester_id = actor_id
@@ -330,6 +353,8 @@ def get_incident(
     t_id = UUID(tenant_id)
     role = _get_itsm_role(db, t_id, actor_id)
 
+    deny_itsm_auditor_access(request, db, role, "incident.read")
+
     if agent_view and role != "SERVICE_AGENT":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -364,6 +389,8 @@ def update_incident(
     actor_id = UUID(str(request.state.user_id))
     t_id = UUID(tenant_id)
     role = _get_itsm_role(db, t_id, actor_id)
+
+    deny_itsm_auditor_mutation(request, db, role, "incident.update")
 
     if role == "REQUESTER":
         raise HTTPException(
@@ -410,6 +437,7 @@ def change_incident_status(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ITSM access disabled")
 
     role = str(access_row.itsm_role).upper() if (access_row and access_row.itsm_role) else _get_itsm_role(db, t_id, actor_id)
+    deny_itsm_auditor_mutation(request, db, role, "incident.status.change")
     allowed_roles = {"SERVICE_AGENT", "INCIDENT_MANAGER", "PLATFORM_ADMINISTRATOR", "SERVICE_LEAD", "ADMIN"}
     if role not in allowed_roles:
         raise HTTPException(
@@ -499,6 +527,7 @@ def add_incident_activity(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ITSM access disabled")
 
     role = str(access_row.itsm_role).upper() if (access_row and access_row.itsm_role) else _get_itsm_role(db, t_id, actor_id)
+    deny_itsm_auditor_mutation(request, db, role, "incident.activity.create")
     allowed_roles = {"SERVICE_AGENT", "INCIDENT_MANAGER", "PLATFORM_ADMINISTRATOR", "SERVICE_LEAD", "REQUESTER", "ADMIN"}
     if role not in allowed_roles:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized role")

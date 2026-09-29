@@ -1,117 +1,86 @@
-import React from "react";
 import Link from "next/link";
-import { Ticket, Shield, ArrowRight } from "lucide-react";
+import { Ticket } from "lucide-react";
+
+const FOOTER_GROUPS = [
+  {
+    heading: "Explore",
+    links: [
+      { label: "Overview", href: "/itsm" },
+      { label: "Capabilities", href: "/itsm#capabilities" },
+      { label: "Roles", href: "/itsm/roles" },
+      { label: "Trust", href: "/itsm#trust" },
+    ],
+  },
+  {
+    heading: "Access",
+    links: [
+      { label: "Sign in to ITSM", href: "/itsm/login" },
+      { label: "Book a demo", href: "/demo" },
+    ],
+  },
+  {
+    heading: "Trust",
+    links: [
+      { label: "Security", href: "/security" },
+      { label: "Privacy Notice", href: "/privacy" },
+      { label: "Terms of Use", href: "/terms" },
+      { label: "Cookies", href: "/cookies" },
+    ],
+  },
+] as const;
+
+const FOOTER_LINK_CLASS =
+  "inline-flex min-h-10 items-center rounded-md text-sm text-[#6B7488] transition-colors hover:text-[#6D28D9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9] focus-visible:ring-offset-2";
 
 export function ItsmPublicFooter() {
   const currentYear = new Date().getFullYear();
 
-  const footerGroups = [
-    {
-      heading: "Product",
-      links: [
-        { label: "Incident Management", href: "/itsm#solutions" },
-        { label: "Service Catalog", href: "/itsm#solutions" },
-        { label: "Knowledge Management", href: "/itsm#solutions" },
-        { label: "SLA Management", href: "/itsm#solutions" },
-        { label: "Change & Problem", href: "/itsm#solutions" },
-        { label: "AI Copilot & Ops", href: "/itsm#solutions" },
-      ],
-    },
-    {
-      heading: "Roles & Workspaces",
-      links: [
-        { label: "Requester Portal", href: "/itsm/roles#requester" },
-        { label: "Service Agent", href: "/itsm/roles#service-agent" },
-        { label: "Service Lead", href: "/itsm/roles#service-lead" },
-        { label: "Process & Change", href: "/itsm/roles#process-change" },
-        { label: "Platform Administrator", href: "/itsm/roles#platform-admin" },
-        { label: "Auditor & Compliance", href: "/itsm/roles#auditor" },
-      ],
-    },
-    {
-      heading: "Platform & Security",
-      links: [
-        { label: "Role-Based Access Control", href: "/itsm/roles" },
-        { label: "Enterprise Tenancy", href: "/itsm#solutions" },
-        { label: "Audit & Trust Center", href: "/security" },
-        { label: "In-line Compliance", href: "/product" },
-        { label: "API Reference", href: "/api/docs" },
-      ],
-    },
-    {
-      heading: "Company",
-      links: [
-        { label: "About AuthClaw", href: "/company" },
-        { label: "Book a Demo", href: "/demo" },
-        { label: "ITSM Login", href: "/itsm/login" },
-        { label: "Governance Portal", href: "/login" },
-        { label: "Contact Us", href: "/demo" },
-      ],
-    },
-  ];
-
   return (
-    <footer className="border-t border-[#E6E9F0] bg-white text-[#475069] mt-auto">
-      <div className="mx-auto max-w-7xl px-6 sm:px-8 pt-14 pb-10">
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-6 gap-10 lg:gap-8 mb-12">
-          {/* Brand Col */}
-          <div className="lg:col-span-2 space-y-4">
-            <Link href="/itsm" className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-[10px] bg-[#6D28D9] flex items-center justify-center shadow-[0_4px_12px_-4px_rgba(109,40,217,.5)]">
-                <Ticket className="w-4.5 h-4.5 text-white" />
-              </div>
-              <div className="flex items-center gap-1.5">
-                <span className="font-bold text-lg tracking-tight text-[#0E1726]">
-                  AuthClaw
-                </span>
-                <span className="font-bold text-lg text-[#6D28D9]">
-                  ITSM
-                </span>
-              </div>
+    <footer className="mt-auto border-t border-[#E6E9F0] bg-white text-[#475069]">
+      <div className="mx-auto max-w-7xl px-6 py-10 sm:px-8 sm:py-12">
+        <div className="grid grid-cols-2 gap-x-8 gap-y-10 lg:grid-cols-[minmax(0,1.6fr)_repeat(3,minmax(0,1fr))] lg:gap-12">
+          <div className="col-span-2 lg:col-span-1 lg:max-w-sm">
+            <Link
+              href="/itsm"
+              aria-label="AuthClaw ITSM home"
+              className="inline-flex items-center gap-2.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9] focus-visible:ring-offset-4"
+            >
+              <span className="flex h-8 w-8 items-center justify-center rounded-[10px] bg-[#6D28D9] text-white shadow-[0_4px_12px_-4px_rgba(109,40,217,.5)]">
+                <Ticket aria-hidden="true" className="h-4 w-4" />
+              </span>
+              <span className="text-lg font-bold tracking-tight text-[#0E1726]">
+                AuthClaw <span className="text-[#6D28D9]">ITSM</span>
+              </span>
             </Link>
-            <p className="text-xs leading-relaxed text-[#6B7488] max-w-sm">
-              AI-native service management built natively into the AuthClaw platform.
-              Streamline enterprise incidents, automated triage, SLA compliance,
-              and continuous ITIL workflows with intelligent copilot actions.
+            <p className="mt-4 max-w-xs text-sm leading-6 text-[#6B7488]">
+              Secure, governed service management for requesting, resolving, and improving IT services.
             </p>
-            <div className="pt-2">
-              <Link
-                href="/itsm/login"
-                className="inline-flex items-center gap-2 text-xs font-semibold text-[#6D28D9] hover:text-[#5B21B6] transition"
-              >
-                Sign in to your ITSM workspace
-                <ArrowRight className="w-3.5 h-3.5" />
-              </Link>
-            </div>
           </div>
 
-          {/* Nav columns */}
-          {footerGroups.map((group) => (
-            <div key={group.heading} className="space-y-3">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-[#0E1726]">
-                {group.heading}
-              </h4>
-              <ul className="space-y-2 text-xs">
+          {FOOTER_GROUPS.map((group) => (
+            <nav
+              key={group.heading}
+              aria-label={`${group.heading} links`}
+              className={group.heading === "Trust" ? "col-span-2 lg:col-span-1" : undefined}
+            >
+              <h2 className="text-xs font-semibold text-[#0E1726]">{group.heading}</h2>
+              <ul className={group.heading === "Trust" ? "mt-3 grid grid-cols-2 gap-x-8 lg:block lg:space-y-0.5" : "mt-3 space-y-0.5"}>
                 {group.links.map((link) => (
                   <li key={link.label}>
-                    <Link
-                      href={link.href}
-                      className="text-[#6B7488] hover:text-[#0E1726] transition-colors"
-                    >
+                    <Link href={link.href} className={FOOTER_LINK_CLASS}>
                       {link.label}
                     </Link>
                   </li>
                 ))}
               </ul>
-            </div>
+            </nav>
           ))}
         </div>
 
-        {/* Bottom Bar */}
-        <div className="pt-8 border-t border-[#F0F2F6] flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-[#8C95A8]">
-          <p>© {currentYear} AuthClaw ITSM. All rights reserved.</p>
-          <p className="flex items-center gap-1.5">
-            A product by <strong className="text-[#0E1726]">AgentsArchitects.ai</strong>
+        <div className="mt-8 border-t border-[#E6E9F0] pt-5 text-xs leading-5 text-[#8C95A8] sm:mt-10 sm:flex sm:items-center sm:justify-between">
+          <p>© {currentYear} AuthClaw ITSM</p>
+          <p className="mt-1 sm:mt-0">
+            A product by <span className="font-semibold text-[#475069]">AgentsArchitects.ai</span>
           </p>
         </div>
       </div>

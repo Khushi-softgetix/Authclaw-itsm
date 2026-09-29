@@ -2,8 +2,9 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
+  BarChart3,
   Bell,
   BookOpen,
   Building,
@@ -11,9 +12,10 @@ import {
   ChevronDown,
   ClipboardCheck,
   Cloud,
-  Cpu,
   Database,
+  Download,
   FileCheck,
+  FolderSearch,
   GitPullRequest,
   Layers,
   LayoutDashboard,
@@ -24,10 +26,8 @@ import {
   Settings,
   ShieldAlert,
   ShieldCheck,
-  Sliders,
   Ticket,
   User,
-  Users,
   X,
 } from "lucide-react";
 import NotificationBell from "@/components/notification-bell";
@@ -101,8 +101,17 @@ const serviceAgentNavigation: NavItem[] = [
   { name: "Services", href: "/itsm/services", icon: Layers, roles: readRoles },
 ];
 
+const auditorNavigation: NavItem[] = [
+  { name: "Overview", href: "/itsm/dashboard/auditor?section=overview", icon: LayoutDashboard, roles: readRoles },
+  { name: "Audit Log", href: "/itsm/dashboard/auditor?section=audit-log", icon: ScrollText, roles: readRoles },
+  { name: "Evidence", href: "/itsm/dashboard/auditor?section=evidence", icon: FolderSearch, roles: readRoles },
+  { name: "Reports", href: "/itsm/dashboard/auditor?section=reports", icon: BarChart3, roles: readRoles },
+  { name: "Exports", href: "/itsm/dashboard/auditor?section=exports", icon: Download, roles: readRoles },
+];
+
 export default function ConsoleShell({ children, userEmail, tenantId, tenantName, userRole, platformRole = "NONE", itsmRole }: ConsoleShellProps) {
   const pathname = usePathname();
+  const searchParams = useSearchParams();
   const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
@@ -115,6 +124,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
   const displayedRole = isItsm
     ? (itsmRole && ITSM_ROLE_LABELS[itsmRole.toUpperCase()]) || itsmRole?.replace(/_/g, " ") || "Requester"
     : (hasPlatformAccess ? "platform admin" : normalizedRole);
+  const auditorSection = searchParams.get("section") || "overview";
 
   const activeNavigationList = isItsm
     ? effectiveItsmRole === "REQUESTER"
@@ -128,6 +138,8 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
         ]
       : effectiveItsmRole === "SERVICE_AGENT"
       ? serviceAgentNavigation
+      : effectiveItsmRole === "AUDITOR"
+      ? auditorNavigation
       : itsmNavigation
     : navigation;
   const allowedNavigation = activeNavigationList.filter((item) => item.roles.includes(normalizedRole));
@@ -147,6 +159,8 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
     : isItsm
     ? pathname === "/itsm/dashboard/agent"
       ? "My Work"
+      : pathname === "/itsm/dashboard/auditor"
+      ? auditorNavigation.find((item) => item.href.includes(`section=${auditorSection}`))?.name || "Overview"
       : pathname.startsWith("/itsm/dashboard")
       ? "Dashboard"
       : pathname === "/itsm/incidents/new"
@@ -163,7 +177,11 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
   const navLinks = (onClick?: () => void) => (
     <div className="space-y-1">
       {allowedNavigation.map((item) => {
-        const active =
+        const itemSection = item.href.includes("section=") ? item.href.split("section=")[1] : null;
+        const itemPath = item.href.split("?")[0];
+        const active = effectiveItsmRole === "AUDITOR" && itemSection
+          ? pathname === itemPath && auditorSection === itemSection
+          :
           pathname === item.href ||
           (item.href === "/itsm/dashboard" && pathname.startsWith("/itsm/dashboard")) ||
           (item.href !== "/itsm/dashboard" && item.href !== "/overview" && pathname.startsWith(item.href));
@@ -203,7 +221,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <NotificationBell />
+          {effectiveItsmRole !== "AUDITOR" ? <NotificationBell /> : null}
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             className="text-[#6B7488] hover:text-[#0E1726] focus:outline-none"
@@ -305,7 +323,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
             </div>
 
             <div className="flex items-center gap-2">
-              <NotificationBell />
+              {effectiveItsmRole !== "AUDITOR" ? <NotificationBell /> : null}
               <div className="relative">
               <button
                 onClick={() => setProfileDropdownOpen(!profileDropdownOpen)}
@@ -354,7 +372,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
             </div>
           </header>
 
-          <main className="flex-1 overflow-auto p-6 md:p-8">{children}</main>
+          <main className="flex-1 overflow-auto px-4 py-6 sm:px-6 md:px-8 md:py-8 xl:px-10">{children}</main>
         </div>
       </div>
     </div>

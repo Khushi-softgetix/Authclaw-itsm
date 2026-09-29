@@ -7,7 +7,7 @@ import secrets
 import jwt
 import requests
 from datetime import datetime, timedelta, timezone
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
@@ -53,15 +53,16 @@ def _emit_oidc_audit(
     response_status: int,
     provider: str = "oidc",
 ) -> None:
+    correlation_id = request_id or str(uuid4())
     event = event_backbone.audit_event(
         event_type="authentication",
         tenant_id=tenant_id,
         subject_id=actor_id or tenant_id,
-        identity_action=action,
+        identity_action=f"{action}:{correlation_id}",
         action=f"auth:{action}",
         reason=reason,
         provider=provider,
-        request_id=request_id,
+        request_id=correlation_id,
         trace=[],
     )
     event["actor_id"] = actor_id

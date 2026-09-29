@@ -50,6 +50,15 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
     if (itsmRole === "INCIDENT_MANAGER" || itsmRole === "SERVICE_LEAD") {
       redirect("/itsm/incident-manager");
     }
+    if (
+      itsmRole === "AUDITOR" &&
+      currentPath &&
+      currentPath !== "/itsm/dashboard/auditor" &&
+      currentPath !== "/itsm/profile" &&
+      !currentPath.startsWith("/itsm/profile/")
+    ) {
+      redirect("/itsm/dashboard/auditor");
+    }
   }
 
   if (isAdminPortal) {

@@ -13,6 +13,7 @@ interface ActivityTimelineProps {
   activities: IncidentActivity[];
   onActivityAdded: () => void;
   oversight?: boolean;
+  embedded?: boolean;
   users?: TenantUser[];
   apiEndpoint?: string;
 }
@@ -22,6 +23,7 @@ export default function ActivityTimeline({
   activities,
   onActivityAdded,
   oversight = false,
+  embedded = false,
   users = [],
   apiEndpoint,
 }: ActivityTimelineProps) {
@@ -98,16 +100,18 @@ export default function ActivityTimeline({
   };
 
   return (
-    <div className="bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm space-y-6" id="activity-timeline-container">
-      <div className="flex items-center justify-between border-b border-[#E6E9F0] pb-3">
-        <div>
-          <h3 className="text-sm font-bold text-[#0E1726]">{oversight ? "Activity & Updates" : "Activity & Collaboration"}</h3>
-          <p className="text-[11px] text-[#6B7488]">Audit trail, status updates, and discussion stream</p>
+    <div className={embedded ? "space-y-6" : "bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm space-y-6"} id="activity-timeline-container">
+      {!embedded && (
+        <div className="flex items-center justify-between border-b border-[#E6E9F0] pb-3">
+          <div>
+            <h3 className="text-sm font-bold text-[#0E1726]">{oversight ? "Activity & Updates" : "Activity & Collaboration"}</h3>
+            <p className="text-[11px] text-[#6B7488]">Audit trail, status updates, and discussion stream</p>
+          </div>
+          <span className="text-xs font-mono text-[#6B7488] bg-[#F5F7FA] px-2 py-0.5 rounded-full border border-[#E6E9F0]">
+            {activities.length} {activities.length === 1 ? "entry" : "entries"}
+          </span>
         </div>
-        <span className="text-xs font-mono text-[#6B7488] bg-[#F5F7FA] px-2 py-0.5 rounded-full border border-[#E6E9F0]">
-          {activities.length} {activities.length === 1 ? "entry" : "entries"}
-        </span>
-      </div>
+      )}
 
       {/* Composer */}
       <form

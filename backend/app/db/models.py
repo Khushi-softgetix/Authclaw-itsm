@@ -1605,6 +1605,7 @@ class ITSMMajorIncident(Base):
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
     ticket_id = Column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="CASCADE"), nullable=False)
     incident_commander_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    communication_lead_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     bridge_url = Column(String(1024), nullable=True)
     communication_channel = Column(String(255), nullable=True)
     declared_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
@@ -1615,46 +1616,22 @@ class ITSMMajorIncident(Base):
     closed_at = Column(DateTime(timezone=True), nullable=True)
     executive_summary = Column(Text, nullable=True)
     impacted_business_units = Column(PG_ARRAY(Text), nullable=False, default=list)
+    affected_service_ids = Column(PG_ARRAY(UUID(as_uuid=True)), nullable=False, default=list)
+    affected_configuration_item_ids = Column(PG_ARRAY(UUID(as_uuid=True)), nullable=False, default=list)
     customer_impact_description = Column(Text, nullable=True)
+    restoration_checkpoints = Column(JSON, nullable=False, default=list)
+    command_decisions = Column(JSON, nullable=False, default=list)
+    command_tasks = Column(JSON, nullable=False, default=list)
+    stakeholders = Column(JSON, nullable=False, default=list)
+    command_communications = Column(JSON, nullable=False, default=list)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     tenant = relationship("Tenant")
     ticket = relationship("ITSMTicket")
     incident_commander = relationship("User", foreign_keys=[incident_commander_id])
+    communication_lead = relationship("User", foreign_keys=[communication_lead_id])
     declared_by = relationship("User", foreign_keys=[declared_by_id])
-
-    @property
-    def communication_lead_id(self) -> None:
-        return None
-
-    @property
-    def affected_service_ids(self) -> list:
-        return []
-
-    @property
-    def affected_configuration_item_ids(self) -> list:
-        return []
-
-    @property
-    def restoration_checkpoints(self) -> list:
-        return []
-
-    @property
-    def command_decisions(self) -> list:
-        return []
-
-    @property
-    def command_tasks(self) -> list:
-        return []
-
-    @property
-    def stakeholders(self) -> list:
-        return []
-
-    @property
-    def command_communications(self) -> list:
-        return []
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "ticket_id", name="uq_itsm_major_incident_ticket"),
@@ -2046,4 +2023,25 @@ class ITSMTeamMember(Base):
         UniqueConstraint("team_id", "user_id", name="uq_itsm_team_members_team_user"),
         Index("idx_itsm_team_members_lookup", "tenant_id", "team_id"),
         Index("idx_itsm_team_members_user", "tenant_id", "user_id"),
+    )
+
+
+class ITSMIncidentSavedView(Base):
+    """A tenant-scoped Incident Manager queue view owned by one user."""
+    __tablename__ = "itsm_incident_saved_views"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String(100), nullable=False)
+    filters = Column(JSON, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    user = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "user_id", "name", name="uq_itsm_saved_view_user_name"),
+        Index("idx_itsm_saved_views_user", "tenant_id", "user_id"),
     )

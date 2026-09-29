@@ -133,6 +133,8 @@ export interface IncidentSavedViewFilters {
   attention?: "WATCH" | "PRIORITY" | "SLA_AT_RISK" | "SLA_BREACHED" | "STUCK";
   assignment_group?: string;
   assignee_id?: string;
+  service_id?: string;
+  category_id?: string;
   unassigned?: boolean;
   sort_by?: "priority" | "sla_due" | "updated";
 }
@@ -195,6 +197,8 @@ export interface IncidentOperationsDashboard {
     sla_at_risk: number;
     sla_breached: number;
     stuck: number;
+    unassigned: number;
+    active_major_incidents: number;
     escalation_watch: number;
   };
   priority_watch: IncidentOperationsItem[];

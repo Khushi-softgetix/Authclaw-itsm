@@ -20,10 +20,10 @@ test("ItsmPublicHeader provides isolated ITSM navigation and branding", () => {
 
   // Verify dedicated nav links
   assert.ok(source.includes('href: "/itsm"'), "Must link to /itsm Home");
-  assert.ok(source.includes('href: "/itsm#solutions"'), "Must link to /itsm#solutions");
+  assert.ok(source.includes('href: "/itsm#capabilities"'), "Must link to /itsm#capabilities");
   assert.ok(source.includes('href: "/itsm/roles"'), "Must link to /itsm/roles");
-  assert.ok(source.includes('href: "/itsm#pricing"'), "Must link to /itsm#pricing");
-  assert.ok(source.includes('href: "/itsm#about"'), "Must link to /itsm#about");
+  assert.ok(source.includes('href: "/itsm#trust"'), "Must link to /itsm#trust");
+  assert.ok(!source.includes('href: "/itsm#pricing"'), "Must not advertise unverified pricing");
 
   // Verify CTAs
   assert.ok(source.includes('href="/itsm/login"'), "Must have ITSM Login CTA");
@@ -45,6 +45,12 @@ test("ItsmPublicFooter provides dedicated ITSM footer columns and copyright", ()
   assert.ok(source.includes("/itsm/roles"), "Must link to /itsm/roles");
   assert.ok(source.includes("/itsm/login"), "Must link to /itsm/login");
   assert.ok(source.includes("AgentsArchitects.ai"), "Must credit AgentsArchitects.ai");
+  assert.ok(source.includes('heading: "Explore"'), "Must provide compact product navigation");
+  assert.ok(source.includes('heading: "Access"'), "Must provide ITSM access links");
+  assert.ok(source.includes('heading: "Trust"'), "Must provide trust and legal links");
+  assert.ok(source.includes('href: "/cookies"'), "Must link to the cookie notice");
+  assert.ok(!source.includes("/itsm/roles#"), "Must not duplicate every role in the footer");
+  assert.ok(!source.includes('href: "/login"'), "Must not mix the Governance portal into ITSM navigation");
 });
 
 test("MarketingHeader and MarketingFooter isolate /itsm routes", () => {
@@ -74,8 +80,11 @@ test("ITSM Public Layout mounts ItsmPublicHeader and ItsmPublicFooter", () => {
 
 test("ITSM Roles Page defines all 6 approved roles with dashboard links", () => {
   const rolesPath = path.join(consoleDir, "src/app/(marketing)/itsm/roles/page.tsx");
+  const directoryPath = path.join(consoleDir, "src/app/(marketing)/itsm/roles/role-directory.tsx");
   assert.ok(fs.existsSync(rolesPath), "Roles page must exist");
+  assert.ok(fs.existsSync(directoryPath), "Role directory component must exist");
   const source = fs.readFileSync(rolesPath, "utf-8");
+  const directory = fs.readFileSync(directoryPath, "utf-8");
 
   const requiredRoles = [
     "REQUESTER",
@@ -102,6 +111,19 @@ test("ITSM Roles Page defines all 6 approved roles with dashboard links", () => 
   for (const dbPath of requiredDashboards) {
     assert.ok(source.includes(dbPath), `Roles page must link to ${dbPath}`);
   }
+
+  assert.ok(directory.includes("md:grid-cols-2"), "Desktop role directory must show two roles per row");
+  assert.ok(directory.includes("roles.slice(index,index+2)"), "Role directory must group roles into three pairs");
+  assert.ok(directory.includes("current===id?null:id"), "Only one role detail must be selected at a time");
+  assert.ok(directory.includes("<RoleDetails role={selectedRole}"), "Selected details must span beneath the role pair");
+  assert.ok(source.includes("Choose your ITSM role"), "Roles page must lead with a clear selection task");
+  assert.ok(source.includes("Your workspaces"), "Role access guidance must support accounts with multiple roles");
+  assert.ok(source.includes("available for your assigned roles"), "Role access guidance must use plural-friendly language");
+  assert.ok(source.includes("Sign in to ITSM"), "Role access guidance must provide a concise sign-in action");
+  assert.ok(!source.includes("The right workspace, automatically"), "Role access guidance must avoid assuming one workspace");
+  assert.ok(!source.includes("Access follows your assigned role"), "Role access guidance must avoid technical wording");
+  assert.ok(!source.includes("lg:grid-cols-3") && !directory.includes("lg:grid-cols-3"), "Roles must not return to the card grid layout");
+  assert.ok(!source.includes("Role-Based Operational Architecture"), "Roles must avoid decorative heading copy");
 });
 
 test("All 6 role dashboard pages exist and dashboard root handles role routing", () => {

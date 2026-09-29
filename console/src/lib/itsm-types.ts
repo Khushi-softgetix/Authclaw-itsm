@@ -290,6 +290,17 @@ export interface MajorIncidentPayload {
   postmortem_url?: string | null;
 }
 
+export interface MajorIncidentPageResult {
+  incident_id: string;
+  target_kind: "ON_CALL_ENGINEER" | "RESPONSE_TEAM" | "ASSIGNEE";
+  target_label: string;
+  delivery_channel: "IN_APP";
+  recipients: Array<{ id: string; email: string }>;
+  notification_count: number;
+  command_path: string;
+  paged_at: string;
+}
+
 export interface MajorIncidentRestorationCheckpoint {
   id?: string;
   title: string;

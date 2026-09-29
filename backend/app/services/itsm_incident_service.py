@@ -13,6 +13,9 @@ from sqlalchemy.orm import Session, joinedload
 from app.db.models import (
     ITSMConfigurationItem,
     ITSMIncidentSavedView,
+    ITSMOnCallOverride,
+    ITSMOnCallRotation,
+    ITSMOnCallSchedule,
     ITSMService,
     ITSMTeam,
     ITSMTeamMember,
@@ -42,7 +45,7 @@ from app.schemas.itsm_incidents import (
 )
 from app.services.audit_store import append_audit_event
 from app.services.itsm_sla_service import apply_sla_policy, pause_sla, resume_sla
-from app.services.notifications import create_notification
+from app.services.notifications import add_notification, create_notification
 
 logger = logging.getLogger("authclaw.itsm.incidents")
 
@@ -1579,6 +1582,277 @@ class IncidentService:
         if not major:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Major incident not found")
         return major
+
+    @staticmethod
+    def _active_itsm_users(db: Session, tenant_id: UUID, user_ids: list[UUID | str]) -> list[User]:
+        """Return eligible paging recipients in the caller-provided priority order."""
+        ordered_ids: list[UUID] = []
+        for raw_user_id in user_ids:
+            try:
+                user_id = UUID(str(raw_user_id))
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if user_id not in ordered_ids:
+                ordered_ids.append(user_id)
+        if not ordered_ids:
+            return []
+        users = (
+            db.query(User)
+            .join(
+                ITSMUserAccess,
+                (ITSMUserAccess.user_id == User.id)
+                & (ITSMUserAccess.tenant_id == User.tenant_id),
+            )
+            .filter(
+                User.tenant_id == tenant_id,
+                User.id.in_(ordered_ids),
+                User.is_active.is_(True),
+                ITSMUserAccess.has_itsm_access.is_(True),
+                ITSMUserAccess.itsm_role.in_(("SERVICE_AGENT", "INCIDENT_MANAGER")),
+            )
+            .all()
+        )
+        by_id = {user.id: user for user in users}
+        return [by_id[user_id] for user_id in ordered_ids if user_id in by_id]
+
+    @classmethod
+    def _resolve_page_recipients(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        ticket: ITSMTicket,
+        major: ITSMMajorIncident,
+        now: datetime,
+    ) -> tuple[str, str, list[User]]:
+        """Resolve the current responder without inventing an external pager.
+
+        Active schedule overrides and the primary rotation take precedence. If
+        no usable schedule exists, resolution falls back to the incident's
+        operational team (or service escalation team), then its assignee.
+        """
+        service_id = ticket.service_id
+        affected_service_ids = list(major.affected_service_ids or [])
+        if not service_id and len(affected_service_ids) == 1:
+            service_id = affected_service_ids[0]
+
+        schedule_query = db.query(ITSMOnCallSchedule).filter(
+            ITSMOnCallSchedule.tenant_id == tenant_id,
+            ITSMOnCallSchedule.is_active.is_(True),
+        )
+        if service_id:
+            schedule_query = schedule_query.filter(
+                or_(ITSMOnCallSchedule.service_id == service_id, ITSMOnCallSchedule.service_id.is_(None))
+            ).order_by(
+                case((ITSMOnCallSchedule.service_id == service_id, 0), else_=1),
+                ITSMOnCallSchedule.name.asc(),
+            )
+        else:
+            schedule_query = schedule_query.filter(ITSMOnCallSchedule.service_id.is_(None)).order_by(
+                ITSMOnCallSchedule.name.asc()
+            )
+
+        for schedule in schedule_query.all():
+            rotation = (
+                db.query(ITSMOnCallRotation)
+                .filter(
+                    ITSMOnCallRotation.tenant_id == tenant_id,
+                    ITSMOnCallRotation.schedule_id == schedule.id,
+                )
+                .order_by(ITSMOnCallRotation.tier_level.asc())
+                .first()
+            )
+            if not rotation:
+                continue
+            override = (
+                db.query(ITSMOnCallOverride)
+                .filter(
+                    ITSMOnCallOverride.tenant_id == tenant_id,
+                    ITSMOnCallOverride.schedule_id == schedule.id,
+                    ITSMOnCallOverride.tier_level == rotation.tier_level,
+                    ITSMOnCallOverride.start_at <= now,
+                    ITSMOnCallOverride.end_at > now,
+                )
+                .order_by(ITSMOnCallOverride.start_at.desc())
+                .first()
+            )
+            if override:
+                recipients = cls._active_itsm_users(db, tenant_id, [override.override_user_id])
+                if recipients:
+                    return "ON_CALL_ENGINEER", f"{schedule.name} (temporary override)", recipients
+
+            rotation_ids = list(rotation.user_ids or [])
+            rotation_start = rotation.rotation_start_at
+            if rotation_start and rotation_start.tzinfo is None:
+                rotation_start = rotation_start.replace(tzinfo=timezone.utc)
+            if not rotation_ids or not rotation_start or now < rotation_start:
+                continue
+            period_seconds = {
+                "HOURLY": 3600,
+                "DAILY": 86400,
+                "WEEKLY": 604800,
+            }.get(str(rotation.rotation_type or "WEEKLY").upper(), 604800)
+            current_index = int((now - rotation_start).total_seconds() // period_seconds) % len(rotation_ids)
+            prioritized_ids = rotation_ids[current_index:] + rotation_ids[:current_index]
+            recipients = cls._active_itsm_users(db, tenant_id, prioritized_ids)
+            if recipients:
+                return "ON_CALL_ENGINEER", f"{schedule.name} (primary on-call)", [recipients[0]]
+
+        service = None
+        if service_id:
+            service = db.query(ITSMService).filter(
+                ITSMService.tenant_id == tenant_id,
+                ITSMService.id == service_id,
+            ).first()
+        group_name = (ticket.assignment_group or (service.escalation_team if service else None) or "").strip()
+        if group_name:
+            team_members = (
+                db.query(User)
+                .join(
+                    ITSMTeamMember,
+                    (ITSMTeamMember.user_id == User.id) & (ITSMTeamMember.tenant_id == User.tenant_id),
+                )
+                .join(
+                    ITSMTeam,
+                    (ITSMTeam.id == ITSMTeamMember.team_id) & (ITSMTeam.tenant_id == ITSMTeamMember.tenant_id),
+                )
+                .join(
+                    ITSMUserAccess,
+                    (ITSMUserAccess.user_id == User.id) & (ITSMUserAccess.tenant_id == User.tenant_id),
+                )
+                .filter(
+                    User.tenant_id == tenant_id,
+                    User.is_active.is_(True),
+                    ITSMUserAccess.has_itsm_access.is_(True),
+                    ITSMUserAccess.itsm_role.in_(("SERVICE_AGENT", "INCIDENT_MANAGER")),
+                    ITSMTeam.tenant_id == tenant_id,
+                    ITSMTeam.is_active.is_(True),
+                    func.lower(ITSMTeam.name) == func.lower(group_name),
+                )
+                .order_by(User.email.asc())
+                .all()
+            )
+            if team_members:
+                return "RESPONSE_TEAM", group_name, team_members
+
+        if ticket.assignee_id:
+            recipients = cls._active_itsm_users(db, tenant_id, [ticket.assignee_id])
+            if recipients:
+                return "ASSIGNEE", recipients[0].email, recipients
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "No active on-call engineer or response-team member could be resolved. "
+                "Configure a service on-call rotation, assign an active operational team, or assign an active ITSM user."
+            ),
+        )
+
+    @staticmethod
+    def _page_destination(
+        ticket: ITSMTicket,
+        major: ITSMMajorIncident,
+        recipient_role: str,
+        command_path: str,
+    ) -> str:
+        if recipient_role.upper() == "INCIDENT_MANAGER":
+            return command_path
+        bridge_url = (major.bridge_url or "").strip()
+        if bridge_url:
+            return bridge_url
+        return f"/itsm/incidents/{ticket.id}"
+
+    @classmethod
+    def page_major_incident(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        incident_id: UUID,
+        actor_id: UUID,
+    ) -> dict[str, Any]:
+        major = cls.get_major_incident(db, tenant_id, incident_id)
+        ticket = cls.get_incident(db, tenant_id, incident_id)
+        now = datetime.now(timezone.utc)
+        target_kind, target_label, recipients = cls._resolve_page_recipients(
+            db, tenant_id, ticket, major, now
+        )
+        command_path = f"/itsm/incident-manager/major-incidents?incident={ticket.id}"
+        context = f"{ticket.priority} {ticket.ticket_number}: {ticket.title}. {ticket.impact.title()} impact."
+        if major.communication_channel:
+            context += f" Command channel: {major.communication_channel}."
+        recipient_roles = dict(
+            db.query(ITSMUserAccess.user_id, ITSMUserAccess.itsm_role)
+            .filter(
+                ITSMUserAccess.tenant_id == tenant_id,
+                ITSMUserAccess.user_id.in_([recipient.id for recipient in recipients]),
+            )
+            .all()
+        )
+        recipient_links: dict[str, str] = {}
+        for recipient in recipients:
+            recipient_role = str(recipient_roles.get(recipient.id) or "")
+            destination = cls._page_destination(ticket, major, recipient_role, command_path)
+            recipient_links[str(recipient.id)] = destination
+            if destination == command_path:
+                instruction = "Open the command workspace for current response details and bridge access."
+            elif major.bridge_url and destination == major.bridge_url.strip():
+                instruction = "Open this alert to join the active response bridge."
+            else:
+                instruction = "Open the assigned incident response workspace for current details and coordination."
+            add_notification(
+                db,
+                tenant_id=tenant_id,
+                user_id=recipient.id,
+                type="itsm.major_incident.page",
+                severity="critical",
+                title=f"Urgent: response requested for {ticket.ticket_number}",
+                body=f"{context} {instruction}",
+                link=destination,
+            )
+
+        evidence = {
+            "target_kind": target_kind,
+            "target_label": target_label,
+            "delivery_channel": "IN_APP",
+            "recipient_count": len(recipients),
+            "recipient_ids": [str(user.id) for user in recipients],
+            "command_path": command_path,
+            "recipient_links": recipient_links,
+        }
+        cls._record_activity(
+            db,
+            tenant_id,
+            ticket.id,
+            "MAJOR_INCIDENT_PAGED",
+            f"Urgent in-app page sent to {target_label} ({len(recipients)} recipient{'s' if len(recipients) != 1 else ''})",
+            new_value=evidence,
+            actor_id=actor_id,
+        )
+        cls._emit_audit_event(
+            db,
+            tenant_id,
+            ticket,
+            "major_incident_paged",
+            actor_id,
+            reason="Incident Commander requested urgent responder notification",
+            trace_items=[
+                f"target_kind={target_kind}",
+                f"target_label={target_label}",
+                f"recipient_count={len(recipients)}",
+                "delivery_channel=IN_APP",
+            ],
+            after_summary=evidence,
+        )
+        db.commit()
+        return {
+            "incident_id": ticket.id,
+            "target_kind": target_kind,
+            "target_label": target_label,
+            "delivery_channel": "IN_APP",
+            "recipients": [{"id": user.id, "email": user.email} for user in recipients],
+            "notification_count": len(recipients),
+            "command_path": command_path,
+            "paged_at": now,
+        }
 
     @classmethod
     def update_major_incident(cls, db: Session, tenant_id: UUID, incident_id: UUID, actor_id: UUID, payload: MajorIncidentUpdateRequest) -> ITSMMajorIncident:

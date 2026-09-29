@@ -80,6 +80,17 @@ test("Major Incident command workspace records evidence-based communications wit
   assert.doesNotMatch(types, /"DELIVERED"/);
 });
 
+test("Major Incident command workspace pages a real responder through the allowed backend route", () => {
+  const commandPage = readFileSync(new URL("../src/app/(console)/itsm/incident-manager/major-incidents/page.tsx", import.meta.url), "utf8");
+  const bffRoutes = readFileSync(new URL("../src/lib/bff-routes.ts", import.meta.url), "utf8");
+
+  assert.match(commandPage, /Page Engineer/);
+  assert.match(commandPage, /major-incident\/page/);
+  assert.match(commandPage, /Urgent in-app alert sent to/);
+  assert.match(bffRoutes, /major-incident\(\?:\\\/page\)\?/);
+  assert.match(bffRoutes, /major-incident\\\/page/);
+});
+
 test("Incident Manager coordination uses tenant reference data for classification, assignment, and Major Incident scope", () => {
   const drawer = readFileSync(new URL("../src/components/itsm/incident-oversight-drawer.tsx", import.meta.url), "utf8");
   const assignment = readFileSync(new URL("../src/components/itsm/assign-modal.tsx", import.meta.url), "utf8");

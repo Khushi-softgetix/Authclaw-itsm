@@ -206,6 +206,22 @@ class MajorIncidentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class MajorIncidentPageRecipient(BaseModel):
+    id: UUID
+    email: str
+
+
+class MajorIncidentPageResponse(BaseModel):
+    incident_id: UUID
+    target_kind: Literal["ON_CALL_ENGINEER", "RESPONSE_TEAM", "ASSIGNEE"]
+    target_label: str
+    delivery_channel: Literal["IN_APP"] = "IN_APP"
+    recipients: list[MajorIncidentPageRecipient]
+    notification_count: int
+    command_path: str
+    paged_at: datetime
+
+
 class IncidentActivityCreateRequest(BaseModel):
     content: str = Field(..., min_length=1, description="Comment or activity details")
     activity_type: str = Field(default="COMMENT", max_length=50, description="COMMENT, NOTE, WORKAROUND")

@@ -168,6 +168,20 @@ class IncidentOperationsUnitTest(unittest.TestCase):
         start = datetime(2026, 1, 1, 16, tzinfo=timezone.utc)
         self.assertEqual(add_business_minutes(start, 120, calendar), datetime(2026, 1, 5, 10, tzinfo=timezone.utc))
 
+    def test_paging_destination_respects_recipient_workspace_access(self):
+        incident_id = uuid4()
+        ticket = SimpleNamespace(id=incident_id)
+        command_path = f"/itsm/incident-manager/major-incidents?incident={incident_id}"
+        no_bridge = SimpleNamespace(bridge_url=None)
+        with_bridge = SimpleNamespace(bridge_url="https://meet.example.test/major-incident")
+
+        self.assertEqual(IncidentService._page_destination(ticket, no_bridge, "INCIDENT_MANAGER", command_path), command_path)
+        self.assertEqual(IncidentService._page_destination(ticket, no_bridge, "SERVICE_AGENT", command_path), f"/itsm/incidents/{incident_id}")
+        self.assertEqual(
+            IncidentService._page_destination(ticket, with_bridge, "SERVICE_AGENT", command_path),
+            "https://meet.example.test/major-incident",
+        )
+
 class ITSMIncidentTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -1226,6 +1240,102 @@ class ITSMIncidentTestCase(unittest.TestCase):
         self.assertIsNone(row.resolved_at)
         self.assertIsNone(row.sla_resolution_met_at)
         self.assertEqual(row.resolution_summary, "Recovery verified")
+
+    def test_30_major_incident_page_resolves_on_call_notifies_and_audits(self):
+        tenant_id, manager_id, manager_key = self.create_fixture_tenant("major_page")
+        responder_id = uuid4()
+        responder_key = f"test-key-major-page-responder-{uuid4().hex}"
+        service_id, schedule_id = uuid4(), uuid4()
+        with self.migrator_engine.begin() as conn:
+            conn.execute(
+                text("INSERT INTO public.users (id,tenant_id,email,role,platform_role,is_active,created_at,updated_at) VALUES (:id,:tenant,'oncall-manager@example.com','admin','NONE',true,now(),now())"),
+                {"id": responder_id, "tenant": tenant_id},
+            )
+            conn.execute(
+                text("INSERT INTO public.itsm_user_access (id,tenant_id,user_id,itsm_role,has_itsm_access,has_governance_access,created_at,updated_at) VALUES (:id,:tenant,:user,'INCIDENT_MANAGER',true,false,now(),now())"),
+                {"id": uuid4(), "tenant": tenant_id, "user": responder_id},
+            )
+            conn.execute(
+                text("INSERT INTO public.api_keys (id,tenant_id,key_hash,name,scopes,is_active,created_by,created_at,updated_at) VALUES (:id,:tenant,:hash,'major-page-responder',ARRAY['read','write','admin'],true,:user,now(),now())"),
+                {"id": uuid4(), "tenant": tenant_id, "hash": hash_key(responder_key), "user": responder_id},
+            )
+            conn.execute(
+                text("INSERT INTO public.itsm_services (id,tenant_id,name,slug,tier,status,created_at,updated_at) VALUES (:id,:tenant,'Checkout','checkout-page','TIER_1','OPERATIONAL',now(),now())"),
+                {"id": service_id, "tenant": tenant_id},
+            )
+            conn.execute(
+                text("INSERT INTO public.itsm_oncall_schedules (id,tenant_id,service_id,name,timezone,is_active,created_at,updated_at) VALUES (:id,:tenant,:service,'Checkout primary','UTC',true,now(),now())"),
+                {"id": schedule_id, "tenant": tenant_id, "service": service_id},
+            )
+            conn.execute(
+                text("INSERT INTO public.itsm_oncall_rotations (id,tenant_id,schedule_id,tier_level,user_ids,rotation_type,rotation_start_at,handoff_time,escalation_delay_minutes,created_at,updated_at) VALUES (:id,:tenant,:schedule,1,ARRAY[CAST(:responder AS uuid)],'WEEKLY',now()-interval '1 day','09:00',15,now(),now())"),
+                {"id": uuid4(), "tenant": tenant_id, "schedule": schedule_id, "responder": str(responder_id)},
+            )
+
+        manager_headers = {"Authorization": f"Bearer {manager_key}"}
+        created = self.client.post(
+            "/v1/itsm/incidents",
+            json={
+                "title": "Checkout unavailable",
+                "description": "Customers cannot complete payment",
+                "impact": "HIGH",
+                "urgency": "HIGH",
+                "service_id": str(service_id),
+            },
+            headers=manager_headers,
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        incident_id = created.json()["id"]
+        declared = self.client.post(
+            f"/v1/itsm/incidents/{incident_id}/major-incident",
+            json={"communication_channel": "checkout-war-room"},
+            headers=manager_headers,
+        )
+        self.assertEqual(declared.status_code, 201, declared.text)
+
+        paged = self.client.post(
+            f"/v1/itsm/incidents/{incident_id}/major-incident/page",
+            headers=manager_headers,
+        )
+        self.assertEqual(paged.status_code, 200, paged.text)
+        result = paged.json()
+        self.assertEqual(result["target_kind"], "ON_CALL_ENGINEER")
+        self.assertEqual(result["target_label"], "Checkout primary (primary on-call)")
+        self.assertEqual(result["delivery_channel"], "IN_APP")
+        self.assertEqual(result["notification_count"], 1)
+        self.assertEqual(result["recipients"], [{"id": str(responder_id), "email": "oncall-manager@example.com"}])
+        self.assertEqual(result["command_path"], f"/itsm/incident-manager/major-incidents?incident={incident_id}")
+
+        responder_notifications = self.client.get(
+            "/v1/notifications",
+            headers={"Authorization": f"Bearer {responder_key}"},
+        )
+        self.assertEqual(responder_notifications.status_code, 200, responder_notifications.text)
+        page_notification = next(item for item in responder_notifications.json()["items"] if item["type"] == "itsm.major_incident.page")
+        self.assertEqual(page_notification["severity"], "critical")
+        self.assertEqual(page_notification["link"], result["command_path"])
+        self.assertIn(created.json()["ticket_number"], page_notification["title"])
+        self.assertIn("checkout-war-room", page_notification["body"])
+
+        activities = self.client.get(
+            f"/v1/itsm/incidents/{incident_id}/activities",
+            headers=manager_headers,
+        )
+        self.assertEqual(activities.status_code, 200, activities.text)
+        self.assertIn("MAJOR_INCIDENT_PAGED", {item["activity_type"] for item in activities.json()})
+        with self.migrator_engine.connect() as conn:
+            audit_count = conn.execute(
+                text("SELECT count(*) FROM public.audit_log_metadata WHERE tenant_id=:tenant AND action='itsm.incident.major_incident_paged' AND request_id=:incident"),
+                {"tenant": tenant_id, "incident": incident_id},
+            ).scalar_one()
+        self.assertEqual(audit_count, 1)
+
+        _, _, agent_key = self.create_fixture_tenant("major_page_agent", itsm_role="SERVICE_AGENT")
+        denied = self.client.post(
+            f"/v1/itsm/incidents/{incident_id}/major-incident/page",
+            headers={"Authorization": f"Bearer {agent_key}"},
+        )
+        self.assertEqual(denied.status_code, 403)
 
 
 if __name__ == "__main__":

@@ -23,7 +23,7 @@ from app.schemas.itsm_incidents import (
     IncidentOperationsQueueResponse,
     IncidentOperationsReferenceDataResponse,
     MajorIncidentParticipantResponse,
-    MajorIncidentDeclareRequest, MajorIncidentResponse, MajorIncidentUpdateRequest,
+    MajorIncidentDeclareRequest, MajorIncidentPageResponse, MajorIncidentResponse, MajorIncidentUpdateRequest,
     IncidentSavedViewCreateRequest, IncidentSavedViewResponse,
 )
 from app.schemas.itsm_problems import (
@@ -530,6 +530,11 @@ def declare_major_incident(incident_id: UUID, payload: MajorIncidentDeclareReque
 @router.get("/{incident_id}/major-incident", response_model=MajorIncidentResponse, summary="Read major incident command details")
 def get_major_incident(incident_id: UUID, db: Session = Depends(get_tenant_db), tenant_id: str = Depends(get_current_tenant), _incident_manager: None = require_itsm_roles(["INCIDENT_MANAGER"])):
     return IncidentService.get_major_incident(db, UUID(tenant_id), incident_id)
+
+
+@router.post("/{incident_id}/major-incident/page", response_model=MajorIncidentPageResponse, summary="Page the active major-incident responder")
+def page_major_incident(incident_id: UUID, request: Request, db: Session = Depends(get_tenant_db), tenant_id: str = Depends(get_current_tenant), _incident_manager: None = require_itsm_roles(["INCIDENT_MANAGER"])):
+    return IncidentService.page_major_incident(db, UUID(tenant_id), incident_id, UUID(str(request.state.user_id)))
 
 
 @router.patch("/{incident_id}/major-incident", response_model=MajorIncidentResponse, summary="Update major incident command details")

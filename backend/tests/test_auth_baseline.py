@@ -879,6 +879,30 @@ def test_oidc_audit_event_contains_no_sensitive_authentication_material(monkeypa
         assert forbidden not in serialized
 
 
+def test_authentication_audit_events_without_request_header_get_unique_correlations(monkeypatch):
+    published = []
+    monkeypatch.setattr(
+        auth_endpoints.event_backbone,
+        "publish_audit_event",
+        lambda _producer, _tenant_id, event: published.append(event),
+    )
+
+    for _ in range(2):
+        auth_endpoints._emit_oidc_audit(
+            tenant_id="tenant-1",
+            actor_id="user-1",
+            action="password_login_succeeded",
+            reason="success",
+            response_status=200,
+            provider="password",
+        )
+
+    assert published[0]["request_id"]
+    assert published[1]["request_id"]
+    assert published[0]["request_id"] != published[1]["request_id"]
+    assert published[0]["id"] != published[1]["id"]
+
+
 def test_password_hash_round_trips_and_rejects_wrong_password():
     encoded = hash_password("CorrectHorse!234")
 

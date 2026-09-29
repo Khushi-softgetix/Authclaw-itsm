@@ -52,6 +52,49 @@ CLICKHOUSE_COLUMNS = [
     "integrity_hash",
 ]
 
+AUDIT_EVIDENCE_FIELDS = (
+    "event_category",
+    "context_id",
+    "actor_role",
+    "target_id",
+    "target_type",
+    "policy_decision",
+    "approval_id",
+    "approval_status",
+    "before_summary",
+    "after_summary",
+    "evidence_references",
+)
+
+
+def build_execution_trace(event: dict[str, Any]) -> list[Any] | dict[str, Any]:
+    """Attach documented evidence to the existing immutable trace payload."""
+    trace = event.get("execution_trace") or []
+    if isinstance(trace, str):
+        try:
+            trace = json.loads(trace)
+        except json.JSONDecodeError:
+            trace = [trace]
+
+    evidence = {
+        field: event[field]
+        for field in AUDIT_EVIDENCE_FIELDS
+        if event.get(field) not in (None, "", [], {})
+    }
+    agent_trace = event.get("agent_trace")
+
+    if isinstance(trace, dict):
+        envelope = dict(trace)
+    elif evidence or isinstance(agent_trace, dict):
+        envelope = {"steps": list(trace) if isinstance(trace, list) else [trace]}
+    else:
+        return trace if isinstance(trace, list) else [trace]
+
+    envelope.update(evidence)
+    if isinstance(agent_trace, dict):
+        envelope.update(agent_trace)
+    return envelope
+
 
 @dataclass(frozen=True)
 class AuditConsistencyReport:
@@ -108,9 +151,7 @@ def append_audit_event(db: Session, event: dict[str, Any]) -> dict[str, Any]:
     record_id = str(event.get("id") or event.get("record_id") or uuid.uuid4())
     idempotency_key = str(event.get("idempotency_key") or record_id)
     db.info["tenant_id"] = tenant_id
-    trace = event.get("execution_trace") or []
-    if isinstance(trace, str):
-        trace = json.loads(trace)
+    trace = build_execution_trace(event)
     timestamp = event.get("timestamp")
     if not timestamp:
         raise ValueError("audit event timestamp is required")
@@ -268,6 +309,11 @@ def _chain_valid(records: Iterable[dict[str, Any]]) -> bool:
         prior_hash = integrity_hash
         prior_sequence = sequence
     return len(seen) == len(hashes)
+
+
+def verify_audit_chain(records: Iterable[dict[str, Any]]) -> bool:
+    """Verify an existing tenant audit chain without mutating its evidence."""
+    return _chain_valid(records)
 
 
 def get_postgres_records(db: Session, tenant_id: str) -> list[dict[str, Any]]:

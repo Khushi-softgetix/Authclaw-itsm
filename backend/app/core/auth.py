@@ -2,7 +2,9 @@
 import hmac
 import logging
 import os
+from datetime import datetime, timezone
 from typing import Generator, List
+from uuid import uuid4
 import pyotp
 from fastapi import Request, Depends, HTTPException, status
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -287,8 +289,123 @@ def ensure_itsm_role(request: Request, db: Session, required_roles: List[str]) -
         text("SELECT itsm_role, has_itsm_access FROM authn.lookup_itsm_user_access(:tenant_id, :user_id)"),
         {"tenant_id": str(request.state.tenant_id), "user_id": str(request.state.user_id)},
     ).first()
+    if row and row.has_itsm_access and str(row.itsm_role).upper() == "AUDITOR" and "AUDITOR" not in allowed:
+        action = f"role-protected:{','.join(sorted(allowed))}"
+        if request.method.upper() in {"POST", "PUT", "PATCH", "DELETE"}:
+            deny_itsm_auditor_mutation(request, db, "AUDITOR", action)
+        deny_itsm_auditor_access(request, db, "AUDITOR", action)
     if not row or not row.has_itsm_access or str(row.itsm_role).upper() not in allowed:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden: Incident Manager access required")
+
+
+def _deny_itsm_auditor_action(
+    request: Request,
+    db: Session,
+    role: str | None,
+    action: str,
+    *,
+    reason: str,
+    detail: str,
+    denial_kind: str,
+) -> None:
+    """Block an unauthorized Auditor action and record the denial."""
+    if str(role or "").upper() != "AUDITOR":
+        return
+
+    tenant_id = str(request.state.tenant_id)
+    actor_id = str(request.state.user_id)
+    correlation_id = request.headers.get("x-request-id") or str(uuid4())
+    try:
+        from app.services.audit_store import append_audit_event
+
+        db.execute(
+            text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+            {"tenant_id": tenant_id},
+        )
+        append_audit_event(
+            db,
+            {
+                "id": str(uuid4()),
+                "tenant_id": tenant_id,
+                "timestamp": datetime.now(timezone.utc),
+                "actor_id": actor_id,
+                "actor_type": "user",
+                "action": "itsm.authorization.denied",
+                "request_id": correlation_id,
+                "context_id": correlation_id,
+                "event_category": "permission",
+                "target_id": action,
+                "target_type": "itsm_operation",
+                "provider": "itsm",
+                "reason": reason,
+                "response_status": status.HTTP_403_FORBIDDEN,
+                "frameworks_affected": [],
+                "execution_trace": [
+                    f"attempted_action={action}",
+                    "itsm_role=AUDITOR",
+                    f"denial_kind={denial_kind}",
+                ],
+            },
+        )
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Failed to record denied Auditor action: action=%s", action)
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=detail,
+    )
+
+
+def deny_itsm_auditor_access(
+    request: Request,
+    db: Session,
+    role: str | None,
+    action: str,
+) -> None:
+    """Deny an Auditor route outside the documented audit/report read scope."""
+    _deny_itsm_auditor_action(
+        request,
+        db,
+        role,
+        action,
+        reason="Auditor role is not authorized for this operation",
+        detail="Auditor is not authorized for this operation",
+        denial_kind="restricted_access",
+    )
+
+
+def deny_itsm_auditor_generic_audit_access(
+    request: Request,
+    db: Session,
+    action: str,
+) -> None:
+    """Keep ITSM Auditors on the permission-aware, redacted Auditor API."""
+    row = db.execute(
+        text("SELECT itsm_role, has_itsm_access FROM authn.lookup_itsm_user_access(:tenant_id, :user_id)"),
+        {"tenant_id": str(request.state.tenant_id), "user_id": str(request.state.user_id)},
+    ).first()
+    if row and row.has_itsm_access and str(row.itsm_role).upper() == "AUDITOR":
+        deny_itsm_auditor_access(request, db, "AUDITOR", action)
+
+
+def deny_itsm_auditor_mutation(
+    request: Request,
+    db: Session,
+    role: str | None,
+    action: str,
+) -> None:
+    """Block an Auditor mutation and record the denied attempt."""
+    _deny_itsm_auditor_action(
+        request,
+        db,
+        role,
+        action,
+        reason="Auditor role is read-only",
+        detail="Auditor access is read-only",
+        denial_kind="mutation",
+    )
 
 
 def require_itsm_roles(required_roles: List[str]):

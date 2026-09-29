@@ -26,7 +26,6 @@ ALLOWED_ITSM_ROLES = {
     "ADMIN",
     "OWNER",
     "PROCESS_CHANGE_MANAGER",
-    "AUDITOR",
 }
 
 

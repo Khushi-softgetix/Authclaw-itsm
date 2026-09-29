@@ -382,6 +382,8 @@ class IncidentSavedViewFilters(BaseModel):
     attention: Optional[Literal["WATCH", "PRIORITY", "SLA_AT_RISK", "SLA_BREACHED", "STUCK"]] = None
     assignment_group: Optional[str] = Field(default=None, max_length=255)
     assignee_id: Optional[UUID] = None
+    service_id: Optional[UUID] = None
+    category_id: Optional[UUID] = None
     unassigned: bool = False
     sort_by: Literal["priority", "sla_due", "updated"] = "priority"
     model_config = ConfigDict(extra="forbid")

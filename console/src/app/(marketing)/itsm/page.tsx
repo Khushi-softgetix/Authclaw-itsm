@@ -1,207 +1,165 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { cookies } from "next/headers";
+import {
+  ArrowRight,
+  Check,
+  CircleUserRound,
+  Headphones,
+  LockKeyhole,
+  Route,
+  UsersRound,
+} from "lucide-react";
 import { createMarketingMetadata } from "@/marketing/seo";
 import { marketingRoutes } from "@/marketing/config";
 
 export const metadata: Metadata = createMarketingMetadata({
-  title: "AuthClaw ITSM — AI-Native IT Service Management",
+  title: "AuthClaw ITSM — Governed IT Service Management",
   description:
-    "Manage incidents, service requests, knowledge, SLAs, and operational workflows in the same secure platform that governs your enterprise AI.",
+    "Keep service work, ownership, commitments, and decisions connected in one secure ITSM workspace.",
   path: "/itsm",
 });
+
+const serviceFlow = [
+  ["01", "Request"],
+  ["02", "Prioritize"],
+  ["03", "Coordinate"],
+  ["04", "Improve"],
+] as const;
+
+const capabilities = [
+  {
+    icon: Headphones,
+    title: "Get help and track work",
+    description:
+      "A clear entry point for incidents and service requests, with progress that people can understand.",
+    items: ["Guided support intake", "Request and incident history", "Requester-visible updates"],
+    previewTitle: "My support",
+    previewRows: [
+      ["Email access", "Assigned"],
+      ["VPN connection", "In progress"],
+      ["Software request", "Waiting for approval"],
+    ],
+  },
+  {
+    icon: Route,
+    title: "Restore and improve services",
+    description:
+      "Coordinate restoration, preserve operational evidence, and turn recurring issues into controlled improvement.",
+    items: ["Incident and major response", "Problem and controlled change", "SLA, knowledge, and service context"],
+    previewTitle: "Response flow",
+    previewRows: [
+      ["Priority", "P1 · Critical"],
+      ["Responsible team", "Network operations"],
+      ["Next action", "Validate recovery"],
+    ],
+  },
+] as const;
+
+const audiences = [
+  {
+    icon: CircleUserRound,
+    title: "Employees",
+    description: "Request help, follow progress, and respond when more information is needed.",
+  },
+  {
+    icon: Headphones,
+    title: "Service teams",
+    description: "Prioritize work, coordinate ownership, restore service, and keep people informed.",
+  },
+  {
+    icon: UsersRound,
+    title: "Leaders and administrators",
+    description: "Manage commitments, access, service configuration, and operational improvement.",
+  },
+] as const;
 
 export default async function ItsmLandingPage() {
   const cookieStore = await cookies();
   const sessionToken = cookieStore.get("authclaw_session")?.value;
   const isAuthenticated = Boolean(sessionToken?.startsWith("acl_session_"));
-
   const primaryCtaHref = isAuthenticated ? "/itsm/incidents" : "/itsm/login";
-  const primaryCtaText = isAuthenticated ? "Go to ITSM Console" : "Login to ITSM";
+  const primaryCtaText = isAuthenticated ? "Open your workspaces" : "Sign in to ITSM";
 
   return (
-    <div className="marketing-site">
-      {/* HERO SECTION */}
-      <section className="hero">
-        <div className="wrap hero-in">
-          <div className="hero-copy">
-            <span className="eyebrow">AuthClaw ITSM</span>
-            <h1>
-              AI-native service management, <br />
-              built into AuthClaw.
+    <div className="marketing-site bg-white text-[#0E1726]">
+      <section className="overflow-hidden border-b border-[#E6E9F0] bg-white">
+        <div className="mx-auto grid max-w-7xl items-center gap-12 px-6 py-16 sm:px-8 sm:py-20 lg:items-start lg:min-h-[650px] lg:grid-cols-[minmax(0,1.03fr)_minmax(460px,.97fr)] lg:gap-20 lg:py-24">
+          <div className="max-w-2xl">
+            <h1 className="max-w-[720px] text-[42px] font-semibold leading-[1.05] tracking-[-0.045em] text-[#0E1726] sm:text-[56px] lg:text-[64px]">
+              Service work, ownership, and decisions&mdash;connected.
             </h1>
-            <p className="sub">
-              Manage incidents, service requests, knowledge, SLAs, and operational workflows
-              in the same secure platform that governs your AI.
-            </p>
-            <div className="cta-row" style={{ display: "flex", gap: "12px", marginTop: "24px", flexWrap: "wrap" }}>
-              <Link className="btn btn-primary" href={primaryCtaHref}>
+            <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+              <Link className="btn btn-primary w-full justify-center sm:w-auto" href={primaryCtaHref}>
                 {primaryCtaText}
+                <ArrowRight aria-hidden="true" className="h-4 w-4" />
               </Link>
-              <a className="btn btn-ghost" href="#incidents">
-                Explore Incident Management
+              <a className="btn btn-ghost w-full justify-center sm:w-auto" href="#capabilities">
+                Explore capabilities
               </a>
             </div>
           </div>
 
-          <div className="hero-visual" style={{ position: "relative" }}>
-            <div
-              className="terminal"
-              style={{
-                background: "var(--white)",
-                border: "1px solid var(--line)",
-                borderRadius: "var(--r-lg)",
-                boxShadow: "var(--shadow-lg)",
-                overflow: "hidden",
-              }}
-            >
-              <div
-                className="t-head"
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "14px 18px",
-                  background: "var(--paper-2)",
-                  borderBottom: "1px solid var(--line)",
-                  fontFamily: "var(--font-m)",
-                  fontSize: "12px",
-                  color: "var(--slate)",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-                  <span
-                    style={{
-                      width: "8px",
-                      height: "8px",
-                      borderRadius: "50%",
-                      background: "#10B981",
-                      display: "inline-block",
-                    }}
-                  />
-                  <span>itsm · live operational flow</span>
+          <div className="relative">
+            <div className="absolute -inset-8 -z-10 rounded-full bg-[#F1ECFE] opacity-70 blur-3xl" />
+            <div className="overflow-hidden rounded-[22px] border border-[#D9CCFB] bg-white shadow-[0_28px_70px_-40px_rgba(45,26,92,.42)]">
+              <div className="flex items-center justify-between border-b border-[#E6E9F0] px-6 py-5">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[#6D28D9]">
+                    Active service response
+                  </p>
+                  <p className="mt-1 text-sm text-[#6B7488]">One record. Clear ownership. Visible progress.</p>
                 </div>
-                <span
-                  style={{
-                    background: "var(--violet-050)",
-                    color: "var(--violet)",
-                    padding: "2px 8px",
-                    borderRadius: "4px",
-                    fontWeight: 600,
-                  }}
-                >
-                  Phase 4 MVP
+                <span className="rounded-full bg-[#F1ECFE] px-3 py-1 text-xs font-semibold text-[#6D28D9]">
+                  In progress
                 </span>
               </div>
 
-              <div style={{ padding: "20px", display: "flex", flexDirection: "column", gap: "12px" }}>
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "12px 14px",
-                    background: "var(--paper)",
-                    borderRadius: "var(--r-sm)",
-                    border: "1px solid var(--line-2)",
-                  }}
-                >
+              <div className="p-6 sm:p-7">
+                <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
                   <div>
-                    <span style={{ fontFamily: "var(--font-m)", fontSize: "11px", color: "var(--slate)" }}>
-                      INC-000001
-                    </span>
-                    <p style={{ fontWeight: 600, fontSize: "14px", color: "var(--ink)", marginTop: "2px" }}>
-                      Payment Gateway Latency Surge
-                    </p>
+                    <p className="text-sm font-semibold text-[#6D28D9]">Service interruption</p>
+                    <h2 className="mt-2 text-2xl font-semibold tracking-[-0.025em]">
+                      Customer access is degraded
+                    </h2>
                   </div>
-                  <div style={{ display: "flex", gap: "6px" }}>
-                    <span
-                      style={{
-                        fontSize: "11px",
-                        fontWeight: 600,
-                        padding: "3px 8px",
-                        borderRadius: "4px",
-                        background: "#FEE2E2",
-                        color: "#DC2626",
-                      }}
-                    >
-                      P1 Critical
-                    </span>
-                    <span
-                      style={{
-                        fontSize: "11px",
-                        fontWeight: 600,
-                        padding: "3px 8px",
-                        borderRadius: "4px",
-                        background: "#D1FAE5",
-                        color: "#059669",
-                      }}
-                    >
-                      RESOLVED
-                    </span>
+                  <div className="rounded-xl border border-[#E6E9F0] bg-[#F5F7FA] px-4 py-3 text-right">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-[#6B7488]">Priority</p>
+                    <p className="mt-1 text-sm font-semibold text-[#0E1726]">P1 · Critical</p>
                   </div>
                 </div>
 
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "12px 14px",
-                    background: "var(--paper)",
-                    borderRadius: "var(--r-sm)",
-                    border: "1px solid var(--line-2)",
-                  }}
-                >
-                  <div>
-                    <span style={{ fontFamily: "var(--font-m)", fontSize: "11px", color: "var(--slate)" }}>
-                      INC-000002
-                    </span>
-                    <p style={{ fontWeight: 600, fontSize: "14px", color: "var(--ink)", marginTop: "2px" }}>
-                      LLM Egress Quota Threshold Alert
-                    </p>
-                  </div>
-                  <div style={{ display: "flex", gap: "6px" }}>
-                    <span
-                      style={{
-                        fontSize: "11px",
-                        fontWeight: 600,
-                        padding: "3px 8px",
-                        borderRadius: "4px",
-                        background: "#FEF3C7",
-                        color: "#D97706",
-                      }}
-                    >
-                      P2 High
-                    </span>
-                    <span
-                      style={{
-                        fontSize: "11px",
-                        fontWeight: 600,
-                        padding: "3px 8px",
-                        borderRadius: "4px",
-                        background: "#EDE9FE",
-                        color: "#6D28D9",
-                      }}
-                    >
-                      IN_PROGRESS
-                    </span>
-                  </div>
+                <div className="mt-7 grid gap-px overflow-hidden rounded-xl border border-[#E6E9F0] bg-[#E6E9F0] sm:grid-cols-3">
+                  {[
+                    ["Responsible team", "Service operations"],
+                    ["Commitment", "Response on track"],
+                    ["Next action", "Validate recovery"],
+                  ].map(([label, value]) => (
+                    <div className="bg-white px-4 py-4" key={label}>
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.1em] text-[#6B7488]">{label}</p>
+                      <p className="mt-1.5 text-sm font-semibold text-[#0E1726]">{value}</p>
+                    </div>
+                  ))}
                 </div>
 
-                <div
-                  style={{
-                    padding: "12px",
-                    background: "var(--paper-2)",
-                    borderRadius: "var(--r-sm)",
-                    fontFamily: "var(--font-m)",
-                    fontSize: "12px",
-                    color: "var(--slate)",
-                    lineHeight: "1.6",
-                  }}
-                >
-                  <div style={{ color: "var(--violet)", fontWeight: 600 }}>Lifecycle State Machine</div>
-                  <div>NEW → ASSIGNED → IN_PROGRESS → RESOLVED → CLOSED</div>
+                <div className="mt-8">
+                  <div className="relative grid grid-cols-4 gap-2">
+                    <div className="absolute left-[9%] right-[9%] top-3 h-px bg-[#D9CCFB]" />
+                    {["Received", "Prioritized", "Assigned", "Resolved"].map((step, index) => (
+                      <div className="relative text-center" key={step}>
+                        <span
+                          className={`mx-auto flex h-6 w-6 items-center justify-center rounded-full border text-[10px] font-bold ${
+                            index < 3
+                              ? "border-[#6D28D9] bg-[#6D28D9] text-white"
+                              : "border-[#D9CCFB] bg-white text-[#6D28D9]"
+                          }`}
+                        >
+                          {index < 3 ? <Check aria-hidden="true" className="h-3 w-3" /> : "4"}
+                        </span>
+                        <p className="mt-2 text-[11px] font-medium text-[#475069]">{step}</p>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
@@ -209,442 +167,145 @@ export default async function ItsmLandingPage() {
         </div>
       </section>
 
-      {/* INCIDENT MANAGEMENT SPOTLIGHT */}
-      <section
-        id="incidents"
-        className="band"
-        style={{ background: "var(--white)", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}
-      >
-        <div className="wrap">
-          <div className="sec-head center" style={{ margin: "0 auto 48px auto", textAlign: "center" }}>
-            <span className="eyebrow">Available Feature</span>
-            <h2>Incident Management</h2>
-            <p className="sub" style={{ margin: "16px auto 0 auto", maxWidth: "680px" }}>
-              Identify, prioritize, assign, and resolve service disruptions while keeping the
-              complete operational history in one place.
+      <section className="bg-white py-16 sm:py-20">
+        <div className="mx-auto grid max-w-7xl gap-10 px-6 sm:px-8 lg:grid-cols-[.72fr_1.28fr] lg:items-end lg:gap-20">
+          <div className="max-w-xl">
+            <h2 className="text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
+              One clear flow from request to improvement.
+            </h2>
+            <p className="mt-4 text-lg leading-8 text-[#475069]">
+              Keep the people asking for help and the teams restoring service aligned around the same operational truth.
+            </p>
+          </div>
+          <ol className="grid border-y border-[#E6E9F0] sm:grid-cols-2 md:grid-cols-4 md:divide-x md:divide-[#E6E9F0]">
+            {serviceFlow.map(([number, title]) => (
+              <li className="flex items-center gap-4 border-b border-[#E6E9F0] py-6 last:border-b-0 sm:px-6 sm:[&:nth-child(3)]:border-b-0 md:border-b-0 md:first:pl-0 md:last:pr-0" key={number}>
+                <span className="text-sm font-semibold text-[#6D28D9]">{number}</span>
+                <h3 className="text-lg font-semibold">{title}</h3>
+              </li>
+            ))}
+          </ol>
+        </div>
+      </section>
+
+      <section id="capabilities" className="border-y border-[#E6E9F0] bg-[#F5F7FA] py-20 sm:py-24">
+        <div className="mx-auto max-w-7xl px-6 sm:px-8">
+          <div className="max-w-2xl">
+            <h2 className="text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
+              The essential service work, connected.
+            </h2>
+            <p className="mt-4 text-lg leading-8 text-[#475069]">
+              Two clear workspaces show how requests become owned, coordinated service work.
             </p>
           </div>
 
-          <div
-            className="fgrid"
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-              gap: "24px",
-            }}
-          >
-            <div className="fcard">
-              <div className="ico" style={{ fontSize: "20px", color: "var(--violet)", marginBottom: "12px" }}>
-                ⌘
-              </div>
-              <h3 style={{ fontSize: "17px", fontWeight: 600, marginBottom: "8px" }}>
-                Deterministic Priority Derivation
-              </h3>
-              <p style={{ fontSize: "14px", color: "var(--slate)", lineHeight: 1.5 }}>
-                Priority (P1–P4) is derived automatically by the backend from impact and urgency matrices, ensuring
-                consistent severity classification without manual guessing.
-              </p>
-            </div>
+          <div className="mt-14 divide-y divide-[#DDE1E9] border-y border-[#DDE1E9]">
+            {capabilities.map(({ icon: Icon, title, description, items, previewTitle, previewRows }, index) => (
+              <article className="grid items-start gap-9 py-11 sm:py-12 lg:grid-cols-[.9fr_1.1fr] lg:gap-20" key={title}>
+                <div className={index % 2 === 1 ? "lg:order-2" : undefined}>
+                  <Icon aria-hidden="true" className="h-7 w-7 text-[#6D28D9]" strokeWidth={1.7} />
+                  <h3 className="mt-5 text-2xl font-semibold tracking-[-0.025em]">{title}</h3>
+                  <p className="mt-4 max-w-xl text-base leading-7 text-[#475069]">{description}</p>
+                  <ul className="mt-6 space-y-3">
+                    {items.map((item) => (
+                      <li className="flex items-center gap-3 text-sm font-medium text-[#0E1726]" key={item}>
+                        <Check aria-hidden="true" className="h-4 w-4 text-[#6D28D9]" />
+                        {item}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
 
-            <div className="fcard">
-              <div className="ico" style={{ fontSize: "20px", color: "var(--violet)", marginBottom: "12px" }}>
-                ⛨
-              </div>
-              <h3 style={{ fontSize: "17px", fontWeight: 600, marginBottom: "8px" }}>
-                Strict Lifecycle Transitions
-              </h3>
-              <p style={{ fontSize: "14px", color: "var(--slate)", lineHeight: 1.5 }}>
-                Enforces the approved state machine. Transitioning to Pending or Cancelled requires a status reason;
-                transitioning to Resolved strictly mandates resolution codes and summaries.
-              </p>
-            </div>
-
-            <div className="fcard">
-              <div className="ico" style={{ fontSize: "20px", color: "var(--violet)", marginBottom: "12px" }}>
-                ▤
-              </div>
-              <h3 style={{ fontSize: "17px", fontWeight: 600, marginBottom: "8px" }}>
-                Activity Stream & Dual Notes
-              </h3>
-              <p style={{ fontSize: "14px", color: "var(--slate)", lineHeight: 1.5 }}>
-                Chronological timeline tracking status updates, assignments, and comments. Supports internal operator
-                work notes hidden from non-privileged viewers.
-              </p>
-            </div>
-
-            <div className="fcard">
-              <div className="ico" style={{ fontSize: "20px", color: "var(--violet)", marginBottom: "12px" }}>
-                ◈
-              </div>
-              <h3 style={{ fontSize: "17px", fontWeight: 600, marginBottom: "8px" }}>
-                Tenant Assignment & SLA Awareness
-              </h3>
-              <p style={{ fontSize: "14px", color: "var(--slate)", lineHeight: 1.5 }}>
-                Assign incidents to operational groups and verified tenant users. Automatically links active SLA
-                policies and target response intervals.
-              </p>
-            </div>
+                <div className={`overflow-hidden rounded-2xl border border-[#D9CCFB] bg-white shadow-[0_18px_45px_-38px_rgba(45,26,92,.5)] ${index % 2 === 1 ? "lg:order-1" : ""}`}>
+                  <div className="flex items-center justify-between border-b border-[#E6E9F0] px-5 py-4">
+                    <p className="text-sm font-semibold">{previewTitle}</p>
+                    <span className="text-xs font-medium text-[#6D28D9]">Connected workspace</span>
+                  </div>
+                  <div className="divide-y divide-[#E6E9F0]">
+                    {previewRows.map(([label, value]) => (
+                      <div className="flex items-center justify-between gap-4 px-5 py-4" key={label}>
+                        <span className="text-sm text-[#475069]">{label}</span>
+                        <span className="text-right text-sm font-semibold text-[#0E1726]">{value}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </article>
+            ))}
           </div>
+        </div>
+      </section>
 
-          <div style={{ textAlign: "center", marginTop: "40px" }}>
-            <Link className="btn btn-primary" href={primaryCtaHref}>
-              Launch Incident Management
+      <section id="roles" className="bg-white py-20 sm:py-24">
+        <div className="mx-auto max-w-7xl px-6 sm:px-8">
+          <div className="flex flex-col justify-between gap-6 md:flex-row md:items-end">
+            <div className="max-w-2xl">
+              <h2 className="text-3xl font-semibold tracking-[-0.035em] sm:text-4xl">
+                Workspaces for every service role.
+              </h2>
+              <p className="mt-4 text-lg leading-8 text-[#475069]">
+                People see the tools and actions available for the responsibilities assigned to them.
+              </p>
+            </div>
+            <Link className="inline-flex items-center gap-2 text-sm font-semibold text-[#6D28D9]" href="/itsm/roles">
+              Explore roles and workspaces
+              <ArrowRight aria-hidden="true" className="h-4 w-4" />
             </Link>
           </div>
+
+          <div className="mt-12 grid border-y border-[#E6E9F0] md:grid-cols-3 md:divide-x md:divide-[#E6E9F0]">
+            {audiences.map(({ icon: Icon, title, description }) => (
+              <article className="flex flex-col border-b border-[#E6E9F0] py-9 last:border-b-0 md:min-h-52 md:border-b-0 md:px-8 md:first:pl-0 md:last:pr-0" key={title}>
+                <Icon aria-hidden="true" className="h-6 w-6 text-[#6D28D9]" strokeWidth={1.7} />
+                <h3 className="mt-5 text-xl font-semibold">{title}</h3>
+                <p className="mt-3 text-sm leading-6 text-[#6B7488]">{description}</p>
+              </article>
+            ))}
+          </div>
         </div>
       </section>
 
-      {/* ROADMAP CAPABILITIES OVERVIEW */}
-      <section id="solutions" className="band">
-        <div className="wrap">
-          <div className="sec-head center" style={{ margin: "0 auto 48px auto", textAlign: "center" }}>
-            <span className="eyebrow">Product Roadmap</span>
-            <h2>Approved ITSM Capabilities</h2>
-            <p className="sub" style={{ margin: "16px auto 0 auto", maxWidth: "680px" }}>
-              AuthClaw ITSM provides a complete IT service management suite built directly on our secure multi-tenant
-              foundation.
-            </p>
-          </div>
-
-          <div
-            className="fgrid"
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-              gap: "24px",
-            }}
-          >
-            <div
-              className="fcard"
-              style={{
-                background: "var(--white)",
-                border: "1px solid var(--violet-300)",
-                boxShadow: "var(--ring-violet)",
-              }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                <span className="eyebrow" style={{ color: "var(--violet)" }}>Phase 4 · MVP</span>
-                <span
-                  style={{
-                    fontSize: "11px",
-                    fontWeight: 700,
-                    padding: "3px 8px",
-                    borderRadius: "4px",
-                    background: "var(--violet-050)",
-                    color: "var(--violet)",
-                  }}
-                >
-                  Available Now
-                </span>
+      <section id="trust" className="border-t border-[#E6E9F0] px-6 py-20 sm:px-8 sm:py-24">
+        <div className="mx-auto max-w-7xl overflow-hidden rounded-[24px] border border-[#D9CCFB] bg-[#F7F4FF]">
+          <div className="grid gap-10 px-7 py-10 lg:grid-cols-[1.1fr_1.9fr] lg:px-12 lg:py-12">
+            <div>
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white text-[#6D28D9] shadow-sm">
+                <LockKeyhole aria-hidden="true" className="h-5 w-5" />
               </div>
-              <h3 style={{ fontSize: "18px", fontWeight: 700, marginBottom: "8px", color: "var(--ink)" }}>
-                Incident Management
-              </h3>
-              <p style={{ fontSize: "14px", color: "var(--slate)", lineHeight: 1.5 }}>
-                End-to-end incident lifecycle management with automated ticket numbering (INC-XXXXXX), P1–P4 priority
-                matrix, assignment groups, and resolution tracking.
+              <h2 className="mt-5 text-2xl font-semibold tracking-[-0.025em]">Secure by design.</h2>
+              <p className="mt-3 max-w-md text-sm leading-6 text-[#475069]">
+                Access follows tenant boundaries and assigned responsibilities, while important actions retain a clear history.
               </p>
             </div>
-
-            <div className="fcard" style={{ background: "var(--white)", border: "1px solid var(--line)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                <span className="eyebrow">Roadmap</span>
-                <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--mute)" }}>Upcoming</span>
-              </div>
-              <h3 style={{ fontSize: "18px", fontWeight: 700, marginBottom: "8px", color: "var(--ink)" }}>
-                Service Requests
-              </h3>
-              <p style={{ fontSize: "14px", color: "var(--slate)", lineHeight: 1.5 }}>
-                Standardized service request workflows, automated approvals, fulfillment task tracking, and self-service
-                portals for end users.
-              </p>
-            </div>
-
-            <div className="fcard" style={{ background: "var(--white)", border: "1px solid var(--line)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                <span className="eyebrow">Roadmap</span>
-                <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--mute)" }}>Upcoming</span>
-              </div>
-              <h3 style={{ fontSize: "18px", fontWeight: 700, marginBottom: "8px", color: "var(--ink)" }}>
-                Service Catalog
-              </h3>
-              <p style={{ fontSize: "14px", color: "var(--slate)", lineHeight: 1.5 }}>
-                Curated catalog of IT and AI services with request forms, entitlement rules, SLAs, and approval matrices
-                tailored to enterprise roles.
-              </p>
-            </div>
-
-            <div className="fcard" style={{ background: "var(--white)", border: "1px solid var(--line)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                <span className="eyebrow">Roadmap</span>
-                <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--mute)" }}>Upcoming</span>
-              </div>
-              <h3 style={{ fontSize: "18px", fontWeight: 700, marginBottom: "8px", color: "var(--ink)" }}>
-                Knowledge Management
-              </h3>
-              <p style={{ fontSize: "14px", color: "var(--slate)", lineHeight: 1.5 }}>
-                Knowledge-Centered Service (KCS) with versioned resolution guides, search, article lifecycle, and AI
-                agent retrieval assistance.
-              </p>
-            </div>
-
-            <div className="fcard" style={{ background: "var(--white)", border: "1px solid var(--line)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                <span className="eyebrow">Roadmap</span>
-                <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--mute)" }}>Upcoming</span>
-              </div>
-              <h3 style={{ fontSize: "18px", fontWeight: 700, marginBottom: "8px", color: "var(--ink)" }}>
-                SLA Management
-              </h3>
-              <p style={{ fontSize: "14px", color: "var(--slate)", lineHeight: 1.5 }}>
-                Multi-tier service level agreements, business-calendar calculation engines, escalation rules, and
-                breach notification monitors.
-              </p>
-            </div>
-
-            <div className="fcard" style={{ background: "var(--white)", border: "1px solid var(--line)" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "12px" }}>
-                <span className="eyebrow">Roadmap</span>
-                <span style={{ fontSize: "11px", fontWeight: 600, color: "var(--mute)" }}>Upcoming</span>
-              </div>
-              <h3 style={{ fontSize: "18px", fontWeight: 700, marginBottom: "8px", color: "var(--ink)" }}>
-                Configuration Management (CMDB)
-              </h3>
-              <p style={{ fontSize: "14px", color: "var(--slate)", lineHeight: 1.5 }}>
-                Configuration item registry linking services, AI models, cloud infrastructure, and dependencies with
-                impact analysis for change management.
-              </p>
+            <div className="grid gap-6 sm:grid-cols-3">
+              {[
+                ["Tenant-isolated data", "Records remain within the organization that owns them."],
+                ["Role-aware access", "Each action is limited by assigned responsibilities."],
+                ["Auditable actions", "Ownership, decisions, and important changes stay traceable."],
+              ].map(([title, description]) => (
+                <div className="border-t border-[#D9CCFB] pt-5" key={title}>
+                  <h3 className="text-sm font-semibold">{title}</h3>
+                  <p className="mt-2 text-sm leading-6 text-[#6B7488]">{description}</p>
+                </div>
+              ))}
             </div>
           </div>
         </div>
       </section>
 
-      {/* ROLES SECTION */}
-      <section id="roles" className="band" style={{ background: "var(--white)" }}>
-        <div className="wrap">
-          <div className="sec-head center" style={{ margin: "0 auto 48px auto", textAlign: "center" }}>
-            <span className="eyebrow">Operating Model</span>
-            <h2>Six Purpose-Built Roles for Enterprise Service Flow</h2>
-            <p className="sub" style={{ margin: "16px auto 0 auto", maxWidth: "680px" }}>
-              AuthClaw ITSM provides purpose-tailored dashboards and strict cryptographic boundaries for every stakeholder in IT service delivery.
-            </p>
+      <section className="border-y border-[#E6E9F0] bg-[#F5F7FA]">
+        <div className="mx-auto flex max-w-7xl flex-col justify-between gap-8 px-6 py-14 sm:px-8 sm:py-16 lg:flex-row lg:items-center">
+          <div>
+            <h2 className="text-3xl font-semibold tracking-[-0.035em]">
+              Ready to bring service work together?
+            </h2>
           </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-              gap: "24px",
-              marginBottom: "36px",
-            }}
-          >
-            <div style={{ background: "#FAFAFC", padding: "24px", borderRadius: "12px", border: "1px solid var(--line)" }}>
-              <span style={{ fontSize: "11px", fontWeight: 700, color: "#2563EB", background: "#EFF6FF", padding: "3px 8px", borderRadius: "4px" }}>
-                Self-Service
-              </span>
-              <h3 style={{ fontSize: "18px", fontWeight: 700, marginTop: "12px", marginBottom: "6px", color: "var(--ink)" }}>Requester Portal</h3>
-              <p style={{ fontSize: "13px", color: "var(--slate)", lineHeight: 1.5 }}>
-                Streamlined intake, ticket status tracking, knowledge search, and verified issue resolution for enterprise employees.
-              </p>
-            </div>
-            <div style={{ background: "#FAFAFC", padding: "24px", borderRadius: "12px", border: "1px solid var(--line)" }}>
-              <span style={{ fontSize: "11px", fontWeight: 700, color: "#7C3AED", background: "#F5F3FF", padding: "3px 8px", borderRadius: "4px" }}>
-                Tier 1 &amp; Tier 2
-              </span>
-              <h3 style={{ fontSize: "18px", fontWeight: 700, marginTop: "12px", marginBottom: "6px", color: "var(--ink)" }}>Service Agent</h3>
-              <p style={{ fontSize: "13px", color: "var(--slate)", lineHeight: 1.5 }}>
-                Rapid triage, AI copilot runbooks, work notes, public communication, and SLA adherence across active tickets.
-              </p>
-            </div>
-            <div style={{ background: "#FAFAFC", padding: "24px", borderRadius: "12px", border: "1px solid var(--line)" }}>
-              <span style={{ fontSize: "11px", fontWeight: 700, color: "#DC2626", background: "#FEF2F2", padding: "3px 8px", borderRadius: "4px" }}>
-                Major Incidents
-              </span>
-              <h3 style={{ fontSize: "18px", fontWeight: 700, marginTop: "12px", marginBottom: "6px", color: "var(--ink)" }}>Service Lead</h3>
-              <p style={{ fontSize: "13px", color: "var(--slate)", lineHeight: 1.5 }}>
-                Unified incident command, queue load balancing, major incident escalation, and real-time SLA breach prevention.
-              </p>
-            </div>
-            <div style={{ background: "#FAFAFC", padding: "24px", borderRadius: "12px", border: "1px solid var(--line)" }}>
-              <span style={{ fontSize: "11px", fontWeight: 700, color: "#D97706", background: "#FFFBEB", padding: "3px 8px", borderRadius: "4px" }}>
-                Stability Governance
-              </span>
-              <h3 style={{ fontSize: "18px", fontWeight: 700, marginTop: "12px", marginBottom: "6px", color: "var(--ink)" }}>Process &amp; Change</h3>
-              <p style={{ fontSize: "13px", color: "var(--slate)", lineHeight: 1.5 }}>
-                Change Advisory Board (CAB) review, risk evaluation, collision detection, and problem root cause analysis.
-              </p>
-            </div>
-            <div style={{ background: "#FAFAFC", padding: "24px", borderRadius: "12px", border: "1px solid var(--line)" }}>
-              <span style={{ fontSize: "11px", fontWeight: 700, color: "#059669", background: "#ECFDF5", padding: "3px 8px", borderRadius: "4px" }}>
-                Systems &amp; Rules
-              </span>
-              <h3 style={{ fontSize: "18px", fontWeight: 700, marginTop: "12px", marginBottom: "6px", color: "var(--ink)" }}>Platform Admin</h3>
-              <p style={{ fontSize: "13px", color: "var(--slate)", lineHeight: 1.5 }}>
-                Assignment groups, SLA business hours, service catalog definitions, and AI copilot model configurations.
-              </p>
-            </div>
-            <div style={{ background: "#FAFAFC", padding: "24px", borderRadius: "12px", border: "1px solid var(--line)" }}>
-              <span style={{ fontSize: "11px", fontWeight: 700, color: "#0891B2", background: "#ECFEFF", padding: "3px 8px", borderRadius: "4px" }}>
-                Independent Assurance
-              </span>
-              <h3 style={{ fontSize: "18px", fontWeight: 700, marginTop: "12px", marginBottom: "6px", color: "var(--ink)" }}>Auditor &amp; Compliance</h3>
-              <p style={{ fontSize: "13px", color: "var(--slate)", lineHeight: 1.5 }}>
-                Tamper-evident append-only audit trail verification, compliance exports, and read-only inspection guarantees.
-              </p>
-            </div>
-          </div>
-
-          <div style={{ textAlign: "center" }}>
-            <Link className="btn btn-primary" href="/itsm/roles">
-              View Detailed Roles &amp; Responsibilities &rarr;
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* CONVERGENCE SECTION */}
-      <section
-        id="about"
-        className="band-tight"
-        style={{ background: "var(--paper-2)", borderTop: "1px solid var(--line)", borderBottom: "1px solid var(--line)" }}
-      >
-        <div className="wrap">
-          <div className="sec-head center" style={{ margin: "0 auto 48px auto", textAlign: "center" }}>
-            <span className="eyebrow">Unified Architecture</span>
-            <h2>One platform for IT operations and AI governance.</h2>
-            <p className="sub" style={{ margin: "16px auto 0 auto", maxWidth: "680px" }}>
-              AuthClaw ITSM shares the same enterprise-grade security, identity, and compliance primitives that power
-              the rest of your AuthClaw deployment.
-            </p>
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-              gap: "28px",
-            }}
-          >
-            <div
-              style={{
-                background: "var(--white)",
-                padding: "24px",
-                borderRadius: "var(--r-md)",
-                border: "1px solid var(--line)",
-              }}
-            >
-              <h4 style={{ fontSize: "16px", fontWeight: 600, marginBottom: "8px" }}>Shared Enterprise Identity</h4>
-              <p style={{ fontSize: "14px", color: "var(--slate)", lineHeight: 1.5 }}>
-                Single sign-on via OIDC/SAML, role-based access control, and native multi-tenant Row Level Security (RLS)
-                enforced in PostgreSQL.
-              </p>
-            </div>
-
-            <div
-              style={{
-                background: "var(--white)",
-                padding: "24px",
-                borderRadius: "var(--r-md)",
-                border: "1px solid var(--line)",
-              }}
-            >
-              <h4 style={{ fontSize: "16px", fontWeight: 600, marginBottom: "8px" }}>Agentic Remediation Link</h4>
-              <p style={{ fontSize: "14px", color: "var(--slate)", lineHeight: 1.5 }}>
-                Connect incident response with LangGraph autonomous remediation agents, requiring human-in-the-loop
-                approval before changes apply.
-              </p>
-            </div>
-
-            <div
-              style={{
-                background: "var(--white)",
-                padding: "24px",
-                borderRadius: "var(--r-md)",
-                border: "1px solid var(--line)",
-              }}
-            >
-              <h4 style={{ fontSize: "16px", fontWeight: 600, marginBottom: "8px" }}>Append-Only Audit Trail</h4>
-              <p style={{ fontSize: "14px", color: "var(--slate)", lineHeight: 1.5 }}>
-                Every lifecycle change, assignment, and comment automatically registers in the cryptographically chained
-                audit log.
-              </p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* PRICING SECTION */}
-      <section id="pricing" className="band" style={{ background: "var(--white)", borderTop: "1px solid var(--line)" }}>
-        <div className="wrap">
-          <div className="sec-head center" style={{ margin: "0 auto 48px auto", textAlign: "center" }}>
-            <span className="eyebrow">Transparent Pricing</span>
-            <h2>Enterprise Service Management, Simple Economics</h2>
-            <p className="sub" style={{ margin: "16px auto 0 auto", maxWidth: "680px" }}>
-              Scale incident response and service management without per-ticket penalties. Included in AuthClaw Enterprise tiers.
-            </p>
-          </div>
-
-          <div style={{ maxWidth: "840px", margin: "0 auto", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: "24px" }}>
-            <div style={{ background: "#FAFBFD", border: "1px solid var(--line)", borderRadius: "16px", padding: "32px", display: "flex", flexDirection: "column", justifyContent: "space-between" }}>
-              <div>
-                <span className="eyebrow">AuthClaw ITSM Standard</span>
-                <h3 style={{ fontSize: "24px", fontWeight: 800, marginTop: "8px", color: "var(--ink)" }}>Included with Enterprise</h3>
-                <p style={{ fontSize: "14px", color: "var(--slate)", marginTop: "8px", lineHeight: 1.5 }}>
-                  Full incident management, SLA tracking, requester self-service, and up to 10 agent seats included with every AuthClaw Enterprise cluster.
-                </p>
-                <ul style={{ marginTop: "20px", display: "flex", flexDirection: "column", gap: "10px", fontSize: "13px", color: "var(--slate)" }}>
-                  <li>✓ End-to-end incident lifecycle (INC-XXXXXX)</li>
-                  <li>✓ 6 role-based dashboards</li>
-                  <li>✓ PostgreSQL RLS multi-tenancy</li>
-                  <li>✓ Cryptographic audit log trail</li>
-                </ul>
-              </div>
-              <div style={{ marginTop: "28px" }}>
-                <Link className="btn btn-ghost" href="/itsm/login" style={{ width: "100%", textAlign: "center" }}>
-                  Sign In
-                </Link>
-              </div>
-            </div>
-
-            <div style={{ background: "white", border: "2px solid #6D28D9", borderRadius: "16px", padding: "32px", display: "flex", flexDirection: "column", justifyContent: "space-between", boxShadow: "0 10px 30px rgba(109,40,217,0.08)" }}>
-              <div>
-                <span style={{ fontSize: "11px", fontWeight: 700, color: "white", background: "#6D28D9", padding: "3px 10px", borderRadius: "20px" }}>Dedicated &amp; Custom</span>
-                <h3 style={{ fontSize: "24px", fontWeight: 800, marginTop: "8px", color: "var(--ink)" }}>Enterprise Scale</h3>
-                <p style={{ fontSize: "14px", color: "var(--slate)", marginTop: "8px", lineHeight: 1.5 }}>
-                  For high-volume operations requiring dedicated SLA engines, LangGraph AI triage copilots, custom CMDB topologies, and custom compliance packages.
-                </p>
-                <ul style={{ marginTop: "20px", display: "flex", flexDirection: "column", gap: "10px", fontSize: "13px", color: "var(--slate)" }}>
-                  <li>✓ Unlimited agents &amp; requesters</li>
-                  <li>✓ LangGraph Agentic Remediation Integration</li>
-                  <li>✓ 99.99% SLA uptime guarantee</li>
-                  <li>✓ Dedicated customer success engineer</li>
-                </ul>
-              </div>
-              <div style={{ marginTop: "28px" }}>
-                <Link className="btn btn-primary" href={marketingRoutes.demo} style={{ width: "100%", textAlign: "center" }}>
-                  Talk to Solutions Engineering
-                </Link>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* CLOSING CTA BANNER */}
-      <section className="band" style={{ textAlign: "center" }}>
-        <div className="wrap">
-          <span className="eyebrow">Get Started</span>
-          <h2 style={{ fontSize: "36px", marginTop: "12px", marginBottom: "16px" }}>
-            Unify service operations with enterprise AI governance.
-          </h2>
-          <p className="sub" style={{ margin: "0 auto 32px auto", maxWidth: "600px" }}>
-            Sign in to access your AuthClaw ITSM workspace or speak with our solutions engineering team.
-          </p>
-          <div style={{ display: "flex", gap: "12px", justifyContent: "center", flexWrap: "wrap" }}>
-            <Link className="btn btn-primary" href={primaryCtaHref}>
+          <div className="flex w-full flex-col gap-3 sm:w-auto sm:flex-row sm:flex-wrap">
+            <Link className="btn btn-primary w-full justify-center sm:w-auto" href={primaryCtaHref}>
               {primaryCtaText}
+              <ArrowRight aria-hidden="true" className="h-4 w-4" />
             </Link>
-            <Link className="btn btn-ghost" href={marketingRoutes.demo}>
+            <Link className="btn btn-ghost w-full justify-center sm:w-auto" href={marketingRoutes.demo}>
               Book a demo
             </Link>
           </div>

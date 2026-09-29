@@ -40,6 +40,38 @@ logger = logging.getLogger("orchestrator.runner")
 
 _kafka_producer = None
 
+_ORCHESTRATOR_ACTOR_ID = str(
+    uuid.uuid5(uuid.NAMESPACE_URL, "urn:authclaw:agent:compliance-orchestrator")
+)
+
+_AGENT_TASK_GOALS = {
+    "workflow_start": "Run the requested compliance workflow",
+    "gather_evidence": "Gather evidence for compliance analysis",
+    "analyze_compliance": "Analyze the gathered compliance evidence",
+    "generate_plan": "Generate a remediation plan from verified findings",
+    "create_approval": "Request approval before controlled remediation",
+    "approval_resolved": "Continue the workflow after an approval decision",
+    "execute_remediation": "Execute the approved remediation plan",
+    "verify_results": "Verify the remediation outcome",
+    "rollback_remediation": "Roll back an unsuccessful remediation",
+    "workflow_resume": "Resume the paused compliance workflow",
+    "workflow_error": "Record the failed compliance workflow",
+    "workflow_resume_error": "Record the failed workflow resumption",
+}
+
+_AGENT_TOOLS = {
+    "workflow_start": ["compliance_orchestrator"],
+    "gather_evidence": ["document_scanner", "presidio_analyzer"],
+    "analyze_compliance": ["compliance_analyzer"],
+    "generate_plan": ["remediation_planner"],
+    "create_approval": ["approval_service"],
+    "approval_resolved": ["approval_service"],
+    "execute_remediation": ["remediation_executor"],
+    "verify_results": ["remediation_verifier"],
+    "rollback_remediation": ["remediation_rollback"],
+    "workflow_resume": ["compliance_orchestrator"],
+}
+
 
 def _init_kafka_producer():
     """Lazy-init a Kafka producer for audit events. Non-fatal if unavailable."""
@@ -70,6 +102,41 @@ def emit_audit_event(
     if extra_trace:
         execution_trace.extend(extra_trace)
 
+    evidence_refs = [workflow_id]
+    if request_id and request_id != workflow_id:
+        evidence_refs.append(request_id)
+    approval_refs = [
+        item.split("=", 1)[1]
+        for item in execution_trace
+        if item.startswith("approval_id=") and "=" in item
+    ]
+    approval_statuses = [
+        item.split("=", 1)[1]
+        for item in execution_trace
+        if item.startswith("approval_status=") and "=" in item
+    ]
+    recorded_tool_names = [
+        item.split("=", 1)[1]
+        for item in execution_trace
+        if item.startswith(("tool=", "tool_name=")) and "=" in item
+    ]
+    tool_names = list(dict.fromkeys([*_AGENT_TOOLS.get(action, []), *recorded_tool_names]))
+    failed = "error" in action.lower() or "fail" in status.lower()
+    agent_trace = {
+        "task_goal": _AGENT_TASK_GOALS.get(action, action.replace("_", " ")),
+        "evidence_refs": evidence_refs,
+        "tools": tool_names,
+        "approvals": approval_refs,
+        # This workflow is deterministic and does not invoke a language model.
+        # Explicit values distinguish a valid zero-cost execution from missing
+        # trace data while keeping the V1.5 contract complete.
+        "model": "none",
+        "model_version": "not-applicable",
+        "cost_usd": 0.0,
+        "outcome": "failed" if failed else status,
+        "failures": [status] if failed else [],
+    }
+
     event = event_backbone.audit_event(
         event_type="workflow",
         tenant_id=tenant_id,
@@ -80,7 +147,14 @@ def emit_audit_event(
         reason=f"{transition} [{status}]",
         provider="orchestrator",
         trace=execution_trace,
+        agent_trace=agent_trace,
+        actor_id=_ORCHESTRATOR_ACTOR_ID,
+        actor_type="agent",
     )
+    if approval_refs:
+        event["approval_id"] = approval_refs[0]
+    if approval_statuses:
+        event["approval_status"] = approval_statuses[0]
 
     _init_kafka_producer()
     if exc := event_backbone.publish_audit_event(_kafka_producer, tenant_id, event):
@@ -504,8 +578,20 @@ class ComplianceWorkflowRunner:
                 "_store_finding": _make_store_finding_fn(self.db),
             }
 
-            emit_audit_event(workflow_id, tenant_id, state.get("request_id", ""),
-                             f"RESUME→{wf.current_state}", "workflow_resume", "running")
+            resume_trace = []
+            if state.get("approval_id"):
+                resume_trace.append(f"approval_id={state['approval_id']}")
+            if state.get("approval_status"):
+                resume_trace.append(f"approval_status={state['approval_status']}")
+            emit_audit_event(
+                workflow_id,
+                tenant_id,
+                state.get("request_id", ""),
+                f"RESUME→{wf.current_state}",
+                "workflow_resume",
+                "running",
+                extra_trace=resume_trace,
+            )
 
             # Update DB status
             wf.execution_status = ExecutionStatus.RUNNING.value

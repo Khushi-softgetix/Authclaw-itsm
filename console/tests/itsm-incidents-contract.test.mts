@@ -121,6 +121,31 @@ test("Incident Manager MVP exposes governed priority, resolution evidence, and p
   assert.match(queue, /Saved views/);
 });
 
+test("Incident Manager navigation and overview expose the approved control-center signals", () => {
+  const shell = readFileSync(new URL("../src/components/incident-manager-shell.tsx", import.meta.url), "utf8");
+  const overview = readFileSync(new URL("../src/app/(console)/itsm/incident-manager/page.tsx", import.meta.url), "utf8");
+  assert.match(shell, /label: "Overview"/);
+  assert.match(shell, /label: "Incidents"/);
+  assert.match(shell, /label: "Major Incidents"/);
+  assert.doesNotMatch(shell, /Incident Queue|Major incident command/);
+  assert.match(overview, /summary\.unassigned/);
+  assert.match(overview, /summary\.active_major_incidents/);
+  assert.match(overview, /assignment_group=__UNASSIGNED__&unassigned=true/);
+  assert.match(overview, /Focus attention/);
+  assert.match(overview, />Attention reason</);
+  assert.match(overview, />Ownership</);
+  assert.match(overview, /aria-label=\{`Review \$\{item\.ticket_number\}: \$\{item\.title\}`\}/);
+  assert.doesNotMatch(overview, /<NotificationBell/);
+});
+
+test("Incident queue connects service and category filters to backend query parameters", () => {
+  const queue = readFileSync(new URL("../src/app/(console)/itsm/incident-manager/incidents/page.tsx", import.meta.url), "utf8");
+  assert.match(queue, /params\.set\("service_id", serviceId\)/);
+  assert.match(queue, /params\.set\("category_id", categoryId\)/);
+  assert.match(queue, /"All services"/);
+  assert.match(queue, /"All categories"/);
+});
+
 test("Incident details use full width and return to the retained incident queue", () => {
   const details = readFileSync(new URL("../src/components/itsm/incident-oversight-drawer.tsx", import.meta.url), "utf8");
   const queue = readFileSync(new URL("../src/app/(console)/itsm/incident-manager/incidents/page.tsx", import.meta.url), "utf8");
@@ -178,27 +203,42 @@ test("Command queue distinguishes major incidents from candidates with clear sel
   const page = readFileSync(new URL("../src/app/(console)/itsm/incident-manager/major-incidents/page.tsx", import.meta.url), "utf8");
   assert.match(page, /Declared Major Incident/);
   assert.match(page, /High-priority candidate/);
-  assert.match(page, /Incident state/);
+  assert.match(page, />State</);
+  assert.match(page, />Ownership</);
+  assert.match(page, />Impact and activity</);
   assert.match(page, /No assignment group/);
-  assert.match(page, /aria-pressed=\{selectedId===i.id\}/);
-  assert.match(page, /Viewing command" : "Open command/);
-  assert.match(page, /min-h-\[220px\] self-start/);
+  assert.match(page, /No individual owner/);
+  assert.match(page, /onClick=\{\(\)=>openCommand\(i\.id\)\}/);
+  assert.match(page, /Back to Command Queue/);
+  assert.match(page, /selected\?<div className="space-y-4"/);
   assert.match(page, /disabled=\{offset===0\|\|loading\}/);
   assert.match(page, /disabled=\{offset\+visible.length>=total\|\|loading\}/);
-  assert.match(page, /xl:grid-cols-\[280px_minmax\(0,1fr\)\]/);
+  assert.match(page, /\(offset>0\|\|total>COMMAND_PAGE_SIZE\)&&<div/);
+  assert.match(page, /offset===0&&total<=COMMAND_PAGE_SIZE/);
+  assert.doesNotMatch(page, /xl:grid-cols-\[248px_minmax\(0,1fr\)\]/);
+  assert.match(page, /lg:grid-cols-\[minmax\(0,2fr\)_150px_minmax\(180px,1fr\)_minmax\(170px,1fr\)_32px\]/);
+  assert.match(page, /Search title or incident number/);
   assert.match(page, /Command ownership/);
   assert.match(page, /Situation summary/);
   assert.match(page, /Edit command details/);
-  assert.match(page, /<details open=\{!record\}/);
+  assert.match(page, /Decision needed/);
+  assert.match(page, /Review declaration details/);
+  assert.doesNotMatch(page, /<details open=\{!record\}/);
   assert.doesNotMatch(page, />Edit details<|lg:grid-cols-3/);
-  assert.match(page, /p-5 md:grid-cols-2/);
+  assert.match(page, /md:grid-cols-3/);
+  assert.match(page, /Restoration checkpoints and response tasks become available after declaration/);
   assert.match(page, /Commander & communication lead/);
   assert.match(page, /record.incident_commander_id === record.communication_lead_id/);
   assert.match(page, /of \$\{record.restoration_checkpoints.length\} checkpoints complete/);
   assert.ok(page.indexOf('>Situation summary<') < page.indexOf('>Command ownership<'));
   assert.ok(page.indexOf('>Restore service<') < page.indexOf('title="Restoration checkpoints"'));
-  assert.match(page, /<details open className="rounded-xl/);
-  assert.match(page, /Decisions, stakeholders, and communications/);
+  assert.match(page, /type CommandSection = "details" \| "restore" \| "coordinate" \| "pir" \| "activity"/);
+  assert.match(page, /setOpenSection\(current=>current===section\?null:section\)/);
+  assert.match(page, /aria-expanded=\{open\}/);
+  assert.match(page, /open=\{openSection==="restore"\}/);
+  assert.match(page, /open=\{openSection==="activity"\}/);
+  assert.doesNotMatch(page, /<details(?:\s|>)/);
+  assert.match(page, /Decisions, stakeholders, and evidence-based communications/);
   assert.match(page, /Restoration and PIR/);
   assert.match(page, /Command & coordination/);
   assert.match(page, /Business impact/);
@@ -208,7 +248,9 @@ test("Command queue distinguishes major incidents from candidates with clear sel
 
 test("Major Incident selection cannot render or save a stale command record", () => {
   const page = readFileSync(new URL("../src/app/(console)/itsm/incident-manager/major-incidents/page.tsx", import.meta.url), "utf8");
-  assert.match(page, /setRecord\(null\);setRecordLoading\(true\);setError\(null\);setSelectedId\(i\.id\)/);
+  assert.match(page, /setRecord\(null\);setRecordLoading\(true\);setError\(null\);setSelectedId\(incidentId\)/);
+  assert.match(page, /url\.searchParams\.set\("incident",incidentId\)/);
+  assert.match(page, /url\.searchParams\.delete\("incident"\)/);
   assert.match(page, /record\?\.ticket_id===selectedId \? record : null/);
   assert.match(page, /saved\.ticket_id===selected\.id/);
 });
@@ -219,6 +261,8 @@ test("Incident Manager optional UX keeps queue requests focused and mobile-frien
   assert.match(queue, /setTimeout\(\(\) => \{\s*setSearch\(searchInput\)/);
   assert.match(queue, /const loadContext = useCallback/);
   assert.match(queue, /No individual assignee/);
+  assert.match(queue, /\(offset>0\|\|total>PAGE_SIZE\)&&<div/);
+  assert.match(queue, /offset===0&&total<=PAGE_SIZE/);
   assert.match(queue, /md:hidden/);
   assert.match(queue, /hidden overflow-x-auto md:block/);
   assert.match(overview, /ATTENTION_PREVIEW_LIMIT = 8/);
@@ -229,5 +273,5 @@ test("Incident Manager optional UX keeps queue requests focused and mobile-frien
 test("Major Incident activity uses the Incident Manager presentation", () => {
   const page = readFileSync(new URL("../src/app/(console)/itsm/incident-manager/major-incidents/page.tsx", import.meta.url), "utf8");
   assert.match(page, /<CommandActivity incidentId=\{incident\.id\} users=\{users\}/);
-  assert.match(page, /<ActivityTimeline incidentId=\{incidentId\} activities=\{activities\} onActivityAdded=\{load\} oversight users=\{users\}/);
+  assert.match(page, /<ActivityTimeline incidentId=\{incidentId\} activities=\{activities\} onActivityAdded=\{load\} oversight embedded users=\{users\}/);
 });

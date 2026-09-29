@@ -10,15 +10,22 @@ import hashlib
 import json
 import logging
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
+from sqlalchemy import String, cast, or_
 from sqlalchemy.orm import Session
 
-from app.core.auth import get_tenant_db, require_roles, require_scopes
-from app.db.models import AuditLogMetadata
+from app.core.auth import (
+    deny_itsm_auditor_generic_audit_access,
+    get_tenant_db,
+    require_roles,
+    require_scopes,
+)
+from app.db.models import AuditLogMetadata, User
 from app.services.audit_store import (
     build_consistency_report,
     clickhouse_configured,
@@ -36,6 +43,17 @@ from app.services.audit_utils import (
 )
 
 logger = logging.getLogger(__name__)
+
+_ACTION_SEARCH_SEPARATORS = re.compile(r"[\s._-]+")
+
+
+def _action_search_candidate(value: str) -> str:
+    """Normalize a displayed action label to the stored dotted action form."""
+    return ".".join(
+        part
+        for part in _ACTION_SEARCH_SEPARATORS.split(value.strip().lower())
+        if part
+    )
 
 router = APIRouter()
 
@@ -73,6 +91,66 @@ class AuditLogsResponse(BaseModel):
     total: int
     records: List[Any]
     integrity_checked: bool = False
+
+
+_EVIDENCE_FIELDS = (
+    "event_category",
+    "context_id",
+    "actor_role",
+    "target_id",
+    "target_type",
+    "policy_decision",
+    "approval_id",
+    "approval_status",
+    "before_summary",
+    "after_summary",
+    "evidence_references",
+)
+
+
+def decode_execution_trace(value: Any) -> dict[str, Any]:
+    """Return the structured trace envelope, including legacy key/value steps."""
+    parsed = value
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            parsed = [value]
+    if isinstance(parsed, dict):
+        return dict(parsed)
+    if not isinstance(parsed, list):
+        return {}
+
+    result: dict[str, Any] = {"steps": parsed}
+    for item in parsed:
+        if not isinstance(item, str) or "=" not in item:
+            continue
+        key, raw_value = item.split("=", 1)
+        if key and raw_value:
+            result.setdefault(key.strip(), raw_value.strip())
+    return result
+
+
+def enrich_audit_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Expose evidence stored inside the immutable execution-trace envelope."""
+    trace = decode_execution_trace(record.get("execution_trace"))
+    # Preserve useful evidence from legacy ITSM records that predate the
+    # structured envelope. New records write target_id directly.
+    if not trace.get("target_id") and trace.get("ticket_id"):
+        trace["target_id"] = trace["ticket_id"]
+    if not trace.get("target_type") and trace.get("ticket_id"):
+        action_parts = str(record.get("action") or "").lower().split(".")
+        if "incident" in action_parts:
+            trace["target_type"] = "incident"
+        elif "request" in action_parts:
+            trace["target_type"] = "service_request"
+    if record.get("model") and not trace.get("model"):
+        trace["model"] = record["model"]
+    for field in _EVIDENCE_FIELDS:
+        if trace.get(field) not in (None, "", [], {}):
+            record[field] = trace[field]
+    record["execution_trace"] = trace
+    return record
 
 
 class AuditStoreStatusResponse(BaseModel):
@@ -172,13 +250,18 @@ def _verify_chain(records: List[dict]) -> List[dict]:
         previous_hash = last_hash_by_tenant.get(tenant_id)
         sequence = int(record.get("tenant_sequence") or 0)
         previous_sequence = last_sequence_by_tenant.get(tenant_id)
+        adjacent_to_previous = bool(
+            previous_sequence is not None
+            and sequence
+            and sequence == previous_sequence + 1
+        )
+        # Filters and pagination legitimately omit intervening records. The
+        # canonical hash still proves each returned record; verify the direct
+        # prior-hash link only when both adjacent records are in this result.
         link_valid = (
-            (previous_hash is None or prior_hash == previous_hash)
-            and (
-                previous_sequence is None
-                or not sequence
-                or sequence == previous_sequence + 1
-            )
+            previous_hash is None
+            or not adjacent_to_previous
+            or prior_hash == previous_hash
         )
         record["chain_valid"] = bool(actual) and expected == actual and link_valid
         if actual:
@@ -205,11 +288,13 @@ def get_audit_logs(
     db: Session = Depends(get_tenant_db),
     limit: int = Query(default=100, le=1000, ge=1),
     offset: int = Query(default=0, ge=0),
-    action: Optional[str] = Query(default=None, description="Filter by action: allow|block"),
+    action: Optional[str] = Query(default=None, description="Filter by exact action"),
     integrity_check: bool = Query(
         default=False,
         description="If true, verify SHA-256 hash chain and annotate each record with chain_valid",
     ),
+    search: Optional[str] = Query(default=None, min_length=1, max_length=255),
+    trace_only: bool = False,
 ):
     """
     Retrieve audit log records, tenant-scoped.
@@ -218,6 +303,9 @@ def get_audit_logs(
     - Fallback: PostgreSQL audit_log_metadata table.
     - Set integrity_check=true to verify the SHA-256 hash chain.
     """
+    deny_itsm_auditor_generic_audit_access(
+        request, db, "generic-audit-log.read"
+    )
     tenant_id: str = str(request.state.tenant_id)
     # ── ClickHouse path ────────────────────────────────────────────────────────
     host = os.getenv("CLICKHOUSE_HOST")
@@ -225,7 +313,7 @@ def get_audit_logs(
         try:
             ch = _get_clickhouse_client()
             if ch is not None:
-                return _query_clickhouse(ch, tenant_id, limit, offset, action, integrity_check)
+                return _query_clickhouse(ch, tenant_id, limit, offset, action, integrity_check, search, trace_only)
         except Exception as exc:
             logger.error("ClickHouse connection or query failed: %s", exc)
             raise HTTPException(
@@ -234,7 +322,7 @@ def get_audit_logs(
             )
 
     # ── PostgreSQL fallback ────────────────────────────────────────────────────
-    return _query_postgres(db, tenant_id, limit, offset, action, integrity_check)
+    return _query_postgres(db, tenant_id, limit, offset, action, integrity_check, search, trace_only)
 
 
 @router.get(
@@ -257,6 +345,17 @@ def create_signed_audit_export(
     request: Request,
     export_request: SignedAuditExportRequest,
     db: Session = Depends(get_tenant_db),
+):
+    deny_itsm_auditor_generic_audit_access(
+        request, db, "generic-audit-export.create"
+    )
+    return create_signed_audit_export_artifact(request, export_request, db)
+
+
+def create_signed_audit_export_artifact(
+    request: Request,
+    export_request: SignedAuditExportRequest,
+    db: Session,
 ):
     try:
         return build_signed_audit_export(
@@ -359,11 +458,42 @@ def _query_clickhouse(
     offset: int,
     action: Optional[str],
     integrity_check: bool,
+    search: Optional[str] = None,
+    trace_only: bool = False,
 ) -> AuditLogsResponse:
     action_filter = "AND action = {action:String}" if action else ""
+    search_filter = """
+        AND (
+            positionCaseInsensitive(
+                concat(
+                    ifNull(ae.action, ''), ' ', ifNull(toString(ae.actor_id), ''),
+                    ' ', ifNull(ae.request_id, ''),
+                    ' ', ifNull(toString(ae.record_id), ''), ' ', ifNull(ae.reason, ''),
+                    ' ', ifNull(ae.execution_trace, ''), ' ', ifNull(ae.model, '')
+                ),
+                {search:String}
+            ) > 0
+            OR positionCaseInsensitive(
+                ifNull(ae.action, ''),
+                {action_search:String}
+            ) > 0
+        )
+    """ if search else ""
+    trace_filter = """
+        AND (
+            positionCaseInsensitive(ifNull(ae.execution_trace, ''), 'task_goal') > 0
+            OR positionCaseInsensitive(ifNull(ae.action, ''), 'agent.') = 1
+            OR positionCaseInsensitive(ifNull(ae.action, ''), 'ai.') = 1
+            OR positionCaseInsensitive(ifNull(ae.action, ''), 'tool.') = 1
+            OR positionCaseInsensitive(ifNull(ae.action, ''), '.tool.') > 0
+        )
+    """ if trace_only else ""
     params: dict = {"tenant_id": tenant_id, "limit": limit, "offset": offset}
     if action:
         params["action"] = action
+    if search:
+        params["search"] = search.strip()
+        params["action_search"] = _action_search_candidate(search) or search.strip()
 
     query = f"""
         SELECT
@@ -393,13 +523,15 @@ def _query_clickhouse(
         FROM authclaw.audit_events AS ae
         WHERE ae.tenant_id = {{tenant_id:UUID}}
         {action_filter}
+        {search_filter}
+        {trace_filter}
         ORDER BY ae.tenant_sequence DESC
         LIMIT {{limit:UInt32}}
         OFFSET {{offset:UInt32}}
     """
 
     try:
-        count_query = f"SELECT count(*) FROM authclaw.audit_events AS ae WHERE ae.tenant_id = {{tenant_id:UUID}} {action_filter}"
+        count_query = f"SELECT count(*) FROM authclaw.audit_events AS ae WHERE ae.tenant_id = {{tenant_id:UUID}} {action_filter} {search_filter} {trace_filter}"
         count_result = ch.query(count_query, parameters=params)
         total_count = count_result.result_rows[0][0] if count_result.result_rows else 0
 
@@ -418,6 +550,7 @@ def _query_clickhouse(
 
     if integrity_check:
         records = _verify_chain(records)
+    records = [enrich_audit_record(record) for record in records]
 
     return AuditLogsResponse(
         source="clickhouse",
@@ -439,6 +572,14 @@ def _query_postgres(
     offset: int,
     action: Optional[str],
     integrity_check: bool,
+    search: Optional[str] = None,
+    trace_only: bool = False,
+    action_prefix: Optional[str] = None,
+    actor: Optional[str] = None,
+    target_type: Optional[str] = None,
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+    outcome: Optional[str] = None,
 ) -> AuditLogsResponse:
     """Fallback: query PostgreSQL audit_log_metadata for Phase 6 compatibility."""
     try:
@@ -447,7 +588,110 @@ def _query_postgres(
         )
         if action:
             q = q.filter(AuditLogMetadata.action == action)
-        
+        if action_prefix:
+            q = q.filter(AuditLogMetadata.action.ilike(f"{action_prefix.strip()}%"))
+        if actor and actor.strip():
+            actor_pattern = f"%{actor.strip()}%"
+            matching_user_ids = [
+                row.id
+                for row in (
+                    db.query(User.id)
+                    .filter(
+                        User.tenant_id == tenant_id,
+                        User.email.ilike(actor_pattern),
+                    )
+                    .all()
+                )
+            ]
+            actor_conditions = [
+                cast(AuditLogMetadata.actor_id, String).ilike(actor_pattern),
+                AuditLogMetadata.actor_type.ilike(actor_pattern),
+            ]
+            if matching_user_ids:
+                actor_conditions.append(
+                    AuditLogMetadata.actor_id.in_(matching_user_ids)
+                )
+            q = q.filter(
+                or_(*actor_conditions)
+            )
+        if target_type and target_type.strip():
+            target_pattern = f"%target_type%{target_type.strip()}%"
+            q = q.filter(AuditLogMetadata.execution_trace.ilike(target_pattern))
+        if start:
+            q = q.filter(AuditLogMetadata.created_at >= start)
+        if end:
+            q = q.filter(AuditLogMetadata.created_at <= end)
+        if outcome and outcome.strip():
+            normalized_outcome = outcome.strip().lower()
+            if normalized_outcome == "success":
+                q = q.filter(
+                    AuditLogMetadata.response_status >= 200,
+                    AuditLogMetadata.response_status < 400,
+                )
+            elif normalized_outcome == "denied":
+                q = q.filter(
+                    or_(
+                        AuditLogMetadata.response_status == 403,
+                        AuditLogMetadata.action.ilike("%denied%"),
+                    )
+                )
+            elif normalized_outcome == "failed":
+                q = q.filter(
+                    or_(
+                        AuditLogMetadata.response_status >= 400,
+                        AuditLogMetadata.execution_trace.ilike("%fail%"),
+                        AuditLogMetadata.execution_trace.ilike("%error%"),
+                    )
+                )
+            else:
+                q = q.filter(
+                    AuditLogMetadata.execution_trace.ilike(
+                        f"%{normalized_outcome}%"
+                    )
+                )
+        if search and search.strip():
+            pattern = f"%{search.strip()}%"
+            action_candidate = _action_search_candidate(search) or search.strip()
+            action_pattern = f"%{action_candidate}%"
+            matching_search_user_ids = [
+                row.id
+                for row in (
+                    db.query(User.id)
+                    .filter(
+                        User.tenant_id == tenant_id,
+                        User.email.ilike(pattern),
+                    )
+                    .all()
+                )
+            ]
+            search_conditions = [
+                AuditLogMetadata.action.ilike(pattern),
+                AuditLogMetadata.action.ilike(action_pattern),
+                AuditLogMetadata.request_id.ilike(pattern),
+                AuditLogMetadata.reason.ilike(pattern),
+                cast(AuditLogMetadata.actor_id, String).ilike(pattern),
+                cast(AuditLogMetadata.record_id, String).ilike(pattern),
+                AuditLogMetadata.execution_trace.ilike(pattern),
+                AuditLogMetadata.model.ilike(pattern),
+            ]
+            if matching_search_user_ids:
+                search_conditions.append(
+                    AuditLogMetadata.actor_id.in_(matching_search_user_ids)
+                )
+            q = q.filter(
+                or_(*search_conditions)
+            )
+        if trace_only:
+            q = q.filter(
+                or_(
+                    AuditLogMetadata.execution_trace.ilike('%"task_goal"%'),
+                    AuditLogMetadata.action.ilike("agent.%"),
+                    AuditLogMetadata.action.ilike("ai.%"),
+                    AuditLogMetadata.action.ilike("tool.%"),
+                    AuditLogMetadata.action.ilike("%.tool.%"),
+                )
+            )
+
         total_count = q.count()
         logs = q.order_by(AuditLogMetadata.tenant_sequence.desc()).offset(offset).limit(limit).all()
 
@@ -483,6 +727,7 @@ def _query_postgres(
         ]
         if integrity_check:
             records = _verify_chain(records)
+        records = [enrich_audit_record(record) for record in records]
         return AuditLogsResponse(
             source="postgres",
             total=total_count,
@@ -492,3 +737,39 @@ def _query_postgres(
     except Exception as exc:
         logger.error("PostgreSQL audit query failed: %s", exc)
         raise HTTPException(status_code=500, detail="Audit log query failed")
+
+
+def get_chain_of_record_logs(
+    request: Request,
+    *,
+    db: Session,
+    limit: int,
+    offset: int,
+    action: Optional[str],
+    integrity_check: bool,
+    search: Optional[str] = None,
+    trace_only: bool = False,
+    action_prefix: Optional[str] = None,
+    actor: Optional[str] = None,
+    target_type: Optional[str] = None,
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+    outcome: Optional[str] = None,
+) -> AuditLogsResponse:
+    """Read the authoritative immutable store without analytics-replica lag."""
+    return _query_postgres(
+        db,
+        str(request.state.tenant_id),
+        limit,
+        offset,
+        action,
+        integrity_check,
+        search,
+        trace_only,
+        action_prefix,
+        actor,
+        target_type,
+        start,
+        end,
+        outcome,
+    )

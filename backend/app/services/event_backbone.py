@@ -44,6 +44,9 @@ def audit_event(
     request_id: str = "",
     frameworks: list[str] | None = None,
     trace: list[str] | None = None,
+    agent_trace: dict[str, Any] | None = None,
+    actor_id: str = "",
+    actor_type: str = "backend",
 ) -> dict[str, Any]:
     execution_trace = trace or []
     return {
@@ -55,8 +58,14 @@ def audit_event(
             trace=execution_trace,
         ),
         "request_id": request_id,
+        "context_id": request_id,
         "timestamp": datetime.now(tz=timezone.utc).isoformat(),
         "tenant_id": tenant_id,
+        "actor_id": actor_id,
+        "actor_type": actor_type,
+        "event_category": event_type,
+        "target_id": subject_id,
+        "target_type": event_type,
         "policy_id": "",
         "action": action,
         "reason": reason,
@@ -68,6 +77,7 @@ def audit_event(
         "duration_ms": 0,
         "frameworks_affected": frameworks or [],
         "execution_trace": execution_trace,
+        "agent_trace": agent_trace,
     }
 
 
@@ -158,11 +168,19 @@ def publish_pending_audit_events(
 
 def persist_audit_event(event: dict[str, Any]) -> Exception | None:
     """Append through PostgreSQL and commit its transactional outbox row."""
+    from sqlalchemy import text
+
     from app.db.session import SessionLocal
     from app.services.audit_store import append_audit_event
 
     db = SessionLocal()
     try:
+        tenant_id = str(event["tenant_id"])
+        db.info["tenant_id"] = tenant_id
+        db.execute(
+            text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+            {"tenant_id": tenant_id},
+        )
         append_audit_event(db, event)
         db.commit()
         return None

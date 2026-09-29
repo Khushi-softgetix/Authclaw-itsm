@@ -7,7 +7,7 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import inspect, or_
+from sqlalchemy import inspect, or_, text
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import (
@@ -97,6 +97,57 @@ class RequestService:
             updated_at=ticket.updated_at,
             request_detail=detail_data,
         )
+
+    @staticmethod
+    def _emit_audit_event(
+        db: Session,
+        tenant_id: UUID,
+        ticket: ITSMTicket,
+        action: str,
+        actor_id: UUID,
+        *,
+        reason: str,
+        trace_items: list[str] | None = None,
+        before_summary: dict[str, Any] | None = None,
+        after_summary: dict[str, Any] | None = None,
+    ) -> None:
+        try:
+            savepoint = db.begin_nested()
+            try:
+                db.execute(
+                    text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                    {"tenant_id": str(tenant_id)},
+                )
+                append_audit_event(
+                    db,
+                    {
+                        "id": str(uuid4()),
+                        "idempotency_key": f"itsm:request:{ticket.id}:{action}:{datetime.now(timezone.utc).timestamp()}",
+                        "tenant_id": str(tenant_id),
+                        "timestamp": datetime.now(timezone.utc),
+                        "actor_id": str(actor_id),
+                        "actor_type": "user",
+                        "action": f"itsm.request.{action}",
+                        "request_id": str(ticket.id),
+                        "context_id": str(ticket.id),
+                        "event_category": "update" if action in {"status_changed", "assigned"} else "action",
+                        "target_id": str(ticket.id),
+                        "target_type": "service_request",
+                        "before_summary": before_summary,
+                        "after_summary": after_summary,
+                        "provider": "itsm",
+                        "reason": reason,
+                        "response_status": 200,
+                        "frameworks_affected": ["ITIL"],
+                        "execution_trace": trace_items or [],
+                    },
+                )
+                savepoint.commit()
+            except Exception as exc:
+                savepoint.rollback()
+                logger.warning("Audit event emission failed: %s", exc)
+        except Exception as exc:
+            logger.warning("Audit event savepoint failed: %s", exc)
 
     @classmethod
     def list_requests(
@@ -312,42 +363,22 @@ class RequestService:
             actor_id=actor_id,
         )
 
-        try:
-            sp = db.begin_nested()
-            try:
-                db.execute(
-                    text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
-                    {"tenant_id": str(tenant_id)},
-                )
-                append_audit_event(
-                    db,
-                    {
-                        "id": str(uuid4()),
-                        "idempotency_key": f"itsm:request:{ticket.id}:status_changed:{datetime.now(timezone.utc).timestamp()}",
-                        "tenant_id": str(tenant_id),
-                        "timestamp": datetime.now(timezone.utc),
-                        "actor_id": str(actor_id) if actor_id else None,
-                        "actor_type": "user",
-                        "action": "itsm.request.status_changed",
-                        "request_id": str(ticket.id),
-                        "provider": "itsm",
-                        "reason": payload.status_reason or f"Status changed to {target_status}",
-                        "response_status": 200,
-                        "frameworks_affected": ["ITIL"],
-                        "execution_trace": [
-                            f"ticket_id={ticket.id}",
-                            f"ticket_number={ticket.ticket_number}",
-                            f"old_status={current_status}",
-                            f"new_status={target_status}",
-                        ],
-                    },
-                )
-                sp.commit()
-            except Exception as e:
-                sp.rollback()
-                logger.warning("Audit event emission failed: %s", e)
-        except Exception as e:
-            logger.warning("Audit event savepoint failed: %s", e)
+        cls._emit_audit_event(
+            db,
+            tenant_id,
+            ticket,
+            "status_changed",
+            actor_id,
+            reason=payload.status_reason or f"Status changed to {target_status}",
+            trace_items=[
+                f"ticket_id={ticket.id}",
+                f"ticket_number={ticket.ticket_number}",
+                f"old_status={current_status}",
+                f"new_status={target_status}",
+            ],
+            before_summary={"status": current_status},
+            after_summary=new_val,
+        )
 
         db.commit()
         db.refresh(ticket)
@@ -432,6 +463,24 @@ class RequestService:
             actor_id=actor_id,
         )
 
+        cls._emit_audit_event(
+            db,
+            tenant_id,
+            ticket,
+            "assigned",
+            actor_id,
+            reason="Service request assignment updated",
+            trace_items=[f"ticket_id={ticket.id}", f"ticket_number={ticket.ticket_number}"],
+            before_summary={
+                "assignee_id": str(old_assignee_id) if old_assignee_id else None,
+                "assignment_group": old_group,
+            },
+            after_summary={
+                "assignee_id": str(ticket.assignee_id) if ticket.assignee_id else None,
+                "assignment_group": ticket.assignment_group,
+            },
+        )
+
         db.commit()
         db.refresh(ticket)
 
@@ -512,6 +561,16 @@ class RequestService:
         )
 
         ticket.updated_at = datetime.now(timezone.utc)
+        cls._emit_audit_event(
+            db,
+            tenant_id,
+            ticket,
+            "activity_added",
+            actor_id,
+            reason="Service request activity added",
+            trace_items=[f"activity_type={act_type}", f"is_internal={payload.is_internal}"],
+            after_summary={"activity_type": act_type, "is_internal": payload.is_internal},
+        )
         db.commit()
         db.refresh(activity)
         return activity

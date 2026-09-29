@@ -137,3 +137,48 @@ h4 {
 .authclaw-console textarea:disabled {
   opacity: 0.72;
 }
+
+
+/* Shared composition rules for focused ITSM role workspaces. */
+.role-portal {
+  width: 100%;
+}
+
+.role-portal > header h1 {
+  text-wrap: balance;
+}
+
+.role-portal table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.role-portal table thead th {
+  background: #faf9fd;
+  color: #667085;
+  font-size: 0.6875rem;
+  letter-spacing: 0.065em;
+}
+
+.role-portal table tbody td {
+  vertical-align: middle;
+}
+
+.role-portal table tbody tr {
+  transition: background-color 140ms ease;
+}
+
+.role-portal table tbody tr:hover {
+  background: #fbfaff;
+}
+
+.role-portal :is(button, a, input, select, textarea):focus-visible {
+  outline: 2px solid rgba(109, 40, 217, 0.42);
+  outline-offset: 2px;
+}
+
+@media (min-width: 1280px) {
+  .role-portal {
+    padding-bottom: 2rem;
+  }
+}

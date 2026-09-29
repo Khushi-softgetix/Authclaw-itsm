@@ -145,6 +145,31 @@ def verify_rls(bootstrap_url: str, schemas: Iterable[str]) -> None:
     ), "Configured RLS exception was not found in the schema"
 
 
+def verify_audit_append_boundary(bootstrap_url: str, backend_role: str) -> None:
+    engine = create_engine(bootstrap_url, pool_pre_ping=True)
+    with engine.connect() as conn:
+        owner, security_definer, public_execute, runtime_execute = conn.execute(
+            text(
+                """
+                SELECT owner.rolname,
+                       function.prosecdef,
+                       has_function_privilege('public', function.oid, 'EXECUTE'),
+                       has_function_privilege(:runtime, function.oid, 'EXECUTE')
+                FROM pg_proc AS function
+                JOIN pg_namespace AS namespace ON namespace.oid = function.pronamespace
+                JOIN pg_roles AS owner ON owner.oid = function.proowner
+                WHERE namespace.nspname = 'public'
+                  AND function.proname = 'append_audit_event_v2'
+                """
+            ),
+            {"runtime": backend_role},
+        ).one()
+    assert owner == os.getenv("AUTH_DEFINER_ROLE", "authclaw_auth_definer")
+    assert security_definer is True
+    assert public_execute is False
+    assert runtime_execute is True
+
+
 def verify_cross_tenant(bootstrap_url: str, backend_url: str, agent_url: str) -> None:
     marker = uuid.uuid4().hex
     backend_tenant_a, backend_tenant_b = uuid.uuid4(), uuid.uuid4()
@@ -405,6 +430,7 @@ def main() -> None:
     verify_runtime(backend_url, backend_role, backend_migrator, "public", "agent")
     verify_runtime(agent_url, agent_role, agent_migrator, "agent", "public")
     verify_rls(bootstrap_url, ("public", "agent"))
+    verify_audit_append_boundary(bootstrap_url, backend_role)
     verify_agent_totp_encryption(bootstrap_url)
     verify_cross_tenant(bootstrap_url, backend_url, agent_url)
     print("Database identity, privilege, cross-schema, and RLS verification passed.")

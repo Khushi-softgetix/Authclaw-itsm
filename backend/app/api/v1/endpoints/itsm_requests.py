@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.core.auth import get_current_tenant, get_tenant_db
+from app.core.auth import deny_itsm_auditor_access, deny_itsm_auditor_mutation, get_current_tenant, get_tenant_db
 from app.schemas.itsm_incidents import (
     IncidentActivityCreateRequest,
     IncidentActivityResponse,
@@ -41,9 +41,15 @@ def _get_user_role_and_validate(db: Session, tenant_id: UUID, user_id: UUID) -> 
                 return str(row.itsm_role).upper()
     except HTTPException:
         raise
-    except Exception:
-        pass
-    return "SERVICE_AGENT"
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to verify ITSM access",
+        ) from exc
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="User does not have active ITSM access in this tenant",
+    )
 
 
 @router.get(
@@ -68,6 +74,8 @@ def list_requests(
     actor_id = UUID(str(request.state.user_id))
     t_id = UUID(tenant_id)
     role = _get_user_role_and_validate(db, t_id, actor_id)
+
+    deny_itsm_auditor_access(request, db, role, "request.list")
 
     requester_id = actor_id if role == "REQUESTER" else None
 
@@ -103,6 +111,8 @@ def get_request(
     t_id = UUID(tenant_id)
     role = _get_user_role_and_validate(db, t_id, actor_id)
 
+    deny_itsm_auditor_access(request, db, role, "request.read")
+
     res = RequestService.get_request(db=db, tenant_id=t_id, request_id=request_id)
 
     if role == "REQUESTER" and str(res.requester_id) != str(actor_id):
@@ -130,6 +140,8 @@ def change_request_status(
     actor_id = UUID(str(request.state.user_id))
     t_id = UUID(tenant_id)
     role = _get_user_role_and_validate(db, t_id, actor_id)
+
+    deny_itsm_auditor_mutation(request, db, role, "request.status.change")
 
     if role == "REQUESTER":
         raise HTTPException(
@@ -163,6 +175,8 @@ def assign_request(
     t_id = UUID(tenant_id)
     role = _get_user_role_and_validate(db, t_id, actor_id)
 
+    deny_itsm_auditor_mutation(request, db, role, "request.assign")
+
     if role == "REQUESTER":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -194,6 +208,8 @@ def list_request_activities(
     t_id = UUID(tenant_id)
     role = _get_user_role_and_validate(db, t_id, actor_id)
 
+    deny_itsm_auditor_access(request, db, role, "request.activity.list")
+
     activities = RequestService.list_activities(db=db, tenant_id=t_id, request_id=request_id)
     if role == "REQUESTER":
         activities = [a for a in activities if not a.is_internal]
@@ -218,6 +234,8 @@ def add_request_activity(
     actor_id = UUID(str(request.state.user_id))
     t_id = UUID(tenant_id)
     role = _get_user_role_and_validate(db, t_id, actor_id)
+
+    deny_itsm_auditor_mutation(request, db, role, "request.activity.create")
 
     if role == "REQUESTER":
         payload.is_internal = False

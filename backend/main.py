@@ -105,6 +105,7 @@ from app.api.v1.endpoints.itsm_admin import router as itsm_admin_router
 from app.api.v1.endpoints.itsm_knowledge import router as itsm_knowledge_router
 from app.api.v1.endpoints.itsm_requests import router as itsm_requests_router
 from app.api.v1.endpoints.itsm_services import router as itsm_services_router
+from app.api.v1.endpoints.itsm_audit import router as itsm_audit_router
 
 app.include_router(tenants_router, prefix="/v1/tenants", tags=["tenants"])
 app.include_router(gateways_router, prefix="/v1/gateways", tags=["gateways"])
@@ -145,6 +146,7 @@ app.include_router(itsm_requests_router, prefix="/v1/itsm/requests", tags=["itsm
 app.include_router(itsm_requests_router, prefix="/api/itsm/requests", tags=["itsm-requests"], include_in_schema=False)
 app.include_router(itsm_services_router, prefix="/v1/itsm/services", tags=["itsm-services"])
 app.include_router(itsm_services_router, prefix="/api/itsm/services", tags=["itsm-services"], include_in_schema=False)
+app.include_router(itsm_audit_router, prefix="/v1/itsm/audit", tags=["itsm-audit"])
 
 # Ravi's imported console and existing client SDKs use `/api/v1`. Keep Kunal's
 # `/v1` routes canonical while exposing a compatibility alias during migration.

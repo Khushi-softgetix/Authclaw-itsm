@@ -92,6 +92,12 @@ async def upload_incident_attachment(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Incident not found.",
         )
+    if role == "SERVICE_AGENT":
+        if not IncidentService.check_incident_agent_access(db, t_id, incident, actor_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Incident is not assigned to you or your team",
+            )
 
     filename = file.filename or "attachment.bin"
     ext = Path(filename).suffix.lower()
@@ -170,6 +176,12 @@ def list_incident_attachments(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Incident not found.",
         )
+    if role == "SERVICE_AGENT":
+        if not IncidentService.check_incident_agent_access(db, t_id, incident, actor_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Incident is not assigned to you or your team",
+            )
 
     return ITSMAttachmentService.list_attachments_for_target(
         db=db,
@@ -314,7 +326,7 @@ def download_attachment(
 
     attachment, file_path = ITSMAttachmentService.get_attachment(db, t_id, attachment_id)
 
-    if role == "REQUESTER" and attachment.target_type == "TICKET":
+    if attachment.target_type == "TICKET":
         ticket = (
             db.query(ITSMTicket)
             .filter(
@@ -323,11 +335,18 @@ def download_attachment(
             )
             .first()
         )
-        if not ticket or str(ticket.requester_id) != str(actor_id):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Attachment not found.",
-            )
+        if role == "REQUESTER":
+            if not ticket or str(ticket.requester_id) != str(actor_id):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Attachment not found.",
+                )
+        elif role == "SERVICE_AGENT" and ticket:
+            if ticket.ticket_type == "INCIDENT" and not IncidentService.check_incident_agent_access(db, t_id, ticket, actor_id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Access denied: Attachment is not assigned to you or your team",
+                )
 
     disposition_type = "inline" if preview else "attachment"
     return FileResponse(

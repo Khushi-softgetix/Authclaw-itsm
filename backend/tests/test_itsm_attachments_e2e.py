@@ -249,6 +249,13 @@ class ITSMAttachmentsE2ETestCase(unittest.TestCase):
         self.assertEqual(prev_res.content, fake_png)
         self.assertIn("inline", prev_res.headers.get("content-disposition", ""))
 
+        # Assign ticket to agent_a for operational handling
+        with self.migrator_engine.begin() as conn:
+            conn.execute(
+                text("UPDATE public.itsm_tickets SET assignee_id = :agent_id WHERE id = :id"),
+                {"agent_id": self.agent_a_id, "id": inc_id},
+            )
+
         # 6. Service Agent can also view and download the requester's attachment
         agent_list_res = self.client.get(
             f"/v1/itsm/incidents/{inc_id}/attachments",

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import re
-from typing import List, Optional
+from typing import Any, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -163,6 +163,77 @@ class ITSMConfigurationItemUpdateRequest(BaseModel):
     environment: Optional[str] = Field(default=None)
     status: Optional[str] = Field(default=None)
     external_resource_id: Optional[str] = Field(default=None, max_length=512)
+
+
+# --- Bulk Configuration Item (CI) Import Schemas (CMDB-005) ---
+class CIBulkImportRowDiff(BaseModel):
+    old: Any = None
+    new: Any = None
+
+
+class CIBulkImportRowResult(BaseModel):
+    row_number: int
+    action: str  # INSERT, UPDATE, CONFLICT, ERROR
+    name: Optional[str] = None
+    ci_type: Optional[str] = None
+    environment: Optional[str] = None
+    status: Optional[str] = None
+    service_id: Optional[UUID] = None
+    service_name: Optional[str] = None
+    external_resource_id: Optional[str] = None
+    existing_ci_id: Optional[UUID] = None
+    changes: Optional[dict[str, CIBulkImportRowDiff]] = None
+    errors: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    raw_data: dict[str, Any] = Field(default_factory=dict)
+
+
+class CIBulkImportDryRunRequest(BaseModel):
+    source_filename: str = Field(..., max_length=255)
+    source_type: str = Field(..., pattern="^(?i)(csv|json)$")
+    field_mapping: Optional[dict[str, str]] = None
+    raw_records: list[dict[str, Any]] = Field(..., min_length=1, max_length=1000)
+
+
+class CIBulkImportDryRunResponse(BaseModel):
+    source_filename: str
+    source_type: str
+    total_records: int
+    valid_records: int
+    invalid_records: int
+    insert_count: int
+    update_count: int
+    conflict_count: int
+    error_count: int
+    rows: list[CIBulkImportRowResult]
+
+
+class CIBulkImportCommitRequest(BaseModel):
+    source_filename: str = Field(..., max_length=255)
+    source_type: str = Field(..., pattern="^(?i)(csv|json)$")
+    field_mapping: Optional[dict[str, str]] = None
+    raw_records: list[dict[str, Any]] = Field(..., min_length=1, max_length=1000)
+    update_existing: bool = True
+
+
+class CIBulkImportErrorQueueItem(BaseModel):
+    row_number: int
+    name: Optional[str] = None
+    action: str
+    errors: list[str] = Field(default_factory=list)
+    conflicts: list[str] = Field(default_factory=list)
+    raw_data: dict[str, Any] = Field(default_factory=dict)
+
+
+class CIBulkImportCommitResponse(BaseModel):
+    batch_id: str
+    source_filename: str
+    total_records: int
+    inserted_count: int
+    updated_count: int
+    skipped_count: int
+    error_count: int
+    error_queue: list[CIBulkImportErrorQueueItem] = Field(default_factory=list)
 
 
 # --- Service Catalog Schemas ---

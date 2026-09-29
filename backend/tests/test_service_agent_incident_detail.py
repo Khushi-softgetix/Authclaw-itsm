@@ -193,12 +193,20 @@ class ServiceAgentIncidentDetailTestCase(unittest.TestCase):
                 ),
                 {"id": cls.service_id, "tenant_id": cls.tenant_id, "slug": f"sso-{uuid4().hex[:8]}"},
             )
+            cls.team_id = uuid4()
             conn.execute(
                 text(
                     "INSERT INTO public.itsm_teams (id, tenant_id, name, is_active, created_at, updated_at) "
                     "VALUES (:id, :tenant_id, 'Security Operations', true, now(), now())"
                 ),
-                {"id": uuid4(), "tenant_id": cls.tenant_id},
+                {"id": cls.team_id, "tenant_id": cls.tenant_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_team_members (id, tenant_id, team_id, user_id, created_at) "
+                    "VALUES (gen_random_uuid(), :tenant_id, :team_id, :user_id, now())"
+                ),
+                {"tenant_id": cls.tenant_id, "team_id": cls.team_id, "user_id": cls.agent_user_id},
             )
 
         agent_headers = {"Authorization": f"Bearer {cls.agent_key}"}
@@ -396,6 +404,12 @@ class ServiceAgentIncidentDetailTestCase(unittest.TestCase):
         self.assertEqual(req_ticket_res.status_code, 201)
         req_ticket_id = req_ticket_res.json()["id"]
 
+        with self.migrator_engine.begin() as conn:
+            conn.execute(
+                text("UPDATE public.itsm_tickets SET assignment_group = 'Security Operations' WHERE id = :id"),
+                {"id": req_ticket_id},
+            )
+
         agent_headers = {"Authorization": f"Bearer {self.agent_key}"}
         pub_res = self.client.post(
             f"/v1/itsm/incidents/{req_ticket_id}/activities",
@@ -489,7 +503,7 @@ class ServiceAgentIncidentDetailTestCase(unittest.TestCase):
         headers = {"Authorization": f"Bearer {self.agent_key}"}
         ticket_res = self.client.post(
             "/v1/itsm/incidents",
-            json={"title": "Validation Ticket", "description": "Validation check", "urgency": "MEDIUM"},
+            json={"title": "Validation Ticket", "description": "Validation check", "urgency": "MEDIUM", "assignment_group": "Security Operations"},
             headers=headers,
         )
         self.assertEqual(ticket_res.status_code, 201)
@@ -568,7 +582,7 @@ class ServiceAgentIncidentDetailTestCase(unittest.TestCase):
         headers = {"Authorization": f"Bearer {self.agent_key}"}
         ticket_res = self.client.post(
             "/v1/itsm/incidents",
-            json={"title": "Reopen Test Ticket", "description": "Testing reopen", "urgency": "HIGH"},
+            json={"title": "Reopen Test Ticket", "description": "Testing reopen", "urgency": "HIGH", "assignment_group": "Security Operations"},
             headers=headers,
         )
         self.assertEqual(ticket_res.status_code, 201)
@@ -606,7 +620,7 @@ class ServiceAgentIncidentDetailTestCase(unittest.TestCase):
         headers = {"Authorization": f"Bearer {self.agent_key}"}
         ticket_res = self.client.post(
             "/v1/itsm/incidents",
-            json={"title": "Close Test Ticket", "description": "Testing closure", "urgency": "LOW"},
+            json={"title": "Close Test Ticket", "description": "Testing closure", "urgency": "LOW", "assignment_group": "Security Operations"},
             headers=headers,
         )
         self.assertEqual(ticket_res.status_code, 201)

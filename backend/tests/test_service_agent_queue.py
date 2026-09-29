@@ -80,6 +80,23 @@ class ServiceAgentQueueTestCase(unittest.TestCase):
                 {"id": uuid4(), "tenant_id": cls.tenant_id, "key_hash": hash_key(cls.agent_key), "created_by": cls.agent_user_id},
             )
 
+            # Tenant A Team: Network Support
+            cls.team_id = uuid4()
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_teams (id, tenant_id, name, description, is_active, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, 'Network Support', 'Handles network incidents', true, now(), now())"
+                ),
+                {"id": cls.team_id, "tenant_id": cls.tenant_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_team_members (id, tenant_id, team_id, user_id, created_at) "
+                    "VALUES (gen_random_uuid(), :tenant_id, :team_id, :user_id, now())"
+                ),
+                {"tenant_id": cls.tenant_id, "team_id": cls.team_id, "user_id": cls.agent_user_id},
+            )
+
             # Tenant A Requester
             conn.execute(
                 text(
@@ -223,8 +240,8 @@ class ServiceAgentQueueTestCase(unittest.TestCase):
             conn.execute(
                 text(
                     "INSERT INTO public.itsm_tickets "
-                    "(id, tenant_id, ticket_number, ticket_type, title, description, impact, urgency, priority, status, requester_id, sla_status, created_at, updated_at) "
-                    "VALUES (:id, :tenant_id, 'INC-999904', 'INCIDENT', 'SLA Critical Incident', 'SLA test', 'HIGH', 'HIGH', 'P1', 'NEW', :req_id, 'AT_RISK', now(), now())"
+                    "(id, tenant_id, ticket_number, ticket_type, title, description, impact, urgency, priority, status, requester_id, assignment_group, sla_status, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, 'INC-999904', 'INCIDENT', 'SLA Critical Incident', 'SLA test', 'HIGH', 'HIGH', 'P1', 'NEW', :req_id, 'Network Support', 'AT_RISK', now(), now())"
                 ),
                 {"id": sla_ticket_id, "tenant_id": self.tenant_id, "req_id": self.requester_user_id},
             )
@@ -269,8 +286,8 @@ class ServiceAgentQueueTestCase(unittest.TestCase):
             conn.execute(
                 text(
                     "INSERT INTO public.itsm_tickets "
-                    "(id, tenant_id, ticket_number, ticket_type, title, description, impact, urgency, priority, status, service_id, requester_id, created_at, updated_at) "
-                    "VALUES (:id, :tenant_id, 'INC-999905', 'INCIDENT', 'SSO Login Failure', 'SAML assertion error', 'MEDIUM', 'HIGH', 'P2', 'NEW', :service_id, :req_id, now(), now())"
+                    "(id, tenant_id, ticket_number, ticket_type, title, description, impact, urgency, priority, status, service_id, requester_id, assignment_group, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, 'INC-999905', 'INCIDENT', 'SSO Login Failure', 'SAML assertion error', 'MEDIUM', 'HIGH', 'P2', 'NEW', :service_id, :req_id, 'Network Support', now(), now())"
                 ),
                 {"id": ticket_id, "tenant_id": self.tenant_id, "service_id": service_id, "req_id": self.requester_user_id},
             )

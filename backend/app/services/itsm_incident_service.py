@@ -7,13 +7,14 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import case, inspect, or_, text
+from sqlalchemy import case, false, func, inspect, or_, text
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import (
     ITSMConfigurationItem,
     ITSMService,
     ITSMTeam,
+    ITSMTeamMember,
     ITSMMajorIncident,
     ITSMSLAPolicy,
     ITSMTicket,
@@ -40,6 +41,7 @@ from app.schemas.itsm_incidents import (
 )
 from app.services.audit_store import append_audit_event
 from app.services.itsm_sla_service import apply_sla_policy, pause_sla, resume_sla
+from app.services.notifications import create_notification
 
 logger = logging.getLogger("authclaw.itsm.incidents")
 
@@ -656,7 +658,180 @@ class IncidentService:
 
         db.commit()
         db.refresh(ticket)
+
+        cls.notify_incident_managers_new_incident(db, tenant_id, ticket, actor_id=actor_id)
+        if ticket.assignee_id or ticket.assignment_group:
+            cls.notify_assignment_change(
+                db=db,
+                tenant_id=tenant_id,
+                ticket=ticket,
+                old_assignee_id=None,
+                new_assignee_id=ticket.assignee_id,
+                old_group=None,
+                new_group=ticket.assignment_group,
+                actor_id=actor_id,
+            )
+
         return ticket
+
+    @classmethod
+    def notify_incident_managers_new_incident(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        ticket: ITSMTicket,
+        actor_id: Optional[UUID] = None,
+    ) -> None:
+        """Dispatches an in-app notification to all active Incident Managers in the tenant when a new incident is created."""
+        try:
+            im_rows = (
+                db.query(ITSMUserAccess.user_id)
+                .outerjoin(User, (User.id == ITSMUserAccess.user_id) & (User.tenant_id == ITSMUserAccess.tenant_id))
+                .filter(
+                    ITSMUserAccess.tenant_id == tenant_id,
+                    func.upper(ITSMUserAccess.itsm_role) == "INCIDENT_MANAGER",
+                    ITSMUserAccess.has_itsm_access.is_(True),
+                    or_(User.id.is_(None), User.is_active.is_(True)),
+                )
+                .all()
+            )
+            manager_ids = {r[0] for r in im_rows if r[0]}
+
+            for mgr_id in manager_ids:
+                if actor_id and str(mgr_id) == str(actor_id):
+                    continue
+                create_notification(
+                    db=db,
+                    tenant_id=tenant_id,
+                    user_id=mgr_id,
+                    type="itsm.incident.created",
+                    severity="info",
+                    title=f"New incident {ticket.ticket_number} has been created",
+                    body=ticket.title,
+                    link=f"/itsm/incidents/{ticket.id}",
+                )
+        except Exception as exc:
+            logger.warning("Failed to dispatch new incident notification for ticket %s: %s", getattr(ticket, "ticket_number", ticket.id), exc)
+
+    @classmethod
+    def notify_assignment_change(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        ticket: ITSMTicket,
+        old_assignee_id: Optional[UUID | str],
+        new_assignee_id: Optional[UUID | str],
+        old_group: Optional[str],
+        new_group: Optional[str],
+        actor_id: Optional[UUID] = None,
+    ) -> None:
+        """Dispatches in-app notifications when an incident is assigned or reassigned to a team or agent.
+        Prevents duplicate notifications if an agent is assigned both directly and as part of the team.
+        """
+        try:
+            str_old_assignee = str(old_assignee_id) if old_assignee_id else None
+            str_new_assignee = str(new_assignee_id) if new_assignee_id else None
+            str_old_group = (old_group or "").strip()
+            str_new_group = (new_group or "").strip()
+
+            assignee_changed = bool(str_new_assignee and str_new_assignee != (str_old_assignee or ""))
+            group_changed = bool(str_new_group and str_new_group != str_old_group)
+
+            if not assignee_changed and not group_changed:
+                return
+
+            assigned_agent_uuid: Optional[UUID] = None
+            if assignee_changed and new_assignee_id:
+                try:
+                    assigned_agent_uuid = UUID(str(new_assignee_id))
+                except (ValueError, TypeError):
+                    assigned_agent_uuid = None
+
+                if assigned_agent_uuid:
+                    create_notification(
+                        db=db,
+                        tenant_id=tenant_id,
+                        user_id=assigned_agent_uuid,
+                        type="itsm.incident.assigned",
+                        severity="info",
+                        title=f"Incident {ticket.ticket_number} has been assigned to you",
+                        body=ticket.title,
+                        link=f"/itsm/incidents/{ticket.id}",
+                    )
+
+            if group_changed and str_new_group:
+                # Query all active members of the newly assigned team in this tenant
+                team_member_rows = (
+                    db.query(ITSMTeamMember.user_id)
+                    .join(ITSMTeam, (ITSMTeam.id == ITSMTeamMember.team_id) & (ITSMTeam.tenant_id == ITSMTeamMember.tenant_id))
+                    .outerjoin(User, (User.id == ITSMTeamMember.user_id) & (User.tenant_id == ITSMTeamMember.tenant_id))
+                    .filter(
+                        ITSMTeam.tenant_id == tenant_id,
+                        ITSMTeamMember.tenant_id == tenant_id,
+                        func.lower(ITSMTeam.name) == func.lower(str_new_group),
+                        ITSMTeam.is_active.is_(True),
+                        or_(User.id.is_(None), User.is_active.is_(True)),
+                    )
+                    .all()
+                )
+                team_member_ids = {r[0] for r in team_member_rows if r[0]}
+
+                # Duplicate Prevention:
+                # If an agent was directly assigned in this operation, exclude them from team notifications
+                if assigned_agent_uuid:
+                    team_member_ids.discard(assigned_agent_uuid)
+
+                # Also exclude current ticket assignee if they were already the assignee
+                if ticket.assignee_id:
+                    try:
+                        team_member_ids.discard(UUID(str(ticket.assignee_id)))
+                    except (ValueError, TypeError):
+                        pass
+
+                for member_id in team_member_ids:
+                    create_notification(
+                        db=db,
+                        tenant_id=tenant_id,
+                        user_id=member_id,
+                        type="itsm.incident.assigned",
+                        severity="info",
+                        title=f"Incident {ticket.ticket_number} assigned to your team {str_new_group}",
+                        body=ticket.title,
+                        link=f"/itsm/incidents/{ticket.id}",
+                    )
+        except Exception as exc:
+            logger.warning("Failed to dispatch assignment notifications for ticket %s: %s", getattr(ticket, "ticket_number", ticket.id), exc)
+
+    @classmethod
+    def get_user_team_names(cls, db: Session, tenant_id: UUID, user_id: UUID) -> list[str]:
+        """Return list of active team names the given user belongs to within the tenant."""
+        if not inspect(db.get_bind()).has_table("itsm_teams", schema="public") or not inspect(db.get_bind()).has_table("itsm_team_members", schema="public"):
+            return []
+        rows = (
+            db.query(ITSMTeam.name)
+            .join(ITSMTeamMember, ITSMTeam.id == ITSMTeamMember.team_id)
+            .filter(
+                ITSMTeam.tenant_id == tenant_id,
+                ITSMTeamMember.tenant_id == tenant_id,
+                ITSMTeamMember.user_id == user_id,
+                ITSMTeam.is_active.is_(True),
+            )
+            .all()
+        )
+        return [r[0].strip() for r in rows if r[0] and r[0].strip()]
+
+    @classmethod
+    def check_incident_agent_access(
+        cls, db: Session, tenant_id: UUID, incident: ITSMTicket, agent_id: UUID
+    ) -> bool:
+        """Returns True if the incident is assigned directly to the agent or to one of their active teams."""
+        if incident.assignee_id and str(incident.assignee_id) == str(agent_id):
+            return True
+        if incident.assignment_group:
+            team_names = cls.get_user_team_names(db, tenant_id, agent_id)
+            if incident.assignment_group.strip() in team_names:
+                return True
+        return False
 
     @classmethod
     def list_incidents(
@@ -669,6 +844,7 @@ class IncidentService:
         category: Optional[str] = None,
         assignee_id: Optional[UUID] = None,
         requester_id: Optional[UUID] = None,
+        agent_scope_id: Optional[UUID] = None,
         created_after: Optional[datetime] = None,
         created_before: Optional[datetime] = None,
         search: Optional[str] = None,
@@ -693,6 +869,17 @@ class IncidentService:
             query = query.filter(ITSMTicket.assignee_id == assignee_id)
         if requester_id:
             query = query.filter(ITSMTicket.requester_id == requester_id)
+        if agent_scope_id:
+            team_names = cls.get_user_team_names(db, tenant_id, agent_scope_id)
+            if team_names:
+                query = query.filter(
+                    or_(
+                        ITSMTicket.assignee_id == agent_scope_id,
+                        ITSMTicket.assignment_group.in_(team_names),
+                    )
+                )
+            else:
+                query = query.filter(ITSMTicket.assignee_id == agent_scope_id)
         if created_after:
             query = query.filter(ITSMTicket.created_at >= created_after)
         if created_before:
@@ -729,13 +916,32 @@ class IncidentService:
         else:
             query = query.filter(ITSMTicket.status.notin_(["CLOSED", "CANCELLED"]))
 
+        team_names = cls.get_user_team_names(db, tenant_id, agent_id)
+
+        # Baseline scope: Service Agent can only see incidents directly assigned to them or to their active teams
+        if team_names:
+            workable_scope = or_(
+                ITSMTicket.assignee_id == agent_id,
+                ITSMTicket.assignment_group.in_(team_names),
+            )
+        else:
+            workable_scope = (ITSMTicket.assignee_id == agent_id)
+
         mode = (filter_mode or "all").lower().strip()
-        if mode == "assigned_to_me":
+        if mode in ("assigned_to_me", "my_work"):
             query = query.filter(ITSMTicket.assignee_id == agent_id)
+        elif mode in ("team_queue", "my_team", "team"):
+            if team_names:
+                query = query.filter(ITSMTicket.assignment_group.in_(team_names))
+            else:
+                query = query.filter(false())
         elif mode == "high_priority":
-            query = query.filter(ITSMTicket.priority.in_(["P1", "P2"]))
+            query = query.filter(workable_scope, ITSMTicket.priority.in_(["P1", "P2"]))
         elif mode == "sla_risk":
-            query = query.filter(ITSMTicket.sla_status.in_(["AT_RISK", "BREACHED"]))
+            query = query.filter(workable_scope, ITSMTicket.sla_status.in_(["AT_RISK", "BREACHED"]))
+        else:
+            # "all" or default: strictly restricted to workable scope (directly assigned + team queue)
+            query = query.filter(workable_scope)
 
         sort_order = (sort_by or "recently_updated").lower().strip()
         if sort_order == "priority":
@@ -1030,6 +1236,18 @@ class IncidentService:
             db.commit()
             db.refresh(ticket)
 
+            if "assignee_id" in changed_fields or "assignment_group" in changed_fields:
+                cls.notify_assignment_change(
+                    db=db,
+                    tenant_id=tenant_id,
+                    ticket=ticket,
+                    old_assignee_id=old_values.get("assignee_id"),
+                    new_assignee_id=new_values.get("assignee_id") if "assignee_id" in changed_fields else ticket.assignee_id,
+                    old_group=old_values.get("assignment_group"),
+                    new_group=new_values.get("assignment_group") if "assignment_group" in changed_fields else ticket.assignment_group,
+                    actor_id=actor_id,
+                )
+
         return ticket
 
     @classmethod
@@ -1219,6 +1437,18 @@ class IncidentService:
 
         db.commit()
         db.refresh(ticket)
+
+        cls.notify_assignment_change(
+            db=db,
+            tenant_id=tenant_id,
+            ticket=ticket,
+            old_assignee_id=old_assignee,
+            new_assignee_id=new_assignee,
+            old_group=old_group,
+            new_group=new_group,
+            actor_id=actor_id,
+        )
+
         return ticket
 
     @classmethod

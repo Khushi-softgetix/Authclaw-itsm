@@ -53,11 +53,12 @@ def list_notifications(
     unread_only: bool = False,
     db: Session = Depends(get_tenant_db),
 ) -> NotificationListResponse:
+    effective_limit = limit if isinstance(limit, int) else 50
     query = _visible_notifications(db, request)
     unread_count = query.filter(Notification.read_at.is_(None)).count()
     if unread_only:
         query = query.filter(Notification.read_at.is_(None))
-    items = query.order_by(Notification.created_at.desc()).limit(limit).all()
+    items = query.order_by(Notification.created_at.desc()).limit(effective_limit).all()
     return NotificationListResponse(items=items, unread_count=unread_count)
 
 
@@ -88,4 +89,4 @@ def mark_all_notifications_read(
         notification.read_at = now
     if unread:
         db.commit()
-    return list_notifications(request, db=db)
+    return list_notifications(request, limit=50, db=db)

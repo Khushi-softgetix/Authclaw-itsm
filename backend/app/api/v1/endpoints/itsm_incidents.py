@@ -261,8 +261,11 @@ def list_incidents(
     t_id = UUID(tenant_id)
     role = _get_itsm_role(db, t_id, actor_id)
 
+    agent_scope_id = None
     if role == "REQUESTER":
         requester_id = actor_id
+    elif role == "SERVICE_AGENT":
+        agent_scope_id = actor_id
 
     return IncidentService.list_incidents(
         db=db,
@@ -273,6 +276,7 @@ def list_incidents(
         category=category,
         assignee_id=assignee_id,
         requester_id=requester_id,
+        agent_scope_id=agent_scope_id,
         created_after=created_after,
         created_before=created_before,
         search=search,
@@ -377,6 +381,13 @@ def get_incident(
     if role == "REQUESTER" and str(incident.requester_id) != str(actor_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
 
+    if role == "SERVICE_AGENT":
+        if not IncidentService.check_incident_agent_access(db, t_id, incident, actor_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Incident is not assigned to you or your team",
+            )
+
     return incident
 
 
@@ -402,6 +413,15 @@ def update_incident(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Requesters are not permitted to modify operational incident details",
         )
+
+    incident = IncidentService.get_incident(db=db, tenant_id=t_id, incident_id=incident_id)
+
+    if role == "SERVICE_AGENT":
+        if not IncidentService.check_incident_agent_access(db, t_id, incident, actor_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Incident is not assigned to you or your team",
+            )
 
     if any(
         getattr(payload, field) is not None
@@ -448,6 +468,15 @@ def change_incident_status(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Requesters and unauthorized roles are not permitted to change incident status",
         )
+
+    incident = IncidentService.get_incident(db=db, tenant_id=t_id, incident_id=incident_id)
+
+    if role == "SERVICE_AGENT":
+        if not IncidentService.check_incident_agent_access(db, t_id, incident, actor_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Incident is not assigned to you or your team",
+            )
 
     return IncidentService.change_status(
         db=db,
@@ -541,6 +570,12 @@ def add_incident_activity(
         if str(incident.requester_id) != str(actor_id):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
         payload.is_internal = False
+    elif role == "SERVICE_AGENT":
+        if not IncidentService.check_incident_agent_access(db, t_id, incident, actor_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Incident is not assigned to you or your team",
+            )
 
     res = IncidentService.add_activity(
         db=db,
@@ -598,6 +633,12 @@ def list_incident_activities(
 
     if role == "REQUESTER" and str(incident.requester_id) != str(actor_id):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Incident not found")
+    elif role == "SERVICE_AGENT":
+        if not IncidentService.check_incident_agent_access(db, t_id, incident, actor_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Incident is not assigned to you or your team",
+            )
 
     activities = IncidentService.list_activities(
         db=db,
@@ -646,6 +687,14 @@ def report_recurring_problem(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Forbidden: Service Agent role required to report recurring problem",
         )
+
+    incident = IncidentService.get_incident(db=db, tenant_id=t_id, incident_id=incident_id)
+    if role == "SERVICE_AGENT":
+        if not IncidentService.check_incident_agent_access(db, t_id, incident, actor_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Incident is not assigned to you or your team",
+            )
 
     result = ProblemService.report_recurring_problem(
         db=db,

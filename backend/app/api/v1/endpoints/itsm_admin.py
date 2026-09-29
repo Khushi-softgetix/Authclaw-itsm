@@ -40,6 +40,10 @@ from app.api.v1.endpoints.onboarding import (
 from app.services.email_service import EmailDeliveryError, send_email
 from app.schemas.itsm_admin import (
     VALID_ITSM_ROLES,
+    CIBulkImportCommitRequest,
+    CIBulkImportCommitResponse,
+    CIBulkImportDryRunRequest,
+    CIBulkImportDryRunResponse,
     ITSMBusinessCalendarCreateRequest,
     ITSMBusinessCalendarResponse,
     ITSMBusinessCalendarUpdateRequest,
@@ -69,6 +73,7 @@ from app.schemas.itsm_admin import (
     ITSMUserItemResponse,
     ITSMPlatformSettingsResponse,
 )
+from app.services.itsm_ci_import_service import CIImportService
 
 logger = logging.getLogger(__name__)
 
@@ -1505,6 +1510,58 @@ def update_itsm_configuration_item(
         external_resource_id=ci.external_resource_id,
         created_at=ci.created_at,
         updated_at=ci.updated_at,
+    )
+
+
+@router.post(
+    "/configuration-items/import/dry-run",
+    response_model=CIBulkImportDryRunResponse,
+    dependencies=[Depends(require_itsm_platform_admin)],
+    summary="Dry-run preview for bulk CI import (CMDB-005)",
+    description="Validates, transforms, and checks reconciliation for bulk CSV/JSON CIs without modifying the database.",
+)
+def bulk_import_ci_dry_run(
+    payload: CIBulkImportDryRunRequest,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    return CIImportService.dry_run(
+        db=db,
+        tenant_id=tenant_id,
+        source_filename=payload.source_filename,
+        source_type=payload.source_type,
+        raw_records=payload.raw_records,
+        field_mapping=payload.field_mapping,
+    )
+
+
+@router.post(
+    "/configuration-items/import/commit",
+    response_model=CIBulkImportCommitResponse,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(require_itsm_platform_admin)],
+    summary="Confirm and commit bulk CI import (CMDB-005)",
+    description="Inserts new CIs and updates existing CIs within a tenant transaction, saving source attribution and generating an audit event.",
+)
+def bulk_import_ci_commit(
+    payload: CIBulkImportCommitRequest,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    actor_id = UUID(str(request.state.user_id))
+    return CIImportService.commit_import(
+        db=db,
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        source_filename=payload.source_filename,
+        source_type=payload.source_type,
+        raw_records=payload.raw_records,
+        field_mapping=payload.field_mapping,
+        update_existing=payload.update_existing,
     )
 
 

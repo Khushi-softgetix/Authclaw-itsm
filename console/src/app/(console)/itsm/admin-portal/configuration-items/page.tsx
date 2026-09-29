@@ -12,8 +12,10 @@ import {
   RefreshCw,
   Search,
   Server,
+  Upload,
   X,
 } from "lucide-react";
+import { CIImportModal } from "@/components/itsm/ci-import-modal";
 
 interface ServiceOption {
   id: string;
@@ -56,6 +58,7 @@ export default function AdminConfigurationItemsPage() {
 
   // Modal state
   const [modalOpen, setModalOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<ConfigurationItem | null>(null);
   const [formName, setFormName] = useState("");
   const [formType, setFormType] = useState("SERVER");
@@ -237,6 +240,13 @@ export default function AdminConfigurationItemsPage() {
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
               <span>Refresh</span>
+            </button>
+            <button
+              onClick={() => setImportModalOpen(true)}
+              className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-[#E6E9F0] bg-white text-xs font-semibold text-[#475069] hover:bg-[#F5F7FA] hover:text-[#0E1726] transition shadow-xs"
+            >
+              <Upload className="w-3.5 h-3.5 text-[#6D28D9]" />
+              <span>Import CIs</span>
             </button>
             <button
               onClick={openCreateModal}
@@ -539,6 +549,13 @@ export default function AdminConfigurationItemsPage() {
           </div>
         </div>
       )}
+
+      {/* Bulk CI Import Modal (CMDB-005) */}
+      <CIImportModal
+        isOpen={importModalOpen}
+        onClose={() => setImportModalOpen(false)}
+        onImportComplete={fetchItems}
+      />
     </div>
   );
 }

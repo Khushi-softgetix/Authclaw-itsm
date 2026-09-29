@@ -21,7 +21,7 @@ import IncidentPriorityBadge from "@/components/itsm/incident-priority-badge";
 import IncidentStatusBadge from "@/components/itsm/incident-status-badge";
 import { formatDateTime, itsmSlaConfig } from "@/lib/itsm-format";
 
-type FilterMode = "all" | "assigned_to_me" | "high_priority" | "sla_risk";
+type FilterMode = "all" | "assigned_to_me" | "team_queue" | "high_priority" | "sla_risk";
 type SortBy = "recently_updated" | "priority" | "sla_risk";
 
 export default function ServiceAgentWorkspacePage() {
@@ -96,6 +96,10 @@ export default function ServiceAgentWorkspacePage() {
     (i) => currentUserId && i.assignee_id === currentUserId
   ).length;
 
+  const teamQueueCount = incidents.filter(
+    (i) => !currentUserId || i.assignee_id !== currentUserId
+  ).length;
+
   const needsAttentionCount = incidents.filter(
     (i) =>
       i.status === "NEW" ||
@@ -121,7 +125,7 @@ export default function ServiceAgentWorkspacePage() {
             My Work
           </h1>
           <p className="text-sm text-[#6B7488] mt-0.5">
-            Manage your assigned incidents, monitor SLA targets, and take immediate operational action.
+            Manage your assigned incidents, monitor team queues, and track SLA targets.
           </p>
         </div>
 
@@ -140,7 +144,7 @@ export default function ServiceAgentWorkspacePage() {
       </div>
 
       {/* Small Summary Metric Area */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Metric 1: Assigned to me */}
         <div className="bg-white border border-[#E6E9F0] rounded-xl p-4 shadow-sm">
           <div className="flex items-center justify-between">
@@ -153,7 +157,19 @@ export default function ServiceAgentWorkspacePage() {
           <p className="text-xs text-[#6B7488] mt-1">Directly allocated tickets</p>
         </div>
 
-        {/* Metric 2: Needs attention */}
+        {/* Metric 2: Team Queue */}
+        <div className="bg-white border border-[#E6E9F0] rounded-xl p-4 shadow-sm">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-[#6B7488]">My Team Queue</span>
+            <Layers className="w-4 h-4 text-blue-600" />
+          </div>
+          <div className="text-2xl font-bold text-[#0E1726] mt-2">
+            {loading ? "—" : teamQueueCount}
+          </div>
+          <p className="text-xs text-[#6B7488] mt-1">Workable team incidents</p>
+        </div>
+
+        {/* Metric 3: Needs attention */}
         <div className="bg-white border border-[#E6E9F0] rounded-xl p-4 shadow-sm">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-[#6B7488]">Needs attention</span>
@@ -165,7 +181,7 @@ export default function ServiceAgentWorkspacePage() {
           <p className="text-xs text-[#6B7488] mt-1">Unassigned or high priority</p>
         </div>
 
-        {/* Metric 3: SLA at risk */}
+        {/* Metric 4: SLA at risk */}
         <div className="bg-white border border-[#E6E9F0] rounded-xl p-4 shadow-sm">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-[#6B7488]">SLA at risk</span>
@@ -191,7 +207,7 @@ export default function ServiceAgentWorkspacePage() {
                 : "text-[#475069] hover:bg-slate-100"
             }`}
           >
-            All
+            All Work
           </button>
           <button
             type="button"
@@ -203,6 +219,17 @@ export default function ServiceAgentWorkspacePage() {
             }`}
           >
             Assigned to me
+          </button>
+          <button
+            type="button"
+            onClick={() => setFilterMode("team_queue")}
+            className={`px-3 py-1.5 text-xs font-semibold rounded-lg transition ${
+              filterMode === "team_queue"
+                ? "bg-[#6D28D9] text-white shadow-xs"
+                : "text-[#475069] hover:bg-slate-100"
+            }`}
+          >
+            My Team Queue
           </button>
           <button
             type="button"
@@ -253,7 +280,11 @@ export default function ServiceAgentWorkspacePage() {
           <div className="flex items-center gap-2">
             <Ticket className="w-4 h-4 text-[#6D28D9]" />
             <h2 className="text-xs font-bold uppercase tracking-wider text-[#0E1726]">
-              My Queue / Assigned Work
+              {filterMode === "assigned_to_me"
+                ? "My Work · Assigned to Me"
+                : filterMode === "team_queue"
+                ? "My Team Queue"
+                : "My Work & Team Queue"}
             </h2>
           </div>
           <span className="text-xs text-[#6B7488]">
@@ -330,12 +361,23 @@ export default function ServiceAgentWorkspacePage() {
                     >
                       {/* Ticket Number */}
                       <td className="px-4 py-3 font-semibold font-mono text-[#0E1726] whitespace-nowrap">
-                        <Link
-                          href={`/itsm/incidents/${incident.id}`}
-                          className="text-[#6D28D9] hover:underline"
-                        >
-                          {incident.ticket_number}
-                        </Link>
+                        <div className="flex items-center gap-1.5">
+                          <Link
+                            href={`/itsm/incidents/${incident.id}`}
+                            className="text-[#6D28D9] hover:underline"
+                          >
+                            {incident.ticket_number}
+                          </Link>
+                          {currentUserId && incident.assignee_id === currentUserId ? (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-50 text-[#6D28D9] border border-purple-200">
+                              My Work
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-slate-100 text-slate-600 border border-slate-200">
+                              Team Queue
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       {/* Title / Description */}

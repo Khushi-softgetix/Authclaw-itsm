@@ -150,10 +150,10 @@ class ITSMRecurringProblemTestCase(unittest.TestCase):
             # Incident 1 in Tenant A
             conn.execute(
                 text(
-                    "INSERT INTO public.itsm_tickets (id, tenant_id, ticket_number, ticket_type, title, description, impact, urgency, priority, status, source_channel, requester_id, service_id, created_at, updated_at) "
-                    "VALUES (:id, :tenant_id, 'INC-990001', 'INCIDENT', 'Recurring Gateway 504 Timeout', 'Users receiving 504 timeouts periodically', 'HIGH', 'HIGH', 'P2', 'IN_PROGRESS', 'PORTAL', :req_id, :service_id, now(), now())"
+                    "INSERT INTO public.itsm_tickets (id, tenant_id, ticket_number, ticket_type, title, description, impact, urgency, priority, status, source_channel, requester_id, service_id, assignee_id, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, 'INC-990001', 'INCIDENT', 'Recurring Gateway 504 Timeout', 'Users receiving 504 timeouts periodically', 'HIGH', 'HIGH', 'P2', 'IN_PROGRESS', 'PORTAL', :req_id, :service_id, :agent_id, now(), now())"
                 ),
-                {"id": cls.incident_1_id, "tenant_id": cls.tenant_id, "req_id": cls.req_user_id, "service_id": cls.service_id},
+                {"id": cls.incident_1_id, "tenant_id": cls.tenant_id, "req_id": cls.req_user_id, "service_id": cls.service_id, "agent_id": cls.agent_user_id},
             )
 
             # Incident 2 in Tenant A

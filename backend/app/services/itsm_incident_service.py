@@ -1,7 +1,7 @@
 """Domain and database service for ITSM Incident Management."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any, Optional
 from uuid import UUID, uuid4
@@ -35,6 +35,7 @@ from app.schemas.itsm_incidents import (
     IncidentStatusUpdateRequest,
     IncidentUpdateRequest,
     MajorIncidentDeclareRequest,
+    MajorIncidentPageRequest,
     MajorIncidentUpdateRequest,
     MajorIncidentCommunication,
     IncidentSavedViewCreateRequest,
@@ -1623,17 +1624,27 @@ class IncidentService:
         ticket: ITSMTicket,
         major: ITSMMajorIncident,
         now: datetime,
-    ) -> tuple[str, str, list[User]]:
-        """Resolve the current responder without inventing an external pager.
+    ) -> dict[str, Any]:
+        """Resolve a verified service on-call or an explicitly-labelled assignee fallback.
 
-        Active schedule overrides and the primary rotation take precedence. If
-        no usable schedule exists, resolution falls back to the incident's
-        operational team (or service escalation team), then its assignee.
+        A service-linked schedule and its current override/rotation are the only
+        sources that may claim verified on-call status. Team membership alone
+        is not proof that a user is presently on call.
         """
         service_id = ticket.service_id
         affected_service_ids = list(major.affected_service_ids or [])
         if not service_id and len(affected_service_ids) == 1:
             service_id = affected_service_ids[0]
+
+        service = None
+        if service_id:
+            service = db.query(ITSMService).filter(
+                ITSMService.tenant_id == tenant_id,
+                ITSMService.id == service_id,
+            ).first()
+        assignment_group = (
+            ticket.assignment_group or (service.escalation_team if service else None) or ""
+        ).strip() or None
 
         schedule_query = db.query(ITSMOnCallSchedule).filter(
             ITSMOnCallSchedule.tenant_id == tenant_id,
@@ -1641,13 +1652,13 @@ class IncidentService:
         )
         if service_id:
             schedule_query = schedule_query.filter(
-                or_(ITSMOnCallSchedule.service_id == service_id, ITSMOnCallSchedule.service_id.is_(None))
+                ITSMOnCallSchedule.service_id == service_id
             ).order_by(
                 case((ITSMOnCallSchedule.service_id == service_id, 0), else_=1),
                 ITSMOnCallSchedule.name.asc(),
             )
         else:
-            schedule_query = schedule_query.filter(ITSMOnCallSchedule.service_id.is_(None)).order_by(
+            schedule_query = schedule_query.filter(false()).order_by(
                 ITSMOnCallSchedule.name.asc()
             )
 
@@ -1678,7 +1689,23 @@ class IncidentService:
             if override:
                 recipients = cls._active_itsm_users(db, tenant_id, [override.override_user_id])
                 if recipients:
-                    return "ON_CALL_ENGINEER", f"{schedule.name} (temporary override)", recipients
+                    return {
+                        "target_kind": "ON_CALL_ENGINEER",
+                        "target_label": recipients[0].email,
+                        "selection_source": "ACTIVE_ON_CALL_SCHEDULE",
+                        "source_label": "Active on-call schedule (temporary override)",
+                        "verified_on_call": True,
+                        "service_id": service_id,
+                        "service_name": service.name if service else None,
+                        "assignment_group": assignment_group,
+                        "team_name": assignment_group,
+                        "schedule_id": schedule.id,
+                        "schedule_name": schedule.name,
+                        "on_call_until": override.end_at,
+                        "warning": None,
+                        "recipients": recipients,
+                        "resolved_at": now,
+                    }
 
             rotation_ids = list(rotation.user_ids or [])
             rotation_start = rotation.rotation_start_at
@@ -1691,61 +1718,92 @@ class IncidentService:
                 "DAILY": 86400,
                 "WEEKLY": 604800,
             }.get(str(rotation.rotation_type or "WEEKLY").upper(), 604800)
-            current_index = int((now - rotation_start).total_seconds() // period_seconds) % len(rotation_ids)
-            prioritized_ids = rotation_ids[current_index:] + rotation_ids[:current_index]
-            recipients = cls._active_itsm_users(db, tenant_id, prioritized_ids)
+            elapsed_periods = int((now - rotation_start).total_seconds() // period_seconds)
+            current_index = elapsed_periods % len(rotation_ids)
+            recipients = cls._active_itsm_users(db, tenant_id, [rotation_ids[current_index]])
             if recipients:
-                return "ON_CALL_ENGINEER", f"{schedule.name} (primary on-call)", [recipients[0]]
+                return {
+                    "target_kind": "ON_CALL_ENGINEER",
+                    "target_label": recipients[0].email,
+                    "selection_source": "ACTIVE_ON_CALL_SCHEDULE",
+                    "source_label": "Active on-call schedule",
+                    "verified_on_call": True,
+                    "service_id": service_id,
+                    "service_name": service.name if service else None,
+                    "assignment_group": assignment_group,
+                    "team_name": assignment_group,
+                    "schedule_id": schedule.id,
+                    "schedule_name": schedule.name,
+                    "on_call_until": rotation_start + timedelta(seconds=(elapsed_periods + 1) * period_seconds),
+                    "warning": None,
+                    "recipients": [recipients[0]],
+                    "resolved_at": now,
+                }
 
-        service = None
-        if service_id:
-            service = db.query(ITSMService).filter(
-                ITSMService.tenant_id == tenant_id,
-                ITSMService.id == service_id,
-            ).first()
-        group_name = (ticket.assignment_group or (service.escalation_team if service else None) or "").strip()
-        if group_name:
-            team_members = (
-                db.query(User)
-                .join(
-                    ITSMTeamMember,
-                    (ITSMTeamMember.user_id == User.id) & (ITSMTeamMember.tenant_id == User.tenant_id),
-                )
-                .join(
-                    ITSMTeam,
-                    (ITSMTeam.id == ITSMTeamMember.team_id) & (ITSMTeam.tenant_id == ITSMTeamMember.tenant_id),
-                )
-                .join(
-                    ITSMUserAccess,
-                    (ITSMUserAccess.user_id == User.id) & (ITSMUserAccess.tenant_id == User.tenant_id),
-                )
-                .filter(
-                    User.tenant_id == tenant_id,
-                    User.is_active.is_(True),
-                    ITSMUserAccess.has_itsm_access.is_(True),
-                    ITSMUserAccess.itsm_role.in_(("SERVICE_AGENT", "INCIDENT_MANAGER")),
-                    ITSMTeam.tenant_id == tenant_id,
-                    ITSMTeam.is_active.is_(True),
-                    func.lower(ITSMTeam.name) == func.lower(group_name),
-                )
-                .order_by(User.email.asc())
-                .all()
-            )
-            if team_members:
-                return "RESPONSE_TEAM", group_name, team_members
 
         if ticket.assignee_id:
             recipients = cls._active_itsm_users(db, tenant_id, [ticket.assignee_id])
             if recipients:
-                return "ASSIGNEE", recipients[0].email, recipients
+                return {
+                    "target_kind": "ASSIGNEE",
+                    "target_label": recipients[0].email,
+                    "selection_source": "INCIDENT_ASSIGNEE_FALLBACK",
+                    "source_label": "Incident assignee fallback",
+                    "verified_on_call": False,
+                    "service_id": service_id,
+                    "service_name": service.name if service else None,
+                    "assignment_group": assignment_group,
+                    "team_name": assignment_group,
+                    "schedule_id": None,
+                    "schedule_name": None,
+                    "on_call_until": None,
+                    "warning": "No verified active on-call engineer was found. The urgent alert will be sent to the incident assignee instead.",
+                    "recipients": recipients,
+                    "resolved_at": now,
+                }
 
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=(
-                "No active on-call engineer or response-team member could be resolved. "
-                "Configure a service on-call rotation, assign an active operational team, or assign an active ITSM user."
+                "No verified active on-call engineer or active incident assignee could be resolved. "
+                "Configure a service on-call rotation or assign an active ITSM user."
             ),
         )
+
+    @staticmethod
+    def _page_resolution_payload(ticket: ITSMTicket, resolution: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "incident_id": ticket.id,
+            "target_kind": resolution["target_kind"],
+            "target_label": resolution["target_label"],
+            "selection_source": resolution["selection_source"],
+            "source_label": resolution["source_label"],
+            "verified_on_call": resolution["verified_on_call"],
+            "service_id": resolution["service_id"],
+            "service_name": resolution["service_name"],
+            "assignment_group": resolution["assignment_group"],
+            "team_name": resolution["team_name"],
+            "schedule_id": resolution["schedule_id"],
+            "schedule_name": resolution["schedule_name"],
+            "on_call_until": resolution["on_call_until"],
+            "warning": resolution["warning"],
+            "recipients": [
+                {"id": user.id, "name": None, "email": user.email}
+                for user in resolution["recipients"]
+            ],
+            "resolved_at": resolution["resolved_at"],
+        }
+
+    @classmethod
+    def preview_major_incident_page(
+        cls, db: Session, tenant_id: UUID, incident_id: UUID
+    ) -> dict[str, Any]:
+        major = cls.get_major_incident(db, tenant_id, incident_id)
+        ticket = cls.get_incident(db, tenant_id, incident_id)
+        resolution = cls._resolve_page_recipients(
+            db, tenant_id, ticket, major, datetime.now(timezone.utc)
+        )
+        return cls._page_resolution_payload(ticket, resolution)
 
     @staticmethod
     def _page_destination(
@@ -1768,13 +1826,33 @@ class IncidentService:
         tenant_id: UUID,
         incident_id: UUID,
         actor_id: UUID,
+        payload: MajorIncidentPageRequest,
     ) -> dict[str, Any]:
         major = cls.get_major_incident(db, tenant_id, incident_id)
         ticket = cls.get_incident(db, tenant_id, incident_id)
         now = datetime.now(timezone.utc)
-        target_kind, target_label, recipients = cls._resolve_page_recipients(
-            db, tenant_id, ticket, major, now
-        )
+        resolution = cls._resolve_page_recipients(db, tenant_id, ticket, major, now)
+        recipients = resolution["recipients"]
+        resolved_recipient_ids = [user.id for user in recipients]
+        if (
+            payload.confirmed_selection_source != resolution["selection_source"]
+            or payload.confirmed_recipient_ids != resolved_recipient_ids
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The paging recipient changed after preview. Review the current recipient before sending the alert.",
+            )
+        preview_time = payload.preview_resolved_at
+        if preview_time.tzinfo is None:
+            preview_time = preview_time.replace(tzinfo=timezone.utc)
+        if preview_time > now or now - preview_time > timedelta(minutes=5):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="The paging preview expired. Resolve the current recipient again before sending the alert.",
+            )
+        target_kind = resolution["target_kind"]
+        target_label = resolution["target_label"]
+        correlation_reference = uuid4()
         command_path = f"/itsm/incident-manager/major-incidents?incident={ticket.id}"
         context = f"{ticket.priority} {ticket.ticket_number}: {ticket.title}. {ticket.impact.title()} impact."
         if major.communication_channel:
@@ -1812,11 +1890,26 @@ class IncidentService:
         evidence = {
             "target_kind": target_kind,
             "target_label": target_label,
+            "selection_source": resolution["selection_source"],
+            "source_label": resolution["source_label"],
+            "verified_on_call": resolution["verified_on_call"],
+            "service_id": str(resolution["service_id"]) if resolution["service_id"] else None,
+            "service_name": resolution["service_name"],
+            "assignment_group": resolution["assignment_group"],
+            "team_name": resolution["team_name"],
+            "schedule_id": str(resolution["schedule_id"]) if resolution["schedule_id"] else None,
+            "schedule_name": resolution["schedule_name"],
+            "on_call_until": resolution["on_call_until"].isoformat() if resolution["on_call_until"] else None,
             "delivery_channel": "IN_APP",
+            "delivery_status": "IN_APP_CREATED",
             "recipient_count": len(recipients),
             "recipient_ids": [str(user.id) for user in recipients],
+            "recipient_emails": [user.email for user in recipients],
             "command_path": command_path,
             "recipient_links": recipient_links,
+            "sent_at": now.isoformat(),
+            "incident_reference": ticket.ticket_number,
+            "correlation_reference": str(correlation_reference),
         }
         cls._record_activity(
             db,
@@ -1837,6 +1930,8 @@ class IncidentService:
             trace_items=[
                 f"target_kind={target_kind}",
                 f"target_label={target_label}",
+                f"selection_source={resolution['selection_source']}",
+                f"correlation_reference={correlation_reference}",
                 f"recipient_count={len(recipients)}",
                 "delivery_channel=IN_APP",
             ],
@@ -1844,14 +1939,14 @@ class IncidentService:
         )
         db.commit()
         return {
-            "incident_id": ticket.id,
-            "target_kind": target_kind,
-            "target_label": target_label,
+            **cls._page_resolution_payload(ticket, resolution),
             "delivery_channel": "IN_APP",
-            "recipients": [{"id": user.id, "email": user.email} for user in recipients],
+            "delivery_status": "IN_APP_CREATED",
             "notification_count": len(recipients),
             "command_path": command_path,
             "paged_at": now,
+            "incident_reference": ticket.ticket_number,
+            "correlation_reference": correlation_reference,
         }
 
     @classmethod

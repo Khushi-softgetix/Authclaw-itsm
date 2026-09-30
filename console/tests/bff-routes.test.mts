@@ -35,6 +35,9 @@ test("maps approved BFF routes and rejects broader proxy access", () => {
   assert.deepEqual(resolveBffRoute("GET", "itsm/incidents/inc-1"), { backendPath: "/v1/itsm/incidents/inc-1", body: "none", status: undefined });
   assert.deepEqual(resolveBffRoute("GET", "itsm/incidents/inc-1/activities"), { backendPath: "/v1/itsm/incidents/inc-1/activities", body: "none", status: undefined });
   assert.deepEqual(resolveBffRoute("GET", "itsm/incidents/inc-1/major-incident"), { backendPath: "/v1/itsm/incidents/inc-1/major-incident", body: "none", status: undefined });
+  assert.deepEqual(resolveBffRoute("GET", "itsm/incidents/inc-1/major-incident/page-preview"), {
+    backendPath: "/v1/itsm/incidents/inc-1/major-incident/page-preview", body: "none", status: undefined,
+  });
   assert.deepEqual(resolveBffRoute("GET", "itsm/incidents/operations/dashboard"), { backendPath: "/v1/itsm/incidents/operations/dashboard", body: "none", status: undefined });
   assert.deepEqual(resolveBffRoute("GET", "itsm/incidents/operations/queue"), { backendPath: "/v1/itsm/incidents/operations/queue", body: "none", status: undefined });
   assert.deepEqual(resolveBffRoute("GET", "itsm/incidents/operations/participants"), { backendPath: "/v1/itsm/incidents/operations/participants", body: "none", status: undefined });
@@ -47,7 +50,7 @@ test("maps approved BFF routes and rejects broader proxy access", () => {
   assert.deepEqual(resolveBffRoute("POST", "itsm/incidents/inc-1/major-incident"), { backendPath: "/v1/itsm/incidents/inc-1/major-incident", body: "json", status: undefined });
   assert.deepEqual(resolveBffRoute("POST", "itsm/incidents/inc-1/major-incident/page"), {
     backendPath: "/v1/itsm/incidents/inc-1/major-incident/page",
-    body: "none",
+    body: "json",
     status: undefined,
   });
   assert.deepEqual(resolveBffRoute("POST", "itsm/incidents/operations/saved-views"), { backendPath: "/v1/itsm/incidents/operations/saved-views", body: "json", status: 201 });

@@ -85,10 +85,18 @@ test("Major Incident command workspace pages a real responder through the allowe
   const bffRoutes = readFileSync(new URL("../src/lib/bff-routes.ts", import.meta.url), "utf8");
 
   assert.match(commandPage, /Page Engineer/);
+  assert.match(commandPage, /major-incident\/page-preview/);
   assert.match(commandPage, /major-incident\/page/);
   assert.match(commandPage, /Urgent in-app alert sent to/);
+  assert.match(commandPage, /Confirm paging recipient/);
+  assert.match(commandPage, /active service on-call schedule/i);
+  assert.match(commandPage, /incident assignee.*fallback/i);
+  assert.match(commandPage, /confirmed_recipient_ids/);
+  assert.match(commandPage, /confirmed_selection_source/);
+  assert.match(commandPage, /preview_resolved_at/);
+  assert.doesNotMatch(commandPage, /window\.confirm/);
   assert.match(bffRoutes, /major-incident\(\?:\\\/page\)\?/);
-  assert.match(bffRoutes, /major-incident\\\/page/);
+  assert.match(bffRoutes, /page-preview/);
 });
 
 test("Incident Manager coordination uses tenant reference data for classification, assignment, and Major Incident scope", () => {

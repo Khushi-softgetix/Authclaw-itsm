@@ -1260,7 +1260,11 @@ class ITSMIncidentTestCase(unittest.TestCase):
                 {"id": uuid4(), "tenant": tenant_id, "hash": hash_key(responder_key), "user": responder_id},
             )
             conn.execute(
-                text("INSERT INTO public.itsm_services (id,tenant_id,name,slug,tier,status,created_at,updated_at) VALUES (:id,:tenant,'Checkout','checkout-page','TIER_1','OPERATIONAL',now(),now())"),
+                text("INSERT INTO public.itsm_teams (id,tenant_id,name,is_active,created_at,updated_at) VALUES (:id,:tenant,'Checkout Support',true,now(),now())"),
+                {"id": uuid4(), "tenant": tenant_id},
+            )
+            conn.execute(
+                text("INSERT INTO public.itsm_services (id,tenant_id,name,slug,tier,status,escalation_team,created_at,updated_at) VALUES (:id,:tenant,'Checkout','checkout-page','TIER_1','OPERATIONAL','Checkout Support',now(),now())"),
                 {"id": service_id, "tenant": tenant_id},
             )
             conn.execute(
@@ -1293,18 +1297,55 @@ class ITSMIncidentTestCase(unittest.TestCase):
         )
         self.assertEqual(declared.status_code, 201, declared.text)
 
+        missing_confirmation = self.client.post(
+            f"/v1/itsm/incidents/{incident_id}/major-incident/page",
+            headers=manager_headers,
+        )
+        self.assertEqual(missing_confirmation.status_code, 422, missing_confirmation.text)
+
+        previewed = self.client.get(
+            f"/v1/itsm/incidents/{incident_id}/major-incident/page-preview",
+            headers=manager_headers,
+        )
+        self.assertEqual(previewed.status_code, 200, previewed.text)
+        preview = previewed.json()
+        self.assertEqual(preview["target_kind"], "ON_CALL_ENGINEER")
+        self.assertEqual(preview["target_label"], "oncall-manager@example.com")
+        self.assertEqual(preview["selection_source"], "ACTIVE_ON_CALL_SCHEDULE")
+        self.assertTrue(preview["verified_on_call"])
+        self.assertEqual(preview["service_name"], "Checkout")
+        self.assertEqual(preview["assignment_group"], "Checkout Support")
+        self.assertEqual(preview["team_name"], "Checkout Support")
+        self.assertEqual(preview["schedule_name"], "Checkout primary")
+        self.assertIsNotNone(preview["on_call_until"])
+        self.assertIsNone(preview["warning"])
+        self.assertEqual(
+            preview["recipients"],
+            [{"id": str(responder_id), "name": None, "email": "oncall-manager@example.com"}],
+        )
+
         paged = self.client.post(
             f"/v1/itsm/incidents/{incident_id}/major-incident/page",
+            json={
+                "confirmed_recipient_ids": [str(responder_id)],
+                "confirmed_selection_source": preview["selection_source"],
+                "preview_resolved_at": preview["resolved_at"],
+            },
             headers=manager_headers,
         )
         self.assertEqual(paged.status_code, 200, paged.text)
         result = paged.json()
         self.assertEqual(result["target_kind"], "ON_CALL_ENGINEER")
-        self.assertEqual(result["target_label"], "Checkout primary (primary on-call)")
+        self.assertEqual(result["target_label"], "oncall-manager@example.com")
+        self.assertEqual(result["selection_source"], "ACTIVE_ON_CALL_SCHEDULE")
+        self.assertTrue(result["verified_on_call"])
         self.assertEqual(result["delivery_channel"], "IN_APP")
+        self.assertEqual(result["delivery_status"], "IN_APP_CREATED")
         self.assertEqual(result["notification_count"], 1)
-        self.assertEqual(result["recipients"], [{"id": str(responder_id), "email": "oncall-manager@example.com"}])
+        self.assertEqual(result["recipients"], [{"id": str(responder_id), "name": None, "email": "oncall-manager@example.com"}])
         self.assertEqual(result["command_path"], f"/itsm/incident-manager/major-incidents?incident={incident_id}")
+        self.assertEqual(result["incident_reference"], created.json()["ticket_number"])
+        self.assertIsNotNone(result["correlation_reference"])
 
         responder_notifications = self.client.get(
             "/v1/notifications",
@@ -1324,15 +1365,96 @@ class ITSMIncidentTestCase(unittest.TestCase):
         self.assertEqual(activities.status_code, 200, activities.text)
         self.assertIn("MAJOR_INCIDENT_PAGED", {item["activity_type"] for item in activities.json()})
         with self.migrator_engine.connect() as conn:
+            evidence = conn.execute(
+                text("SELECT metadata->'new_value' FROM public.itsm_ticket_activities WHERE tenant_id=:tenant AND ticket_id=:incident AND activity_type='MAJOR_INCIDENT_PAGED' ORDER BY created_at DESC LIMIT 1"),
+                {"tenant": tenant_id, "incident": incident_id},
+            ).scalar_one()
             audit_count = conn.execute(
                 text("SELECT count(*) FROM public.audit_log_metadata WHERE tenant_id=:tenant AND action='itsm.incident.major_incident_paged' AND request_id=:incident"),
                 {"tenant": tenant_id, "incident": incident_id},
             ).scalar_one()
+        self.assertEqual(evidence["selection_source"], "ACTIVE_ON_CALL_SCHEDULE")
+        self.assertEqual(evidence["delivery_status"], "IN_APP_CREATED")
+        self.assertEqual(evidence["recipient_ids"], [str(responder_id)])
+        self.assertEqual(evidence["incident_reference"], created.json()["ticket_number"])
+        self.assertEqual(evidence["correlation_reference"], result["correlation_reference"])
+        self.assertIsNotNone(evidence["sent_at"])
         self.assertEqual(audit_count, 1)
 
+        fallback_service_id = uuid4()
+        with self.migrator_engine.begin() as conn:
+            conn.execute(
+                text("INSERT INTO public.itsm_teams (id,tenant_id,name,is_active,created_at,updated_at) VALUES (:id,:tenant,'Inventory Support',true,now(),now())"),
+                {"id": uuid4(), "tenant": tenant_id},
+            )
+            conn.execute(
+                text("INSERT INTO public.itsm_services (id,tenant_id,name,slug,tier,status,escalation_team,created_at,updated_at) VALUES (:id,:tenant,'Inventory','inventory-page','TIER_2','OPERATIONAL','Inventory Support',now(),now())"),
+                {"id": fallback_service_id, "tenant": tenant_id},
+            )
+        fallback_created = self.client.post(
+            "/v1/itsm/incidents",
+            json={
+                "title": "Inventory sync unavailable",
+                "description": "No active schedule exists for this service",
+                "impact": "HIGH",
+                "urgency": "HIGH",
+                "service_id": str(fallback_service_id),
+                "assignee_id": str(responder_id),
+            },
+            headers=manager_headers,
+        )
+        self.assertEqual(fallback_created.status_code, 201, fallback_created.text)
+        fallback_incident_id = fallback_created.json()["id"]
+        fallback_declared = self.client.post(
+            f"/v1/itsm/incidents/{fallback_incident_id}/major-incident",
+            json={"communication_channel": "inventory-war-room"},
+            headers=manager_headers,
+        )
+        self.assertEqual(fallback_declared.status_code, 201, fallback_declared.text)
+        fallback_previewed = self.client.get(
+            f"/v1/itsm/incidents/{fallback_incident_id}/major-incident/page-preview",
+            headers=manager_headers,
+        )
+        self.assertEqual(fallback_previewed.status_code, 200, fallback_previewed.text)
+        fallback_preview = fallback_previewed.json()
+        self.assertEqual(fallback_preview["target_kind"], "ASSIGNEE")
+        self.assertEqual(fallback_preview["selection_source"], "INCIDENT_ASSIGNEE_FALLBACK")
+        self.assertFalse(fallback_preview["verified_on_call"])
+        self.assertEqual(fallback_preview["service_name"], "Inventory")
+        self.assertEqual(fallback_preview["assignment_group"], "Inventory Support")
+        self.assertEqual(fallback_preview["team_name"], "Inventory Support")
+        self.assertIsNone(fallback_preview["schedule_id"])
+        self.assertIsNone(fallback_preview["on_call_until"])
+        self.assertIn("incident assignee", fallback_preview["warning"].lower())
+
+        fallback_paged = self.client.post(
+            f"/v1/itsm/incidents/{fallback_incident_id}/major-incident/page",
+            json={
+                "confirmed_recipient_ids": [str(responder_id)],
+                "confirmed_selection_source": fallback_preview["selection_source"],
+                "preview_resolved_at": fallback_preview["resolved_at"],
+            },
+            headers=manager_headers,
+        )
+        self.assertEqual(fallback_paged.status_code, 200, fallback_paged.text)
+        fallback_result = fallback_paged.json()
+        self.assertEqual(fallback_result["selection_source"], "INCIDENT_ASSIGNEE_FALLBACK")
+        self.assertFalse(fallback_result["verified_on_call"])
+        self.assertEqual(fallback_result["delivery_status"], "IN_APP_CREATED")
+        with self.migrator_engine.connect() as conn:
+            fallback_evidence = conn.execute(
+                text("SELECT metadata->'new_value' FROM public.itsm_ticket_activities WHERE tenant_id=:tenant AND ticket_id=:incident AND activity_type='MAJOR_INCIDENT_PAGED' ORDER BY created_at DESC LIMIT 1"),
+                {"tenant": tenant_id, "incident": fallback_incident_id},
+            ).scalar_one()
+        self.assertEqual(fallback_evidence["selection_source"], "INCIDENT_ASSIGNEE_FALLBACK")
+        self.assertFalse(fallback_evidence["verified_on_call"])
+        self.assertEqual(fallback_evidence["delivery_status"], "IN_APP_CREATED")
+        self.assertEqual(fallback_evidence["recipient_ids"], [str(responder_id)])
+        self.assertEqual(fallback_evidence["correlation_reference"], fallback_result["correlation_reference"])
+
         _, _, agent_key = self.create_fixture_tenant("major_page_agent", itsm_role="SERVICE_AGENT")
-        denied = self.client.post(
-            f"/v1/itsm/incidents/{incident_id}/major-incident/page",
+        denied = self.client.get(
+            f"/v1/itsm/incidents/{incident_id}/major-incident/page-preview",
             headers={"Authorization": f"Bearer {agent_key}"},
         )
         self.assertEqual(denied.status_code, 403)

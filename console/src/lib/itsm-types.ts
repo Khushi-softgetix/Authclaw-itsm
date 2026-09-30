@@ -290,15 +290,41 @@ export interface MajorIncidentPayload {
   postmortem_url?: string | null;
 }
 
-export interface MajorIncidentPageResult {
+export type MajorIncidentPageSelectionSource = "ACTIVE_ON_CALL_SCHEDULE" | "INCIDENT_ASSIGNEE_FALLBACK";
+
+export interface MajorIncidentPageRecipient {
+  id: string;
+  name?: string | null;
+  email: string;
+}
+
+export interface MajorIncidentPagePreview {
   incident_id: string;
   target_kind: "ON_CALL_ENGINEER" | "RESPONSE_TEAM" | "ASSIGNEE";
   target_label: string;
+  selection_source: MajorIncidentPageSelectionSource;
+  source_label: string;
+  verified_on_call: boolean;
+  service_id?: string | null;
+  service_name?: string | null;
+  assignment_group?: string | null;
+  team_name?: string | null;
+  schedule_id?: string | null;
+  schedule_name?: string | null;
+  on_call_until?: string | null;
+  warning?: string | null;
+  recipients: MajorIncidentPageRecipient[];
+  resolved_at: string;
+}
+
+export interface MajorIncidentPageResult extends MajorIncidentPagePreview {
   delivery_channel: "IN_APP";
-  recipients: Array<{ id: string; email: string }>;
+  delivery_status: "IN_APP_CREATED";
   notification_count: number;
   command_path: string;
   paged_at: string;
+  incident_reference: string;
+  correlation_reference: string;
 }
 
 export interface MajorIncidentRestorationCheckpoint {

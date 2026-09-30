@@ -208,18 +208,48 @@ class MajorIncidentResponse(BaseModel):
 
 class MajorIncidentPageRecipient(BaseModel):
     id: UUID
+    name: Optional[str] = None
     email: str
 
 
-class MajorIncidentPageResponse(BaseModel):
+MajorIncidentPageSelectionSource = Literal["ACTIVE_ON_CALL_SCHEDULE", "INCIDENT_ASSIGNEE_FALLBACK"]
+
+
+class MajorIncidentPagePreviewResponse(BaseModel):
     incident_id: UUID
     target_kind: Literal["ON_CALL_ENGINEER", "RESPONSE_TEAM", "ASSIGNEE"]
     target_label: str
-    delivery_channel: Literal["IN_APP"] = "IN_APP"
+    selection_source: MajorIncidentPageSelectionSource
+    source_label: str
+    verified_on_call: bool
+    service_id: Optional[UUID] = None
+    service_name: Optional[str] = None
+    assignment_group: Optional[str] = None
+    team_name: Optional[str] = None
+    schedule_id: Optional[UUID] = None
+    schedule_name: Optional[str] = None
+    on_call_until: Optional[datetime] = None
+    warning: Optional[str] = None
     recipients: list[MajorIncidentPageRecipient]
+    resolved_at: datetime
+
+
+class MajorIncidentPageRequest(BaseModel):
+    confirmed_recipient_ids: list[UUID] = Field(..., min_length=1)
+    confirmed_selection_source: MajorIncidentPageSelectionSource
+    preview_resolved_at: datetime
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class MajorIncidentPageResponse(MajorIncidentPagePreviewResponse):
+    delivery_channel: Literal["IN_APP"] = "IN_APP"
+    delivery_status: Literal["IN_APP_CREATED"] = "IN_APP_CREATED"
     notification_count: int
     command_path: str
     paged_at: datetime
+    incident_reference: str
+    correlation_reference: UUID
 
 
 class IncidentActivityCreateRequest(BaseModel):

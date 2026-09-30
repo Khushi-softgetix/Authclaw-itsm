@@ -145,10 +145,14 @@ class IncidentReferenceItem(BaseModel):
     status: Optional[str] = None
 
 
+class IncidentTeamReferenceItem(IncidentReferenceItem):
+    member_ids: list[UUID] = Field(default_factory=list)
+
+
 class IncidentOperationsReferenceDataResponse(BaseModel):
     users: list[MajorIncidentParticipantResponse]
     commanders: list[MajorIncidentParticipantResponse] = Field(default_factory=list)
-    teams: list[IncidentReferenceItem]
+    teams: list[IncidentTeamReferenceItem]
     services: list[IncidentReferenceItem]
     configuration_items: list[IncidentReferenceItem]
     categories: list[IncidentReferenceItem]

@@ -545,10 +545,10 @@ def main() -> None:
 
         # Seed Configuration Items (CIs)
         ci_seeds = [
-            (uuid.UUID("77777777-7777-4777-8777-7777777777a1"), "vpn-gw-prod-uswest", "NETWORK", uuid.UUID("77777777-7777-4777-8777-777777777794"), "PRODUCTION", "ACTIVE", '{"ip": "198.51.100.1", "version": "WireGuard 1.0.2"}'::jsonb),
-            (uuid.UUID("77777777-7777-4777-8777-7777777777a2"), "okta-auth-bridge-01", "APPLICATION", uuid.UUID("77777777-7777-4777-8777-777777777795"), "PRODUCTION", "ACTIVE", '{"protocol": "SAML 2.0 / OIDC", "cluster": "us-west-2a"}'::jsonb),
-            (uuid.UUID("77777777-7777-4777-8777-7777777777a3"), "macbook-fleet-mdm", "HARDWARE", service_id, "PRODUCTION", "ACTIVE", '{"enrolled_devices": 184, "agent": "Jamf Pro"}'::jsonb),
-            (uuid.UUID("77777777-7777-4777-8777-7777777777a4"), "payments-postgres-primary", "DATABASE", uuid.UUID("77777777-7777-4777-8777-777777777796"), "PRODUCTION", "DEGRADED", '{"engine": "PostgreSQL 17.2", "region": "us-east-1"}'::jsonb),
+            (uuid.UUID("77777777-7777-4777-8777-7777777777a1"), "vpn-gw-prod-uswest", "NETWORK", uuid.UUID("77777777-7777-4777-8777-777777777794"), "PRODUCTION", "ACTIVE", '{"ip": "198.51.100.1", "version": "WireGuard 1.0.2"}'),
+            (uuid.UUID("77777777-7777-4777-8777-7777777777a2"), "okta-auth-bridge-01", "APPLICATION", uuid.UUID("77777777-7777-4777-8777-777777777795"), "PRODUCTION", "ACTIVE", '{"protocol": "SAML 2.0 / OIDC", "cluster": "us-west-2a"}'),
+            (uuid.UUID("77777777-7777-4777-8777-7777777777a3"), "macbook-fleet-mdm", "HARDWARE", service_id, "PRODUCTION", "ACTIVE", '{"enrolled_devices": 184, "agent": "Jamf Pro"}'),
+            (uuid.UUID("77777777-7777-4777-8777-7777777777a4"), "payments-postgres-primary", "DATABASE", uuid.UUID("77777777-7777-4777-8777-777777777796"), "PRODUCTION", "DEGRADED", '{"engine": "PostgreSQL 17.2", "region": "us-east-1"}'),
         ]
 
         for ci_id, ci_name, ci_type, ci_svc_id, ci_env, ci_stat, ci_attrs in ci_seeds:

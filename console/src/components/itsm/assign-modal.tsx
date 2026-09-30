@@ -203,6 +203,10 @@ export default function AssignModal({ incident, onClose, onSuccess, usersEndpoin
   const [loadingUsers, setLoadingUsers] = useState<boolean>(true);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const selectedTeam = teams.find((team) => team.name === assignmentGroup);
+  const eligibleUsers = selectedTeam
+    ? users.filter((user) => selectedTeam.member_ids?.includes(user.id))
+    : users;
 
   useEffect(() => {
     let mounted = true;
@@ -273,7 +277,7 @@ export default function AssignModal({ incident, onClose, onSuccess, usersEndpoin
             value={assigneeId}
             options={[
               { value: "", label: "Unassigned" },
-              ...users.map((user) => ({
+              ...eligibleUsers.map((user) => ({
                 value: user.id,
                 label: user.email,
                 description: user.role || undefined,
@@ -303,7 +307,10 @@ export default function AssignModal({ incident, onClose, onSuccess, usersEndpoin
                 { value: "", label: "Unassigned" },
                 ...teams.map((team) => ({ value: team.name, label: team.name })),
               ]}
-              onChange={setAssignmentGroup}
+              onChange={(value) => {
+                setAssignmentGroup(value);
+                setAssigneeId("");
+              }}
               placeholder="Choose an active team"
               searchPlaceholder="Search active teams"
               emptyMessage="No active teams match this search"

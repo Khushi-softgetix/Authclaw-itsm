@@ -156,6 +156,7 @@ export interface IncidentReferenceItem {
   parent_id?: string | null;
   service_id?: string | null;
   status?: string | null;
+  member_ids?: string[];
 }
 
 export interface IncidentOperationsReferenceData {

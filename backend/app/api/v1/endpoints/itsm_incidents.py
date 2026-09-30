@@ -9,7 +9,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response,
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from app.core.auth import ensure_itsm_role, get_current_tenant, get_tenant_db, require_itsm_roles
+from app.core.auth import (
+    deny_itsm_auditor_access,
+    ensure_itsm_role,
+    get_current_tenant,
+    get_tenant_db,
+    require_itsm_roles,
+)
 from app.schemas.itsm_incidents import (
     IncidentActivityCreateRequest,
     IncidentActivityResponse,
@@ -169,16 +175,16 @@ def incident_manager_dashboard(
 
 
 def _get_itsm_role(db: Session, tenant_id: UUID, user_id: UUID) -> str:
-    try:
-        row = db.execute(
-            text("SELECT itsm_role FROM authn.lookup_itsm_user_access(:tenant_id, :user_id)"),
-            {"tenant_id": str(tenant_id), "user_id": str(user_id)},
-        ).first()
-        if row and row.itsm_role:
-            return str(row.itsm_role).upper()
-    except Exception:
-        pass
-    return "ADMIN"
+    row = db.execute(
+        text("SELECT itsm_role, has_itsm_access FROM authn.lookup_itsm_user_access(:tenant_id, :user_id)"),
+        {"tenant_id": str(tenant_id), "user_id": str(user_id)},
+    ).first()
+    if not row or not row.has_itsm_access or not row.itsm_role:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: ITSM access required",
+        )
+    return str(row.itsm_role).upper()
 
 
 @router.post(
@@ -208,6 +214,8 @@ def create_incident(
         payload.assignee_id = None
         payload.assignment_group = None
         payload.is_major_incident = False
+        payload.priority = None
+        payload.priority_override_reason = None
     elif payload.urgency:
         payload.urgency = str(payload.urgency).strip().upper()
     else:

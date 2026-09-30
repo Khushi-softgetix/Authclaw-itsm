@@ -121,6 +121,9 @@ test("Incident Manager coordination uses tenant reference data for classificatio
   assert.match(assignment, /role="listbox"/);
   assert.match(assignment, /filteredOptions\.map/);
   assert.match(assignment, /activeIndex/);
+  assert.match(assignment, /selectedTeam\.member_ids\?\.includes\(user\.id\)/);
+  assert.match(assignment, /setAssignmentGroup\(value\)/);
+  assert.match(assignment, /setAssigneeId\(""\)/);
   assert.match(assignment, /referenceEndpoint \? \(/);
   assert.match(assignment, /COMMON_GROUPS/);
   assert.match(drawer, /referenceEndpoint="\/api\/itsm\/incidents\/operations\/reference-data"/);
@@ -171,7 +174,7 @@ test("Incident details use full width and return to the retained incident queue"
   assert.match(details, /fixed inset-0 z-50 flex/);
   assert.doesNotMatch(details, /max-w-2xl|justify-end|backdrop-blur/);
   assert.match(details, /<button onClick=\{onClose\}[^>]*><ArrowLeft[^>]*\/>\{backLabel\}<\/button>/);
-  assert.match(queue, /backLabel="Back to Incident Queue" onClose=\{\(\)=>setSelected\(null\)\}/);
+  assert.match(queue, /backLabel="Back to Incident Queue"\s+onClose=\{\(\)\s*=>\s*setSelected\(null\)\}/);
   assert.match(details, /break-words font-semibold/);
 });
 
@@ -272,6 +275,7 @@ test("Major Incident selection cannot render or save a stale command record", ()
   assert.match(page, /url\.searchParams\.delete\("incident"\)/);
   assert.match(page, /record\?\.ticket_id===selectedId \? record : null/);
   assert.match(page, /saved\.ticket_id===selected\.id/);
+  assert.match(page, /if \(!selectedIncident\?\.is_major_incident\).*setRecord\(null\);setRecordLoading\(false\)/);
 });
 
 test("Incident Manager optional UX keeps queue requests focused and mobile-friendly", () => {
@@ -284,6 +288,8 @@ test("Incident Manager optional UX keeps queue requests focused and mobile-frien
   assert.match(queue, /offset===0&&total<=PAGE_SIZE/);
   assert.match(queue, /md:hidden/);
   assert.match(queue, /hidden overflow-x-auto md:block/);
+  assert.match(queue, /role="button"\s+tabIndex=\{0\}/);
+  assert.match(queue, /event\.key==="Enter"\|\|event\.key===" "/);
   assert.match(overview, /ATTENTION_PREVIEW_LIMIT = 8/);
   assert.match(overview, /WORKLOAD_PREVIEW_LIMIT = 5/);
   assert.match(overview, /View full queue/);

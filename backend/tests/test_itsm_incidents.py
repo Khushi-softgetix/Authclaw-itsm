@@ -33,6 +33,7 @@ from unittest.mock import MagicMock, patch
 
 from pydantic import ValidationError
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
@@ -56,6 +57,7 @@ from app.services.itsm_sla_service import add_business_minutes
 from app.services.itsm_sla_service import business_seconds_between, pause_sla, resume_sla
 from app.services.itsm_incident_service import IncidentService
 from app.schemas.itsm_incidents import IncidentCreateRequest, IncidentUpdateRequest, IncidentStatusUpdateRequest
+from app.api.v1.endpoints.itsm_incidents import _get_itsm_role
 
 
 class IncidentReadinessRegressionTest(unittest.TestCase):
@@ -244,7 +246,35 @@ class ITSMIncidentTestCase(unittest.TestCase):
 
         return tenant_id, user_id, api_key_str
 
-    def create_team(self, tenant_id, name: str):
+    def create_fixture_user(self, tenant_id, suffix: str, itsm_role: str):
+        user_id = uuid4()
+        api_key_str = f"test-key-{suffix}-{uuid4().hex[:12]}"
+        with self.migrator_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO public.users (id, tenant_id, email, role, platform_role, is_active, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, :email, 'operator', 'NONE', true, now(), now())"
+                ),
+                {"id": user_id, "tenant_id": tenant_id, "email": f"user-{suffix}-{uuid4().hex[:8]}@example.com"},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_user_access "
+                    "(id, tenant_id, user_id, itsm_role, has_itsm_access, has_governance_access, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, :user_id, :itsm_role, true, false, now(), now())"
+                ),
+                {"id": uuid4(), "tenant_id": tenant_id, "user_id": user_id, "itsm_role": itsm_role},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO public.api_keys (id, tenant_id, key_hash, name, scopes, is_active, created_by, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, :key_hash, 'test-key', ARRAY['read', 'write'], true, :created_by, now(), now())"
+                ),
+                {"id": uuid4(), "tenant_id": tenant_id, "key_hash": hash_key(api_key_str), "created_by": user_id},
+            )
+        return user_id, api_key_str
+
+    def create_team(self, tenant_id, name: str, member_ids=()):
         team_id = uuid4()
         with self.migrator_engine.begin() as conn:
             conn.execute(
@@ -255,6 +285,15 @@ class ITSMIncidentTestCase(unittest.TestCase):
                 ),
                 {"id": team_id, "tenant_id": tenant_id, "name": name},
             )
+            for user_id in member_ids:
+                conn.execute(
+                    text(
+                        "INSERT INTO public.itsm_team_members "
+                        "(id, tenant_id, team_id, user_id, created_at) "
+                        "VALUES (:id, :tenant_id, :team_id, :user_id, now())"
+                    ),
+                    {"id": uuid4(), "tenant_id": tenant_id, "team_id": team_id, "user_id": user_id},
+                )
         return team_id
 
     # 1. Create incident
@@ -416,7 +455,7 @@ class ITSMIncidentTestCase(unittest.TestCase):
             headers=headers,
         )
         self.assertEqual(rejected_group.status_code, 400, rejected_group.text)
-        self.create_team(tenant_id, "SRE OnCall")
+        self.create_team(tenant_id, "SRE OnCall", [assignee_id])
 
         assign_res = self.client.post(
             f"/v1/itsm/incidents/{incident_id}/assign",
@@ -730,7 +769,7 @@ class ITSMIncidentTestCase(unittest.TestCase):
 
     def test_20_incident_manager_can_declare_and_update_major_incident(self):
         tenant_id, user_id, api_key = self.create_fixture_tenant("major", itsm_role="INCIDENT_MANAGER")
-        self.create_team(tenant_id, "Incident Response")
+        self.create_team(tenant_id, "Incident Response", [user_id])
         service_id, ci_id = uuid4(), uuid4()
         with self.migrator_engine.begin() as conn:
             conn.execute(
@@ -916,7 +955,7 @@ class ITSMIncidentTestCase(unittest.TestCase):
 
     def test_23_operations_dashboard_aggregates_reasons_workload_and_tenant(self):
         tenant_id, user_id, manager_key = self.create_fixture_tenant("dashboard_complete")
-        self.create_team(tenant_id, "Incident Response")
+        self.create_team(tenant_id, "Incident Response", [user_id])
         other_tenant_id, _, other_key = self.create_fixture_tenant("dashboard_other")
         headers = {"Authorization": f"Bearer {manager_key}"}
 
@@ -974,7 +1013,7 @@ class ITSMIncidentTestCase(unittest.TestCase):
 
     def test_24_operations_queue_filters_paginates_and_isolates_tenant(self):
         tenant_id, user_id, manager_key = self.create_fixture_tenant("operations_queue")
-        self.create_team(tenant_id, "Incident Response")
+        self.create_team(tenant_id, "Incident Response", [user_id])
         _, _, agent_key = self.create_fixture_tenant("operations_queue_agent", itsm_role="SERVICE_AGENT")
         other_tenant_id, _, other_key = self.create_fixture_tenant("operations_queue_other")
         headers = {"Authorization": f"Bearer {manager_key}"}
@@ -1382,11 +1421,17 @@ class ITSMIncidentTestCase(unittest.TestCase):
         self.assertEqual(audit_count, 1)
 
         fallback_service_id = uuid4()
+        fallback_team_id = uuid4()
         with self.migrator_engine.begin() as conn:
             conn.execute(
                 text("INSERT INTO public.itsm_teams (id,tenant_id,name,is_active,created_at,updated_at) VALUES (:id,:tenant,'Inventory Support',true,now(),now())"),
-                {"id": uuid4(), "tenant": tenant_id},
+                {"id": fallback_team_id, "tenant": tenant_id},
             )
+            conn.execute(
+                text("INSERT INTO public.itsm_team_members (id,tenant_id,team_id,user_id,created_at) VALUES (:id,:tenant,:team,:user,now())"),
+                {"id": uuid4(), "tenant": tenant_id, "team": fallback_team_id, "user": responder_id},
+            )
+
             conn.execute(
                 text("INSERT INTO public.itsm_services (id,tenant_id,name,slug,tier,status,escalation_team,created_at,updated_at) VALUES (:id,:tenant,'Inventory','inventory-page','TIER_2','OPERATIONAL','Inventory Support',now(),now())"),
                 {"id": fallback_service_id, "tenant": tenant_id},
@@ -1459,6 +1504,110 @@ class ITSMIncidentTestCase(unittest.TestCase):
         )
         self.assertEqual(denied.status_code, 403)
 
+
+    def test_31_requester_cannot_read_internal_notes(self):
+        tenant_id, _, manager_key = self.create_fixture_tenant("internal_note_manager")
+        _, requester_key = self.create_fixture_user(tenant_id, "internal_note_requester", "REQUESTER")
+        requester_headers = {"Authorization": f"Bearer {requester_key}"}
+        manager_headers = {"Authorization": f"Bearer {manager_key}"}
+        created = self.client.post(
+            "/v1/itsm/incidents",
+            json={"title": "Requester-visible incident", "description": "Privacy regression", "urgency": "MEDIUM"},
+            headers=requester_headers,
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        incident_id = created.json()["id"]
+        internal = self.client.post(
+            f"/v1/itsm/incidents/{incident_id}/activities",
+            json={"content": "operator-only investigation detail", "activity_type": "NOTE", "is_internal": True},
+            headers=manager_headers,
+        )
+        self.assertEqual(internal.status_code, 201, internal.text)
+        public = self.client.post(
+            f"/v1/itsm/incidents/{incident_id}/activities",
+            json={"content": "public progress update", "activity_type": "COMMENT", "is_internal": False},
+            headers=manager_headers,
+        )
+        self.assertEqual(public.status_code, 201, public.text)
+
+        requester_activities = self.client.get(
+            f"/v1/itsm/incidents/{incident_id}/activities",
+            headers=requester_headers,
+        )
+        self.assertEqual(requester_activities.status_code, 200, requester_activities.text)
+        requester_content = {activity["content"] for activity in requester_activities.json()}
+        self.assertIn("public progress update", requester_content)
+        self.assertNotIn("operator-only investigation detail", requester_content)
+        manager_content = {
+            activity["content"]
+            for activity in self.client.get(
+                f"/v1/itsm/incidents/{incident_id}/activities",
+                headers=manager_headers,
+            ).json()
+        }
+        self.assertIn("operator-only investigation detail", manager_content)
+
+    def test_32_requester_priority_is_derived_from_impact_and_urgency(self):
+        tenant_id, _, _ = self.create_fixture_tenant("requester_priority_manager")
+        _, requester_key = self.create_fixture_user(tenant_id, "requester_priority", "REQUESTER")
+        created = self.client.post(
+            "/v1/itsm/incidents",
+            json={
+                "title": "Low-impact requester issue",
+                "description": "Requester cannot promote this incident",
+                "impact": "LOW",
+                "urgency": "LOW",
+                "priority": "P1",
+                "priority_override_reason": "Requester-supplied override",
+            },
+            headers={"Authorization": f"Bearer {requester_key}"},
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        self.assertEqual(created.json()["priority"], "P4")
+
+    def test_33_assignee_must_belong_to_selected_assignment_group(self):
+        tenant_id, manager_id, manager_key = self.create_fixture_tenant("team_membership")
+        member_id, _ = self.create_fixture_user(tenant_id, "team_member", "SERVICE_AGENT")
+        nonmember_id, _ = self.create_fixture_user(tenant_id, "team_nonmember", "SERVICE_AGENT")
+        team_id = self.create_team(tenant_id, "Network Operations", [member_id])
+        headers = {"Authorization": f"Bearer {manager_key}"}
+        created = self.client.post(
+            "/v1/itsm/incidents",
+            json={"title": "Network incident", "description": "Membership regression"},
+            headers=headers,
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        incident_id = created.json()["id"]
+
+        rejected = self.client.post(
+            f"/v1/itsm/incidents/{incident_id}/assign",
+            json={"assignment_group": "Network Operations", "assignee_id": str(nonmember_id)},
+            headers=headers,
+        )
+        self.assertEqual(rejected.status_code, 400, rejected.text)
+        accepted = self.client.post(
+            f"/v1/itsm/incidents/{incident_id}/assign",
+            json={"assignment_group": "Network Operations", "assignee_id": str(member_id)},
+            headers=headers,
+        )
+        self.assertEqual(accepted.status_code, 200, accepted.text)
+        references = self.client.get("/v1/itsm/incidents/operations/reference-data", headers=headers)
+        self.assertEqual(references.status_code, 200, references.text)
+        team = next(item for item in references.json()["teams"] if item["id"] == str(team_id))
+        self.assertEqual(team["member_ids"], [str(member_id)])
+        self.assertNotIn(str(manager_id), team["member_ids"])
+
+    def test_34_role_lookup_fails_closed(self):
+        db = MagicMock()
+        db.execute.side_effect = RuntimeError("role lookup unavailable")
+        with self.assertRaises(RuntimeError):
+            _get_itsm_role(db, uuid4(), uuid4())
+
+        db.execute.side_effect = None
+        db.execute.return_value.first.return_value = None
+        with self.assertRaises(HTTPException) as denied:
+            _get_itsm_role(db, uuid4(), uuid4())
+        self.assertEqual(denied.exception.status_code, 403)
 
 if __name__ == "__main__":
     unittest.main()

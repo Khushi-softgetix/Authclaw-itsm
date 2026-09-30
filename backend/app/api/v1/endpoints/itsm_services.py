@@ -22,6 +22,7 @@ from app.services.itsm_service_service import ITSMServiceManager
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+catalog_router = APIRouter()
 
 ALLOWED_ITSM_ROLES = {
     "SERVICE_AGENT",
@@ -341,6 +342,40 @@ def _derive_time_label(hours: int) -> str:
 
 
 @router.get(
+    "",
+    response_model=List[ITSMServiceSummaryResponse],
+    summary="List ITSM services",
+    description="Retrieve all operational ITSM services for the current tenant with keyword search and filtering.",
+)
+def list_services(
+    request: Request,
+    search: Optional[str] = Query(default=None, description="Search term for service name or description"),
+    status_filter: Optional[str] = Query(default=None, alias="status", description="Filter by service status"),
+    tier_filter: Optional[str] = Query(default=None, alias="tier", description="Filter by service tier"),
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    user_id_val = getattr(request.state, "user_id", None)
+    if not user_id_val:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        )
+
+    tenant_id = UUID(tenant_id_str)
+    user_id = UUID(str(user_id_val))
+    _verify_itsm_user(db, tenant_id, user_id)
+
+    return ITSMServiceManager.list_services(
+        db=db,
+        tenant_id=tenant_id,
+        search=search,
+        status_filter=status_filter,
+        tier_filter=tier_filter,
+    )
+
+
+@catalog_router.get(
     "",
     response_model=list[RequesterServiceCatalogItemResponse],
     summary="List active service catalog items for requesters",

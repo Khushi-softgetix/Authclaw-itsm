@@ -104,7 +104,10 @@ from app.api.v1.endpoints.itsm_incidents import router as itsm_incidents_router
 from app.api.v1.endpoints.itsm_admin import router as itsm_admin_router
 from app.api.v1.endpoints.itsm_knowledge import router as itsm_knowledge_router
 from app.api.v1.endpoints.itsm_requests import router as itsm_requests_router
-from app.api.v1.endpoints.itsm_services import router as itsm_services_router
+from app.api.v1.endpoints.itsm_services import (
+    catalog_router as itsm_service_catalog_router,
+    router as itsm_services_router,
+)
 from app.api.v1.endpoints.itsm_problems import router as itsm_problems_router
 from app.api.v1.endpoints.itsm_changes import router as itsm_changes_router
 from app.api.v1.endpoints.itsm_attachments import router as itsm_attachments_router
@@ -150,8 +153,8 @@ app.include_router(itsm_requests_router, prefix="/api/itsm/requests", tags=["its
 app.include_router(itsm_services_router, prefix="/v1/itsm/services", tags=["itsm-services"])
 app.include_router(itsm_services_router, prefix="/api/itsm/services", tags=["itsm-services"], include_in_schema=False)
 app.include_router(itsm_audit_router, prefix="/v1/itsm/audit", tags=["itsm-audit"])
-app.include_router(itsm_services_router, prefix="/v1/itsm/service-catalog", tags=["itsm-service-catalog"])
-app.include_router(itsm_services_router, prefix="/api/itsm/service-catalog", tags=["itsm-service-catalog"], include_in_schema=False)
+app.include_router(itsm_service_catalog_router, prefix="/v1/itsm/service-catalog", tags=["itsm-service-catalog"])
+app.include_router(itsm_service_catalog_router, prefix="/api/itsm/service-catalog", tags=["itsm-service-catalog"], include_in_schema=False)
 app.include_router(itsm_problems_router, prefix="/v1/itsm/problems", tags=["itsm-problems"])
 app.include_router(itsm_problems_router, prefix="/api/itsm/problems", tags=["itsm-problems"], include_in_schema=False)
 app.include_router(itsm_changes_router, prefix="/v1/itsm/changes", tags=["itsm-changes"])
@@ -190,7 +193,8 @@ _compatibility_routers = [
     (itsm_admin_router, "/itsm/admin", "itsm-admin"),
     (itsm_knowledge_router, "/itsm/knowledge", "itsm-knowledge"),
     (itsm_requests_router, "/itsm/requests", "itsm-requests"),
-    (itsm_services_router, "/itsm/service-catalog", "itsm-service-catalog"),
+    (itsm_services_router, "/itsm/services", "itsm-services"),
+    (itsm_service_catalog_router, "/itsm/service-catalog", "itsm-service-catalog"),
     (itsm_problems_router, "/itsm/problems", "itsm-problems"),
     (itsm_changes_router, "/itsm/changes", "itsm-changes"),
 ]

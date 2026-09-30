@@ -429,8 +429,8 @@ export default function ServicesPage() {
   // =========================================================================
   // SERVICE AGENT WORKSPACE: Operational Services & CMDB Context
   // =========================================================================
-  const getStatusBadge = (status: string) => {
-    switch (status.toUpperCase()) {
+  const getStatusBadge = (status?: string | null) => {
+    switch ((status || "OPERATIONAL").toUpperCase()) {
       case "OPERATIONAL":
       case "ACTIVE":
         return (
@@ -463,14 +463,14 @@ export default function ServicesPage() {
       default:
         return (
           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-50 text-slate-700 border border-slate-200">
-            {status}
+            {status || "UNKNOWN"}
           </span>
         );
     }
   };
 
-  const getTierBadge = (tier: string) => {
-    switch (tier.toUpperCase()) {
+  const getTierBadge = (tier?: string | null) => {
+    switch ((tier || "TIER_3").toUpperCase()) {
       case "TIER_1":
         return (
           <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md bg-[#F1ECFE] text-[#6D28D9] border border-[#A78BFA]">
@@ -492,7 +492,7 @@ export default function ServicesPage() {
       default:
         return (
           <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-md bg-slate-50 text-slate-700 border border-slate-200">
-            {tier}
+            {tier || "TIER_3"}
           </span>
         );
     }
@@ -666,17 +666,17 @@ export default function ServicesPage() {
                   </span>
                   <span className="flex items-center gap-1.5 font-medium text-[#475069]">
                     <Database className="w-3.5 h-3.5 text-[#8C95A8]" />
-                    <span>{service.ci_count} CIs</span>
+                    <span>{service.ci_count ?? 0} CIs</span>
                   </span>
                 </div>
 
                 <div className="flex items-center justify-between">
                   <span className="flex items-center gap-1.5">
                     <Ticket className="w-3.5 h-3.5 text-[#8C95A8]" />
-                    <span>{service.active_ticket_count} Active Tickets</span>
+                    <span>{service.active_ticket_count ?? 0} Active Tickets</span>
                   </span>
                   <span className="text-[#8C95A8]">
-                    Updated {formatDateTime(service.updated_at)}
+                    {service.updated_at ? `Updated ${formatDateTime(service.updated_at)}` : "Recently updated"}
                   </span>
                 </div>
               </div>

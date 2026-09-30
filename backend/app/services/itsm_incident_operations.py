@@ -210,14 +210,6 @@ def build_operations_dashboard(
             "sla_at_risk": len(at_risk),
             "sla_breached": len(breached),
             "stuck": len(stuck),
-            "unassigned": sum(
-                1
-                for ticket in tickets
-                if not ticket.assignment_group and not ticket.assignee_id
-            ),
-            "active_major_incidents": sum(
-                1 for ticket in tickets if ticket.is_major_incident
-            ),
             "escalation_watch": len(escalation),
         },
         "priority_watch": priority,

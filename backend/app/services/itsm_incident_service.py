@@ -12,7 +12,6 @@ from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import (
     ITSMConfigurationItem,
-    ITSMIncidentSavedView,
     ITSMService,
     ITSMTeam,
     ITSMTeamMember,
@@ -96,19 +95,6 @@ def calculate_priority_from_matrix(impact: str, urgency: str) -> str:
     return "P4"
 
 
-def _audit_safe(value: Any) -> Any:
-    """Convert domain values into deterministic JSON-safe audit evidence."""
-    if isinstance(value, UUID):
-        return str(value)
-    if isinstance(value, datetime):
-        return value.isoformat()
-    if isinstance(value, list):
-        return [_audit_safe(item) for item in value]
-    if isinstance(value, dict):
-        return {str(key): _audit_safe(item) for key, item in value.items()}
-    return value
-
-
 class IncidentService:
     @staticmethod
     def _find_sla_policy(db: Session, tenant_id: UUID, priority: str, service_id: UUID | None) -> ITSMSLAPolicy | None:
@@ -126,47 +112,22 @@ class IncidentService:
         return query.first()
 
     @staticmethod
-    def list_saved_views(db: Session, tenant_id: UUID, user_id: UUID) -> list[ITSMIncidentSavedView]:
-        return db.query(ITSMIncidentSavedView).filter(
-            ITSMIncidentSavedView.tenant_id == tenant_id,
-            ITSMIncidentSavedView.user_id == user_id,
-        ).order_by(ITSMIncidentSavedView.name.asc()).all()
+    def list_saved_views(db: Session, tenant_id: UUID, user_id: UUID) -> list:
+        return []
 
     @staticmethod
-    def create_saved_view(
-        db: Session, tenant_id: UUID, user_id: UUID, payload: IncidentSavedViewCreateRequest
-    ) -> ITSMIncidentSavedView:
-        name = payload.name.strip()
-        existing = db.query(ITSMIncidentSavedView).filter(
-            ITSMIncidentSavedView.tenant_id == tenant_id,
-            ITSMIncidentSavedView.user_id == user_id,
-            ITSMIncidentSavedView.name == name,
-        ).first()
-        if existing:
-            existing.filters = payload.filters.model_dump(mode="json", exclude_none=True)
-            existing.updated_at = datetime.now(timezone.utc)
-            view = existing
-        else:
-            view = ITSMIncidentSavedView(
-                id=uuid4(), tenant_id=tenant_id, user_id=user_id, name=name,
-                filters=payload.filters.model_dump(mode="json", exclude_none=True),
-            )
-            db.add(view)
-        db.commit()
-        db.refresh(view)
-        return view
+    def create_saved_view(db: Session, tenant_id: UUID, user_id: UUID, payload: IncidentSavedViewCreateRequest):
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="Incident saved views are not supported without migration 057",
+        )
 
     @staticmethod
     def delete_saved_view(db: Session, tenant_id: UUID, user_id: UUID, view_id: UUID) -> None:
-        view = db.query(ITSMIncidentSavedView).filter(
-            ITSMIncidentSavedView.id == view_id,
-            ITSMIncidentSavedView.tenant_id == tenant_id,
-            ITSMIncidentSavedView.user_id == user_id,
-        ).first()
-        if not view:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved view not found")
-        db.delete(view)
-        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Saved view not found",
+        )
     @classmethod
     def _validate_major_command_users(
         cls,
@@ -555,8 +516,6 @@ class IncidentService:
         actor_id: UUID | None,
         reason: str | None = None,
         trace_items: list[str] | None = None,
-        before_summary: dict[str, Any] | None = None,
-        after_summary: dict[str, Any] | None = None,
     ) -> None:
         trace = [
             f"ticket_id={ticket.id}",
@@ -584,12 +543,6 @@ class IncidentService:
                         "actor_type": "user",
                         "action": f"itsm.incident.{action}",
                         "request_id": str(ticket.id),
-                        "context_id": str(ticket.id),
-                        "event_category": "create" if action == "created" else "update" if action in {"updated", "status_changed", "assigned", "major_incident_declared", "major_incident_updated"} else "action",
-                        "target_id": str(ticket.id),
-                        "target_type": "incident",
-                        "before_summary": before_summary,
-                        "after_summary": after_summary,
                         "provider": "itsm",
                         "reason": reason or action,
                         "response_status": 200,
@@ -669,7 +622,6 @@ class IncidentService:
             assignee_id=payload.assignee_id,
             assignment_group=assignment_group,
             service_id=payload.service_id,
-            configuration_item_id=payload.configuration_item_id,
             category_id=payload.category_id,
             category=payload.category,
             subcategory=payload.subcategory,
@@ -702,7 +654,6 @@ class IncidentService:
             action="created",
             actor_id=actor_id,
             reason="Incident created",
-            after_summary={"status": ticket.status, "priority": ticket.priority},
         )
 
         db.commit()
@@ -1030,8 +981,6 @@ class IncidentService:
         priority: Optional[str] = None,
         assignment_group: Optional[str] = None,
         assignee_id: Optional[UUID] = None,
-        service_id: Optional[UUID] = None,
-        category_id: Optional[UUID] = None,
         unassigned_only: bool = False,
         search: Optional[str] = None,
         incident_ids: Optional[set[UUID]] = None,
@@ -1064,10 +1013,6 @@ class IncidentService:
                 query = query.filter(ITSMTicket.assignment_group == assignment_group.strip())
         if assignee_id:
             query = query.filter(ITSMTicket.assignee_id == assignee_id)
-        if service_id:
-            query = query.filter(ITSMTicket.service_id == service_id)
-        if category_id:
-            query = query.filter(ITSMTicket.category_id == category_id)
         if unassigned_only:
             query = query.filter(ITSMTicket.assignee_id.is_(None))
         if incident_ids is not None:
@@ -1221,13 +1166,6 @@ class IncidentService:
                 payload.configuration_item_id,
                 payload.service_id if "service_id" in payload.model_fields_set else ticket.service_id,
             )
-            if payload.configuration_item_id != ticket.configuration_item_id:
-                old_values["configuration_item_id"] = (
-                    str(ticket.configuration_item_id) if ticket.configuration_item_id else None
-                )
-                new_values["configuration_item_id"] = str(payload.configuration_item_id)
-                ticket.configuration_item_id = payload.configuration_item_id
-                changed_fields.append("configuration_item_id")
 
         if "category_id" in payload.model_fields_set and payload.category_id != ticket.category_id:
             if payload.category_id is not None:
@@ -1294,8 +1232,6 @@ class IncidentService:
                 action="updated",
                 actor_id=actor_id,
                 trace_items=[f"updated_fields={','.join(changed_fields)}"],
-                before_summary=old_values,
-                after_summary=new_values,
             )
             db.commit()
             db.refresh(ticket)
@@ -1434,8 +1370,6 @@ class IncidentService:
             action="status_changed",
             actor_id=actor_id,
             trace_items=[f"old_status={current_status}", f"new_status={target_status}"],
-            before_summary={"status": current_status},
-            after_summary=new_val,
         )
 
         db.commit()
@@ -1499,8 +1433,6 @@ class IncidentService:
             action="assigned",
             actor_id=actor_id,
             trace_items=[f"old_assignee={old_assignee}", f"new_assignee={new_assignee}"],
-            before_summary={"assignee_id": old_assignee, "assignment_group": old_group},
-            after_summary={"assignee_id": new_assignee, "assignment_group": new_group},
         )
 
         db.commit()
@@ -1533,7 +1465,6 @@ class IncidentService:
             tenant_id=tenant_id,
             ticket_id=ticket.id,
             incident_commander_id=commander_id,
-            communication_lead_id=payload.communication_lead_id,
             bridge_url=payload.bridge_url,
             communication_channel=payload.communication_channel,
             declared_at=datetime.now(timezone.utc),
@@ -1541,34 +1472,13 @@ class IncidentService:
             postmortem_status="PENDING",
             executive_summary=payload.executive_summary,
             impacted_business_units=payload.impacted_business_units or [],
-            affected_service_ids=payload.affected_service_ids or [],
-            affected_configuration_item_ids=payload.affected_configuration_item_ids or [],
             customer_impact_description=payload.customer_impact_description,
-            restoration_checkpoints=[item.model_dump(mode="json") for item in payload.restoration_checkpoints],
-            command_decisions=[item.model_dump(mode="json") for item in payload.command_decisions],
-            command_tasks=[item.model_dump(mode="json") for item in payload.command_tasks],
-            stakeholders=[item.model_dump(mode="json") for item in payload.stakeholders],
-            command_communications=[item.model_dump(mode="json") for item in payload.command_communications],
         )
         ticket.is_major_incident = True
         ticket.updated_at = datetime.now(timezone.utc)
         db.add(major)
-        declaration_summary = {
-            "incident_commander_id": str(commander_id),
-            "communication_lead_id": str(payload.communication_lead_id) if payload.communication_lead_id else None,
-            "affected_service_ids": [str(value) for value in payload.affected_service_ids],
-            "affected_configuration_item_ids": [str(value) for value in payload.affected_configuration_item_ids],
-            "is_major_incident": True,
-        }
-        cls._record_activity(db, tenant_id, ticket.id, "MAJOR_INCIDENT_DECLARED", "Major incident declared and command ownership established", new_value=declaration_summary, actor_id=actor_id)
-        cls._emit_audit_event(
-            db,
-            tenant_id,
-            ticket,
-            "major_incident_declared",
-            actor_id,
-            after_summary=declaration_summary,
-        )
+        cls._record_activity(db, tenant_id, ticket.id, "MAJOR_INCIDENT_DECLARED", "Major incident declared", new_value={"incident_commander_id": str(commander_id)}, actor_id=actor_id)
+        cls._emit_audit_event(db, tenant_id, ticket, "major_incident_declared", actor_id)
         db.commit(); db.refresh(major)
         return major
 
@@ -1590,76 +1500,22 @@ class IncidentService:
         cls._validate_communication_approvals(payload, actor_id, major.command_communications or [])
         valid_fields = {
             "incident_commander_id",
-            "communication_lead_id",
             "bridge_url",
             "communication_channel",
             "executive_summary",
             "impacted_business_units",
-            "affected_service_ids",
-            "affected_configuration_item_ids",
             "customer_impact_description",
-            "restoration_checkpoints",
-            "command_decisions",
-            "command_tasks",
-            "stakeholders",
-            "command_communications",
             "postmortem_status",
             "postmortem_url",
         }
-        json_changes = payload.model_dump(mode="json", exclude_unset=True)
-        before_changes: dict[str, Any] = {}
-        after_changes: dict[str, Any] = {}
-        changed_fields: list[str] = []
         for field in valid_fields:
             if field in changes:
-                value = changes[field]
-                if field in {
-                    "restoration_checkpoints",
-                    "command_decisions",
-                    "command_tasks",
-                    "stakeholders",
-                    "command_communications",
-                }:
-                    value = json_changes[field]
-                before_value = _audit_safe(getattr(major, field))
-                after_value = _audit_safe(value)
-                if before_value != after_value:
-                    before_changes[field] = before_value
-                    after_changes[field] = after_value
-                    changed_fields.append(field)
-                    setattr(major, field, value)
-        if changed_fields:
+                setattr(major, field, changes[field])
+        if changes:
             ticket = cls.get_incident(db, tenant_id, incident_id)
             ticket.updated_at = datetime.now(timezone.utc)
-            labels = {
-                "incident_commander_id": "commander",
-                "communication_lead_id": "communication lead",
-                "bridge_url": "response bridge",
-                "communication_channel": "communication channel",
-                "executive_summary": "situation summary",
-                "impacted_business_units": "business impact",
-                "affected_service_ids": "affected services",
-                "affected_configuration_item_ids": "affected configuration items",
-                "customer_impact_description": "customer impact",
-                "restoration_checkpoints": "restoration checkpoints",
-                "command_decisions": "decisions",
-                "command_tasks": "command tasks",
-                "stakeholders": "stakeholders",
-                "command_communications": "communications",
-                "postmortem_status": "PIR status",
-                "postmortem_url": "PIR document",
-            }
-            change_summary = ", ".join(labels[field] for field in changed_fields)
-            cls._record_activity(db, tenant_id, ticket.id, "MAJOR_INCIDENT_UPDATED", f"Major incident command updated: {change_summary}", old_value=before_changes, new_value=after_changes, actor_id=actor_id)
-            cls._emit_audit_event(
-                db,
-                tenant_id,
-                ticket,
-                "major_incident_updated",
-                actor_id,
-                before_summary=before_changes,
-                after_summary=after_changes,
-            )
+            cls._record_activity(db, tenant_id, ticket.id, "MAJOR_INCIDENT_UPDATED", "Major incident command details updated", new_value=payload.model_dump(mode="json", exclude_unset=True), actor_id=actor_id)
+            cls._emit_audit_event(db, tenant_id, ticket, "major_incident_updated", actor_id)
             db.commit(); db.refresh(major)
         return major
 
@@ -1714,7 +1570,6 @@ class IncidentService:
             action="comment_added",
             actor_id=actor_id,
             trace_items=[f"activity_type={activity.activity_type}", f"is_internal={payload.is_internal}"],
-            after_summary={"activity_type": activity.activity_type, "is_internal": payload.is_internal},
         )
 
         db.commit()

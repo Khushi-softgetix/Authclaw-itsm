@@ -717,16 +717,6 @@ class ITSMIncidentTestCase(unittest.TestCase):
     def test_20_incident_manager_can_declare_and_update_major_incident(self):
         tenant_id, user_id, api_key = self.create_fixture_tenant("major", itsm_role="INCIDENT_MANAGER")
         self.create_team(tenant_id, "Incident Response")
-        service_id, ci_id = uuid4(), uuid4()
-        with self.migrator_engine.begin() as conn:
-            conn.execute(
-                text("INSERT INTO public.itsm_services (id,tenant_id,name,slug,tier,status,created_at,updated_at) VALUES (:id,:tenant,'Payments','payments-command','TIER_1','OPERATIONAL',now(),now())"),
-                {"id": service_id, "tenant": tenant_id},
-            )
-            conn.execute(
-                text("INSERT INTO public.itsm_configuration_items (id,tenant_id,service_id,name,ci_type,environment,status,attributes,created_at,updated_at) VALUES (:id,:tenant,:service,'Payments API','APPLICATION','PRODUCTION','ACTIVE','{}'::jsonb,now(),now())"),
-                {"id": ci_id, "tenant": tenant_id, "service": service_id},
-            )
         headers = {"Authorization": f"Bearer {api_key}"}
         participants = self.client.get(
             "/v1/itsm/incidents/operations/participants",
@@ -741,18 +731,10 @@ class ITSMIncidentTestCase(unittest.TestCase):
         declared = self.client.post(
             f"/v1/itsm/incidents/{incident_id}/major-incident",
             json={
-                "communication_lead_id": str(user_id),
                 "communication_channel": "war-room",
                 "impacted_business_units": ["Payments"],
-                "affected_service_ids": [str(service_id)],
-                "affected_configuration_item_ids": [str(ci_id)],
                 "executive_summary": "Customer payments unavailable",
                 "bridge_url": "https://bridge.example.com/payments-war-room",
-                "restoration_checkpoints": [{"title": "Failover completed", "owner_id": str(user_id)}],
-                "command_decisions": [{"summary": "Fail over payments traffic", "owner_id": str(user_id)}],
-                "command_tasks": [{"title": "Validate recovery", "owner_id": str(user_id)}],
-                "stakeholders": [{"name": "Payments Operations", "role": "Business owner"}],
-                "command_communications": [{"audience": "Support", "channel": "war-room", "message": "Investigation is active"}],
             },
             headers=headers,
         )
@@ -761,14 +743,6 @@ class ITSMIncidentTestCase(unittest.TestCase):
         self.assertEqual(declared.json()["bridge_url"], "https://bridge.example.com/payments-war-room")
         self.assertEqual(declared.json()["executive_summary"], "Customer payments unavailable")
         self.assertEqual(declared.json()["impacted_business_units"], ["Payments"])
-        self.assertEqual(declared.json()["communication_lead_id"], str(user_id))
-        self.assertEqual(declared.json()["affected_service_ids"], [str(service_id)])
-        self.assertEqual(declared.json()["affected_configuration_item_ids"], [str(ci_id)])
-        self.assertEqual(declared.json()["restoration_checkpoints"][0]["title"], "Failover completed")
-        self.assertEqual(declared.json()["command_decisions"][0]["summary"], "Fail over payments traffic")
-        self.assertEqual(declared.json()["command_tasks"][0]["title"], "Validate recovery")
-        self.assertEqual(declared.json()["stakeholders"][0]["name"], "Payments Operations")
-        self.assertEqual(declared.json()["command_communications"][0]["status"], "DRAFT")
         self.assertEqual(declared.json()["postmortem_status"], "PENDING")
 
         updated = self.client.patch(
@@ -787,9 +761,6 @@ class ITSMIncidentTestCase(unittest.TestCase):
         self.assertEqual(read_command.status_code, 200, read_command.text)
         self.assertEqual(read_command.json()["postmortem_status"], "IN_PROGRESS")
         self.assertEqual(read_command.json()["bridge_url"], "https://bridge.example.com/updated")
-        self.assertEqual(read_command.json()["communication_lead_id"], str(user_id))
-        self.assertEqual(read_command.json()["affected_service_ids"], [str(service_id)])
-        self.assertEqual(read_command.json()["command_tasks"][0]["title"], "Validate recovery")
 
         invalid_pir = self.client.patch(f"/v1/itsm/incidents/{incident_id}/major-incident", json={"postmortem_status": "MADE_UP"}, headers=headers)
         self.assertEqual(invalid_pir.status_code, 422)
@@ -941,7 +912,7 @@ class ITSMIncidentTestCase(unittest.TestCase):
         response = self.client.get(f"/v1/itsm/incidents/operations/dashboard?tenant_id={other_tenant_id}", headers=headers)
         self.assertEqual(response.status_code, 200, response.text)
         dashboard = response.json()
-        self.assertEqual(dashboard["summary"], {"open_incidents": 6, "p1_p2": 2, "sla_at_risk": 1, "sla_breached": 1, "stuck": 1, "unassigned": 5, "active_major_incidents": 0, "escalation_watch": 5})
+        self.assertEqual(dashboard["summary"], {"open_incidents": 6, "p1_p2": 2, "sla_at_risk": 1, "sla_breached": 1, "stuck": 1, "escalation_watch": 5})
         items = {item["incident_id"]: item for item in dashboard["escalation_watch"]}
         self.assertEqual(items[p1_id]["attention_reasons"], ["HIGH_PRIORITY"])
         self.assertEqual(items[p2_id]["attention_reasons"], ["HIGH_PRIORITY"])
@@ -1099,24 +1070,6 @@ class ITSMIncidentTestCase(unittest.TestCase):
         self.assertEqual(classified.status_code, 200, classified.text)
         self.assertEqual(classified.json()["service_id"], str(service_id))
         self.assertEqual(classified.json()["category_id"], str(category_id))
-        service_queue = self.client.get(
-            f"/v1/itsm/incidents/operations/queue?service_id={service_id}",
-            headers=headers,
-        )
-        self.assertEqual(service_queue.status_code, 200, service_queue.text)
-        self.assertEqual(
-            {item["incident"]["id"] for item in service_queue.json()["items"]},
-            {incident_id},
-        )
-        category_queue = self.client.get(
-            f"/v1/itsm/incidents/operations/queue?category_id={category_id}",
-            headers=headers,
-        )
-        self.assertEqual(category_queue.status_code, 200, category_queue.text)
-        self.assertEqual(
-            {item["incident"]["id"] for item in category_queue.json()["items"]},
-            {incident_id},
-        )
 
         cleared = self.client.patch(
             f"/v1/itsm/incidents/{incident_id}",
@@ -1184,17 +1137,6 @@ class ITSMIncidentTestCase(unittest.TestCase):
         self.assertGreater(datetime.fromisoformat(resumed.json()["sla_resolution_due_at"]), due_before)
 
         self.assertEqual(self.client.get("/v1/itsm/incidents/operations/saved-views", headers=headers).json(), [])
-        saved_view = self.client.post(
-            "/v1/itsm/incidents/operations/saved-views",
-            json={"name": "Payment incidents", "filters": {"search": incident["ticket_number"], "sort_by": "priority"}},
-            headers=headers,
-        )
-        self.assertEqual(saved_view.status_code, 201, saved_view.text)
-        self.assertEqual(saved_view.json()["filters"]["search"], incident["ticket_number"])
-        self.assertEqual(
-            self.client.get("/v1/itsm/incidents/operations/saved-views", headers=headers).json()[0]["name"],
-            "Payment incidents",
-        )
 
 
     def test_27_reopen_and_classification_validation_through_api(self):

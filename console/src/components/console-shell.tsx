@@ -139,6 +139,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
       ? [
           { name: "Dashboard", href: "/itsm/dashboard", icon: LayoutDashboard, roles: readRoles },
           { name: "My Tickets", href: "/itsm/incidents", icon: Ticket, roles: readRoles },
+          { name: "Approvals", href: "/itsm/approvals", icon: FileCheck, roles: readRoles },
           { name: "Report an Issue", href: "/itsm/incidents/new", icon: ClipboardCheck, roles: readRoles },
           { name: "Service Catalog", href: "/itsm/services", icon: Layers, roles: readRoles },
           { name: "Knowledge Base", href: "/itsm/knowledge", icon: BookOpen, roles: readRoles },
@@ -177,6 +178,8 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
       ? "Report an Issue"
       : pathname.startsWith("/itsm/incidents/")
       ? "Incident Details"
+      : pathname === "/itsm/approvals" || pathname.startsWith("/itsm/approvals/")
+      ? "Approvals"
       : pathname === "/itsm/notifications"
       ? "Notifications"
       : pathname === "/itsm/profile"
@@ -189,12 +192,18 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
       {allowedNavigation.map((item) => {
         const itemSection = item.href.includes("section=") ? item.href.split("section=")[1] : null;
         const itemPath = item.href.split("?")[0];
+        const isExact = pathname === item.href;
+        const isDashboard = item.href === "/itsm/dashboard" && pathname.startsWith("/itsm/dashboard");
+        const isTickets = item.href === "/itsm/incidents" && pathname.startsWith("/itsm/incidents") && pathname !== "/itsm/incidents/new";
+        const isGenericPrefix =
+          item.href !== "/overview" &&
+          item.href !== "/itsm/dashboard" &&
+          item.href !== "/itsm/incidents" &&
+          pathname.startsWith(item.href + "/");
+
         const active = effectiveItsmRole === "AUDITOR" && itemSection
           ? pathname === itemPath && auditorSection === itemSection
-          :
-          pathname === item.href ||
-          (item.href === "/itsm/dashboard" && pathname.startsWith("/itsm/dashboard")) ||
-          (item.href !== "/itsm/dashboard" && item.href !== "/overview" && pathname.startsWith(item.href));
+          : isExact || isDashboard || isTickets || isGenericPrefix;
         return (
           <Link
             key={item.name}

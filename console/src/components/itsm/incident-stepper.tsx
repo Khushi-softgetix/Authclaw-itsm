@@ -20,9 +20,10 @@ const STEP_LABELS: Record<string, string> = {
 };
 
 export default function IncidentStepper({ currentStatus }: IncidentStepperProps) {
-  const norm = currentStatus?.toUpperCase() || "NEW";
+  const norm = currentStatus?.toUpperCase().trim() || "NEW";
   const isCancelled = norm === "CANCELLED";
   const isPending = norm === "PENDING";
+  const isClosed = norm === "CLOSED";
 
   const getStepIndex = (st: string) => {
     switch (st) {
@@ -54,7 +55,7 @@ export default function IncidentStepper({ currentStatus }: IncidentStepperProps)
           </div>
         ) : (
           ORDERED_STEPS.map((step, idx) => {
-            const isCompleted = idx < currentIndex;
+            const isCompleted = isClosed ? idx <= currentIndex : idx < currentIndex;
             const isCurrent = idx === currentIndex;
             const label = isCurrent && isPending ? "Pending" : STEP_LABELS[step];
 

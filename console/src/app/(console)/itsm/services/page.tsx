@@ -409,9 +409,7 @@ export default function ServicesPage() {
                   </div>
 
                   <Link
-                    href={`/itsm/incidents/new?category=${encodeURIComponent(
-                      service.category_label || service.categoryLabel || ""
-                    )}&title=${encodeURIComponent(service.name || service.title || "")}`}
+                    href={`/itsm/requests/new?item=${encodeURIComponent(service.id)}`}
                     className="w-full inline-flex items-center justify-center gap-2 px-4 py-2 bg-[#6D28D9] hover:bg-[#5B21B6] text-white text-xs font-bold rounded-xl transition shadow-sm"
                   >
                     <span>Request Service</span>

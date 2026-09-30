@@ -1,13 +1,13 @@
 """Domain and database service for ITSM Service Requests (Step 6)."""
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import logging
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import inspect, or_
+from sqlalchemy import inspect, or_, text
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import (
@@ -17,11 +17,13 @@ from app.db.models import (
     ITSMTeam,
     ITSMTicket,
     ITSMTicketActivity,
+    PendingApproval,
     User,
 )
 from app.schemas.itsm_incidents import IncidentActivityCreateRequest
 from app.schemas.itsm_requests import (
     ServiceRequestAssignRequest,
+    ServiceRequestCreateRequest,
     ServiceRequestDetailData,
     ServiceRequestResponse,
     ServiceRequestStatusUpdateRequest,
@@ -97,6 +99,190 @@ class RequestService:
             updated_at=ticket.updated_at,
             request_detail=detail_data,
         )
+
+    @classmethod
+    def create_request(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        actor_id: UUID,
+        payload: ServiceRequestCreateRequest,
+    ) -> ServiceRequestResponse:
+        """Create a new service request and snapshot catalog intake details."""
+        user = db.query(User).filter(User.id == actor_id, User.tenant_id == tenant_id, User.is_active.is_(True)).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid Requester: User not found or inactive in this tenant",
+            )
+
+        catalog_item = None
+        service_id = payload.service_id
+        fulfillment_group = None
+
+        if payload.catalog_item_id:
+            catalog_item = (
+                db.query(ITSMServiceCatalogItem)
+                .options(joinedload(ITSMServiceCatalogItem.service))
+                .filter(
+                    ITSMServiceCatalogItem.id == payload.catalog_item_id,
+                    ITSMServiceCatalogItem.tenant_id == tenant_id,
+                    ITSMServiceCatalogItem.is_active.is_(True),
+                )
+                .first()
+            )
+            if not catalog_item:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Selected catalog item not found or inactive",
+                )
+            service_id = catalog_item.service_id
+            fulfillment_group = catalog_item.fulfillment_group
+
+        title = payload.title.strip() if payload.title and payload.title.strip() else (
+            catalog_item.name if catalog_item else "Service Request"
+        )
+
+        from app.services.itsm_incident_service import IncidentService
+        ticket_number = IncidentService.generate_ticket_number(db, tenant_id, "SERVICE_REQUEST", prefix="REQ")
+
+        initial_status = "ASSIGNED" if fulfillment_group else "NEW"
+        status_reason = None
+        if catalog_item and catalog_item.approval_required:
+            initial_status = "PENDING"
+            status_reason = "Pending approval"
+        priority = payload.priority.strip().upper() if payload.priority else "P3"
+        now = datetime.now(timezone.utc)
+
+        ticket = ITSMTicket(
+            id=uuid4(),
+            tenant_id=tenant_id,
+            ticket_number=ticket_number,
+            ticket_type="SERVICE_REQUEST",
+            title=title,
+            description=payload.description.strip(),
+            impact=payload.impact.strip().upper() if payload.impact else "MEDIUM",
+            urgency=payload.urgency.strip().upper() if payload.urgency else "MEDIUM",
+            priority=priority,
+            status=initial_status,
+            status_reason=status_reason,
+            source_channel=payload.source_channel or "PORTAL",
+            requester_id=actor_id,
+            assignment_group=fulfillment_group,
+            service_id=service_id,
+            category="SERVICE_REQUEST",
+            sla_status="WITHIN_SLA",
+            created_at=now,
+            updated_at=now,
+        )
+
+        from app.services.itsm_sla_service import apply_sla_policy
+        sla_policy = IncidentService._find_sla_policy(db, tenant_id, priority, service_id)
+        apply_sla_policy(ticket, sla_policy, now)
+
+        db.add(ticket)
+        db.flush()
+
+        detail = None
+        if catalog_item:
+            submitted = dict(payload.form_data or {})
+            submitted["quantity"] = payload.quantity
+            submitted["reason"] = payload.description.strip()
+
+            detail = ITSMServiceRequestDetail(
+                id=uuid4(),
+                tenant_id=tenant_id,
+                ticket_id=ticket.id,
+                catalog_item_id=catalog_item.id,
+                catalog_item_version=catalog_item.version or 1,
+                intake_schema_snapshot=catalog_item.intake_schema or {},
+                submitted_form_data=submitted,
+                created_at=now,
+            )
+            db.add(detail)
+            db.flush()
+
+            if catalog_item.approval_required:
+                approval = PendingApproval(
+                    id=uuid4(),
+                    tenant_id=tenant_id,
+                    action_id=str(ticket.id),
+                    action_type="service_request_approval",
+                    action_description=f"Approval for Service Request: {title} ({ticket_number})",
+                    action_payload={
+                        "ticket_id": str(ticket.id),
+                        "ticket_number": ticket_number,
+                        "title": title,
+                        "catalog_item_id": str(catalog_item.id),
+                        "catalog_item_name": catalog_item.name,
+                        "service_name": catalog_item.service.name if catalog_item.service else None,
+                        "quantity": payload.quantity,
+                        "description": payload.description.strip(),
+                        "priority": priority,
+                        "urgency": payload.urgency.strip().upper() if payload.urgency else "MEDIUM",
+                        "impact": payload.impact.strip().upper() if payload.impact else "MEDIUM",
+                        "requester_id": str(actor_id),
+                        "requester_email": user.email,
+                        "form_data": payload.form_data or {},
+                    },
+                    status="PENDING",
+                    requester_id=actor_id,
+                    expires_at=now + timedelta(days=14),
+                    created_at=now,
+                    updated_at=now,
+                )
+                db.add(approval)
+                db.flush()
+
+        cls._record_activity(
+            db=db,
+            tenant_id=tenant_id,
+            ticket_id=ticket.id,
+            activity_type="CREATED",
+            content=f"Service request submitted for '{title}' (Status: {initial_status})",
+            actor_id=actor_id,
+        )
+
+        try:
+            sp = db.begin_nested()
+            try:
+                db.execute(
+                    text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                    {"tenant_id": str(tenant_id)},
+                )
+                append_audit_event(
+                    db,
+                    {
+                        "id": str(uuid4()),
+                        "idempotency_key": f"itsm:request:{ticket.id}:created:{now.timestamp()}",
+                        "tenant_id": str(tenant_id),
+                        "timestamp": now,
+                        "actor_id": str(actor_id),
+                        "actor_type": "user",
+                        "action": "itsm.request.created",
+                        "request_id": str(ticket.id),
+                        "provider": "itsm",
+                        "reason": f"Service request submitted for {title}",
+                        "response_status": 201,
+                        "frameworks_affected": ["ITIL"],
+                        "execution_trace": [
+                            f"ticket_id={ticket.id}",
+                            f"ticket_number={ticket.ticket_number}",
+                            f"catalog_item_id={catalog_item.id if catalog_item else None}",
+                            f"status={initial_status}",
+                        ],
+                    },
+                )
+                sp.commit()
+            except Exception as e:
+                sp.rollback()
+                logger.warning("Audit event emission failed: %s", e)
+        except Exception as e:
+            logger.warning("Audit event savepoint failed: %s", e)
+
+        db.commit()
+        db.refresh(ticket)
+        return cls._build_response(ticket, detail)
 
     @classmethod
     def list_requests(

@@ -444,10 +444,57 @@ def change_incident_status(
     role = str(access_row.itsm_role).upper() if (access_row and access_row.itsm_role) else _get_itsm_role(db, t_id, actor_id)
     allowed_roles = {"SERVICE_AGENT", "INCIDENT_MANAGER", "PLATFORM_ADMINISTRATOR", "SERVICE_LEAD", "ADMIN"}
     if role not in allowed_roles:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Requesters and unauthorized roles are not permitted to change incident status",
-        )
+        if role == "REQUESTER":
+            target_status = payload.status.strip().upper() if payload.status else ""
+            if target_status == "CANCELLED":
+                ticket = IncidentService.get_incident(db, t_id, incident_id)
+                if str(ticket.requester_id) != str(actor_id):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="You can only cancel incidents that you submitted",
+                    )
+                if ticket.status in {"CLOSED", "CANCELLED"}:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Cannot cancel incident in terminal status '{ticket.status}'",
+                    )
+                if ticket.status == "RESOLVED":
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Cannot cancel a resolved incident. You may reopen it if the issue is not fixed",
+                    )
+                if not payload.status_reason or not payload.status_reason.strip():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="A reason is required to cancel the ticket",
+                    )
+            elif target_status == "IN_PROGRESS":
+                ticket = IncidentService.get_incident(db, t_id, incident_id)
+                if str(ticket.requester_id) != str(actor_id):
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="You can only reopen incidents that you submitted",
+                    )
+                if ticket.status != "RESOLVED":
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Cannot reopen incident in status '{ticket.status}'. Only RESOLVED incidents can be reopened",
+                    )
+                if not payload.status_reason or not payload.status_reason.strip():
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="A reason is required to reopen the ticket",
+                    )
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Requesters are only permitted to cancel open incidents or reopen resolved incidents",
+                )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Requesters and unauthorized roles are not permitted to change incident status",
+            )
 
     return IncidentService.change_status(
         db=db,

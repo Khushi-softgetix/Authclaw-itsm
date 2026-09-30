@@ -129,6 +129,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
       ? [
           { name: "Dashboard", href: "/itsm/dashboard", icon: LayoutDashboard, roles: readRoles },
           { name: "My Tickets", href: "/itsm/incidents", icon: Ticket, roles: readRoles },
+          { name: "Approvals", href: "/itsm/approvals", icon: FileCheck, roles: readRoles },
           { name: "Report an Issue", href: "/itsm/incidents/new", icon: ClipboardCheck, roles: readRoles },
           { name: "Service Catalog", href: "/itsm/services", icon: Layers, roles: readRoles },
           { name: "Knowledge Base", href: "/itsm/knowledge", icon: BookOpen, roles: readRoles },
@@ -163,6 +164,8 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
       ? "Report an Issue"
       : pathname.startsWith("/itsm/incidents/")
       ? "Incident Details"
+      : pathname === "/itsm/approvals" || pathname.startsWith("/itsm/approvals/")
+      ? "Approvals"
       : pathname === "/itsm/notifications"
       ? "Notifications"
       : pathname === "/itsm/profile"
@@ -173,10 +176,16 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
   const navLinks = (onClick?: () => void) => (
     <div className="space-y-1">
       {allowedNavigation.map((item) => {
-        const active =
-          pathname === item.href ||
-          (item.href === "/itsm/dashboard" && pathname.startsWith("/itsm/dashboard")) ||
-          (item.href !== "/itsm/dashboard" && item.href !== "/overview" && pathname.startsWith(item.href));
+        const isExact = pathname === item.href;
+        const isDashboard = item.href === "/itsm/dashboard" && pathname.startsWith("/itsm/dashboard");
+        const isTickets = item.href === "/itsm/incidents" && pathname.startsWith("/itsm/incidents") && pathname !== "/itsm/incidents/new";
+        const isGenericPrefix =
+          item.href !== "/overview" &&
+          item.href !== "/itsm/dashboard" &&
+          item.href !== "/itsm/incidents" &&
+          pathname.startsWith(item.href + "/");
+
+        const active = isExact || isDashboard || isTickets || isGenericPrefix;
         return (
           <Link
             key={item.name}

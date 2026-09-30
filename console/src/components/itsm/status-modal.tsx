@@ -86,6 +86,11 @@ export default function StatusModal({ incident, onClose, onSuccess, initialStatu
       return;
     }
 
+    if (isReopening && !statusReason.trim()) {
+      setError("Please explain why this issue is still not fixed.");
+      return;
+    }
+
     try {
       setLoading(true);
       setError(null);
@@ -201,7 +206,7 @@ export default function StatusModal({ incident, onClose, onSuccess, initialStatu
           {isReopening && (
             <div>
               <label htmlFor="status-reason" className="block text-xs font-semibold text-[#0E1726] mb-1.5">
-                Reopen Reason
+                Why is the issue still not fixed? <span className="text-red-500">*</span>
               </label>
               <textarea
                 id="status-reason"
@@ -210,6 +215,7 @@ export default function StatusModal({ incident, onClose, onSuccess, initialStatu
                 placeholder="Reason for reopening incident (e.g. issue recurred, customer verified problem persists)..."
                 rows={3}
                 className="w-full bg-white border border-[#E6E9F0] rounded-lg p-2.5 text-xs text-[#0E1726] focus:ring-1 focus:ring-[#6D28D9] focus:outline-none"
+                required
               />
             </div>
           )}

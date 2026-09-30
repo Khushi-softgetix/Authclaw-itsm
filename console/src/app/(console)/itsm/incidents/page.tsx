@@ -36,18 +36,33 @@ export default function IncidentListPage() {
       if (search.trim()) params.set("search", search.trim());
       params.set("limit", "100");
 
-      const res = await fetch(`/api/itsm/incidents?${params.toString()}`);
-      if (res.status === 401) {
+      const [incRes, reqRes] = await Promise.all([
+        fetch(`/api/itsm/incidents?${params.toString()}`),
+        fetch(`/api/itsm/requests?${params.toString()}`).catch(() => null),
+      ]);
+      if (incRes.status === 401) {
         window.location.href = "/itsm/login";
         return;
       }
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
+      if (!incRes.ok) {
+        const data = await incRes.json().catch(() => ({}));
         throw new Error(data.error || data.detail || "Failed to load tickets");
       }
 
-      const data = await res.json();
-      setIncidents(Array.isArray(data) ? data : []);
+      const incData = await incRes.json();
+      let allTickets: Incident[] = Array.isArray(incData) ? incData : [];
+
+      if (reqRes && reqRes.ok) {
+        const reqData = await reqRes.json().catch(() => []);
+        if (Array.isArray(reqData)) {
+          allTickets = [...allTickets, ...reqData];
+        }
+      }
+
+      allTickets.sort(
+        (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      );
+      setIncidents(allTickets);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to load tickets");
     } finally {
@@ -99,6 +114,12 @@ export default function IncidentListPage() {
       count: incidents.filter((i) => i.status === "CLOSED" || i.status === "CANCELLED").length,
     },
   ];
+
+  const getTicketHref = (ticket: Incident) => {
+    return ticket.ticket_type === "SERVICE_REQUEST" || ticket.ticket_number?.startsWith("REQ-")
+      ? `/itsm/requests/${ticket.id}`
+      : `/itsm/incidents/${ticket.id}`;
+  };
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
@@ -225,12 +246,12 @@ export default function IncidentListPage() {
                 {filteredIncidents.map((incident) => (
                   <tr key={incident.id} className="hover:bg-[#FBFAF9] transition">
                     <td className="py-3.5 px-4 font-mono font-bold text-[#6D28D9]">
-                      <Link href={`/itsm/incidents/${incident.id}`} className="hover:underline">
+                      <Link href={getTicketHref(incident)} className="hover:underline">
                         {incident.ticket_number}
                       </Link>
                     </td>
                     <td className="py-3.5 px-4 font-medium text-[#0E1726] max-w-[240px] truncate">
-                      <Link href={`/itsm/incidents/${incident.id}`} className="hover:text-[#6D28D9]">
+                      <Link href={getTicketHref(incident)} className="hover:text-[#6D28D9]">
                         {incident.title}
                       </Link>
                     </td>
@@ -253,7 +274,7 @@ export default function IncidentListPage() {
                     </td>
                     <td className="py-3.5 px-4 text-right">
                       <Link
-                        href={`/itsm/incidents/${incident.id}`}
+                        href={getTicketHref(incident)}
                         className="inline-flex items-center gap-1 text-xs font-semibold text-[#6D28D9] hover:text-[#5B21B6] bg-[#F1ECFE] hover:bg-[#E9D8FD] px-3 py-1 rounded-lg transition"
                       >
                         <span>View Details</span>

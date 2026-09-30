@@ -73,3 +73,20 @@ class ServiceRequestAssignRequest(BaseModel):
     assignment_group: Optional[str] = Field(default=None, max_length=100, description="Assigned operational group")
 
     model_config = ConfigDict(extra="forbid")
+
+
+class ServiceRequestCreateRequest(BaseModel):
+    """Payload for submitting a new service request from the service catalog."""
+    catalog_item_id: Optional[UUID] = Field(default=None, description="Selected service catalog item ID")
+    service_id: Optional[UUID] = Field(default=None, description="Associated service ID")
+    title: Optional[str] = Field(default=None, max_length=512, description="Request title (defaults to catalog item name)")
+    description: str = Field(..., min_length=1, description="Reason / business justification for request")
+    quantity: int = Field(default=1, ge=1, le=100, description="Quantity of requested items")
+    urgency: str = Field(default="MEDIUM", description="Urgency: LOW, MEDIUM, HIGH, CRITICAL")
+    impact: str = Field(default="MEDIUM", description="Impact: LOW, MEDIUM, HIGH, CRITICAL")
+    priority: Optional[str] = Field(default="P3", description="Priority level: P1, P2, P3, P4")
+    form_data: dict[str, Any] = Field(default_factory=dict, description="Custom catalog intake form values")
+    source_channel: str = Field(default="PORTAL", max_length=50, description="Intake source channel")
+
+    model_config = ConfigDict(extra="ignore")
+

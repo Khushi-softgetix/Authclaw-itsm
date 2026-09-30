@@ -137,7 +137,7 @@ async def upload_incident_attachment(
             actor_id=actor_id,
             payload=IncidentActivityCreateRequest(
                 activity_type="COMMENT",
-                message=f"Attached file: {attachment.file_name} ({(attachment.file_size_bytes / 1024):.1f} KB)",
+                content=f"Attached file: {attachment.file_name} ({(attachment.file_size_bytes / 1024):.1f} KB)",
                 is_internal=False,
             ),
         )

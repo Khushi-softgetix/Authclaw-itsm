@@ -8,7 +8,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN python -m pip install --no-cache-dir --require-hashes -r requirements.txt
 RUN addgroup --system authclaw && adduser --system --ingroup authclaw authclaw
-RUN mkdir -p /app/.authclaw && chown -R authclaw:authclaw /app/.authclaw
+RUN mkdir -p /app/.authclaw /app/data/uploads && chown -R authclaw:authclaw /app/.authclaw /app/data
 
 COPY --chown=authclaw:authclaw . .
 

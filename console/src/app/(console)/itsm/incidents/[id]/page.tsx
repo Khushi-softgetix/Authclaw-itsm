@@ -17,6 +17,7 @@ import {
   Layers,
   LifeBuoy,
   Paperclip,
+  Ban,
   RefreshCw,
   ShieldAlert,
 } from "lucide-react";
@@ -29,6 +30,8 @@ import ActivityTimeline from "@/components/itsm/activity-timeline";
 import StatusModal from "@/components/itsm/status-modal";
 import ReportRecurringProblemModal from "@/components/itsm/report-recurring-problem-modal";
 import AttachmentSection, { AttachmentItem } from "@/components/itsm/attachment-section";
+import ReopenTicketModal from "@/components/itsm/reopen-ticket-modal";
+import CancelTicketModal from "@/components/itsm/cancel-ticket-modal";
 
 export default function IncidentDetailPage() {
   const params = useParams();
@@ -43,6 +46,8 @@ export default function IncidentDetailPage() {
   const [showStatusModal, setShowStatusModal] = useState<boolean>(false);
   const [targetModalStatus, setTargetModalStatus] = useState<string | undefined>(undefined);
   const [showRecurringModal, setShowRecurringModal] = useState<boolean>(false);
+  const [showReopenModal, setShowReopenModal] = useState<boolean>(false);
+  const [showCancelModal, setShowCancelModal] = useState<boolean>(false);
 
   const fetchIncidentData = useCallback(async (role?: string) => {
     if (!incidentId) return;
@@ -140,10 +145,10 @@ export default function IncidentDetailPage() {
         <p className="text-xs text-[#6B7488]">Access is restricted to authorized roles within this workspace.</p>
         <div className="pt-2">
           <Link
-            href={userRole === "SERVICE_AGENT" ? "/itsm/dashboard/agent" : "/itsm/dashboard"}
+            href={userRole === "SERVICE_AGENT" ? "/itsm/dashboard/agent" : "/itsm/incidents"}
             className="px-4 py-2 bg-[#6D28D9] text-white rounded-lg text-xs font-semibold hover:bg-[#5B21B6] transition"
           >
-            {userRole === "SERVICE_AGENT" ? "Back to My Work" : "Back to Dashboard"}
+            {userRole === "SERVICE_AGENT" ? "Back to My Work" : "Back to My Tickets"}
           </Link>
         </div>
       </div>
@@ -650,8 +655,12 @@ export default function IncidentDetailPage() {
       {/* Top Navigation Breadcrumb */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 text-xs text-[#6B7488]">
-          <Link href="/itsm/incidents" className="hover:text-[#0E1726] flex items-center gap-1 font-semibold text-[#6D28D9]">
-            <ArrowLeft className="w-3.5 h-3.5" /> My Tickets
+          <Link
+            href="/itsm/incidents"
+            id="back-to-my-tickets"
+            className="hover:text-[#0E1726] flex items-center gap-1 font-semibold text-[#6D28D9]"
+          >
+            <ArrowLeft className="w-3.5 h-3.5" /> Back to My Tickets
           </Link>
           <span>/</span>
           <span className="font-mono text-[#0E1726] font-medium">{incident.ticket_number}</span>
@@ -680,6 +689,32 @@ export default function IncidentDetailPage() {
             <h1 className="text-xl md:text-2xl font-bold text-[#0E1726] tracking-tight">
               {incident.title}
             </h1>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            {["NEW", "ASSIGNED", "IN_PROGRESS", "PENDING"].includes(incident.status) && (
+              <button
+                type="button"
+                onClick={() => setShowCancelModal(true)}
+                id="requester-cancel-ticket-button"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 text-xs font-bold transition shadow-xs"
+              >
+                <Ban className="w-3.5 h-3.5" />
+                <span>Cancel Ticket</span>
+              </button>
+            )}
+
+            {incident.status === "RESOLVED" && (
+              <button
+                type="button"
+                onClick={() => setShowReopenModal(true)}
+                id="requester-reopen-ticket-button"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-amber-600 hover:bg-amber-700 text-white text-xs font-bold transition shadow-xs"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                <span>Reopen Ticket</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -746,9 +781,22 @@ export default function IncidentDetailPage() {
           {/* Resolution Information Card */}
           {(incident.status === "RESOLVED" || incident.status === "CLOSED") && (
             <div className="bg-white rounded-[20px] border border-emerald-200 bg-emerald-50/20 p-6 shadow-xs space-y-3">
-              <div className="flex items-center gap-2 text-emerald-800 border-b border-emerald-100 pb-2">
-                <CheckCircle2 className="w-5 h-5 text-emerald-600" />
-                <h3 className="text-sm font-bold">Resolution Details</h3>
+              <div className="flex items-center justify-between border-b border-emerald-100 pb-2">
+                <div className="flex items-center gap-2 text-emerald-800">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                  <h3 className="text-sm font-bold">Resolution Details</h3>
+                </div>
+                {incident.status === "RESOLVED" && (
+                  <button
+                    type="button"
+                    onClick={() => setShowReopenModal(true)}
+                    id="requester-reopen-card-button"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold transition shadow-xs"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Reopen Ticket</span>
+                  </button>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -853,6 +901,30 @@ export default function IncidentDetailPage() {
             setShowStatusModal(false);
             setTargetModalStatus(undefined);
           }}
+          onSuccess={(updated) => {
+            setIncident(updated);
+            fetchIncidentData();
+          }}
+        />
+      )}
+
+      {showReopenModal && incident && (
+        <ReopenTicketModal
+          ticketNumber={incident.ticket_number}
+          ticketId={incident.id}
+          onClose={() => setShowReopenModal(false)}
+          onSuccess={(updated) => {
+            setIncident(updated);
+            fetchIncidentData();
+          }}
+        />
+      )}
+
+      {showCancelModal && incident && (
+        <CancelTicketModal
+          ticketNumber={incident.ticket_number}
+          ticketId={incident.id}
+          onClose={() => setShowCancelModal(false)}
           onSuccess={(updated) => {
             setIncident(updated);
             fetchIncidentData();

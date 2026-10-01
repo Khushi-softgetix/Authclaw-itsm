@@ -42,6 +42,9 @@ ITSM_AGENT_LITE_USER_ID = uuid.UUID("22222222-2222-4222-8222-222222222229")
 ITSM_REQUESTER_LITE_USER_ID = uuid.UUID("22222222-2222-4222-8222-222222222230")
 ITSM_PROCESS_CHANGE_USER_ID = uuid.UUID("22222222-2222-4222-8222-222222222231")
 ITSM_AUDITOR_USER_ID = uuid.UUID("22222222-2222-4222-8222-222222222232")
+ITSM_TEST_SERVICE_AGENT_USER_ID = uuid.UUID("22222222-2222-4222-8222-222222222233")
+ITSM_TEST_PROBLEM_MANAGER_USER_ID = uuid.UUID("22222222-2222-4222-8222-222222222234")
+ITSM_TEST_CHANGE_MANAGER_USER_ID = uuid.UUID("22222222-2222-4222-8222-222222222235")
 API_KEY_ID = uuid.UUID("33333333-3333-4333-8333-333333333333")
 GATEWAY_ID = uuid.UUID("44444444-4444-4444-8444-444444444444")
 POLICY_ID = uuid.UUID("55555555-5555-4555-8555-555555555555")
@@ -262,18 +265,21 @@ def main() -> None:
 
         # Seed additional standard test accounts
         additional_test_users = [
-            (ITSM_AGENT_LITE_USER_ID, "agent@authclaw-lite.demo", "SERVICE_AGENT", True, False),
-            (ITSM_REQUESTER_LITE_USER_ID, "requester@authclaw-lite.demo", "REQUESTER", True, False),
-            (ITSM_PROCESS_CHANGE_USER_ID, "processchange@authclaw-lite.demo", "PROCESS_CHANGE_MANAGER", True, False),
-            (ITSM_AUDITOR_USER_ID, "auditor@authclaw-lite.demo", "AUDITOR", True, False),
+            (ITSM_AGENT_LITE_USER_ID, "agent@authclaw-lite.demo", "SERVICE_AGENT", True, False, "Khushi@12345"),
+            (ITSM_REQUESTER_LITE_USER_ID, "requester@authclaw-lite.demo", "REQUESTER", True, False, RAW_ADMIN_PASSWORD),
+            (ITSM_PROCESS_CHANGE_USER_ID, "processchange@authclaw-lite.demo", "PROCESS_CHANGE_MANAGER", True, False, RAW_ADMIN_PASSWORD),
+            (ITSM_AUDITOR_USER_ID, "auditor@authclaw-lite.demo", "AUDITOR", True, False, RAW_ADMIN_PASSWORD),
+            (ITSM_TEST_SERVICE_AGENT_USER_ID, "serviceagent123@gmail.com", "SERVICE_AGENT", True, False, "ServiceAgent@123"),
+            (ITSM_TEST_PROBLEM_MANAGER_USER_ID, "problemanager123@gmail.com", "PROCESS_CHANGE_MANAGER", True, False, "ProblemManager@123"),
+            (ITSM_TEST_CHANGE_MANAGER_USER_ID, "changemanager123@gmail.com", "PROCESS_CHANGE_MANAGER", True, False, "ChangeManager@123"),
         ]
-        for u_id, u_email, u_role, u_itsm, u_gov in additional_test_users:
+        for u_id, u_email, u_role, u_itsm, u_gov, u_pwd in additional_test_users:
             conn.execute(
                 text("""
                 INSERT INTO users (id, tenant_id, email, password_hash, role, platform_role, mfa_enabled, is_active)
                 VALUES (:id, :tenant_id, :email, :password_hash, 'viewer', 'NONE', false, true)
                 ON CONFLICT (tenant_id, email) DO UPDATE SET
-                    password_hash = users.password_hash,
+                    password_hash = EXCLUDED.password_hash,
                     role = 'viewer',
                     is_active = true,
                     updated_at = NOW()
@@ -282,7 +288,7 @@ def main() -> None:
                     "id": u_id,
                     "tenant_id": TENANT_ID,
                     "email": u_email,
-                    "password_hash": hash_password(RAW_ADMIN_PASSWORD),
+                    "password_hash": hash_password(u_pwd),
                 },
             )
 
@@ -300,7 +306,10 @@ def main() -> None:
                 (gen_random_uuid(), :tenant_id, :requester_lite_id, 'REQUESTER', true, false),
                 (gen_random_uuid(), :tenant_id, :pcm_id, 'PROCESS_CHANGE_MANAGER', true, false),
                 (gen_random_uuid(), :tenant_id, :auditor_id, 'AUDITOR', true, false),
-                (gen_random_uuid(), :tenant_id, :viewer_id, 'REQUESTER', false, true)
+                (gen_random_uuid(), :tenant_id, :viewer_id, 'REQUESTER', false, true),
+                (gen_random_uuid(), :tenant_id, :test_service_agent_id, 'SERVICE_AGENT', true, false),
+                (gen_random_uuid(), :tenant_id, :test_problem_manager_id, 'PROCESS_CHANGE_MANAGER', true, false),
+                (gen_random_uuid(), :tenant_id, :test_change_manager_id, 'PROCESS_CHANGE_MANAGER', true, false)
             ON CONFLICT (tenant_id, user_id) DO UPDATE SET
                 itsm_role = EXCLUDED.itsm_role,
                 has_itsm_access = EXCLUDED.has_itsm_access,
@@ -319,6 +328,9 @@ def main() -> None:
                 "pcm_id": ITSM_PROCESS_CHANGE_USER_ID,
                 "auditor_id": ITSM_AUDITOR_USER_ID,
                 "viewer_id": uuid.UUID("22222222-2222-4222-8222-222222222225"),
+                "test_service_agent_id": ITSM_TEST_SERVICE_AGENT_USER_ID,
+                "test_problem_manager_id": ITSM_TEST_PROBLEM_MANAGER_USER_ID,
+                "test_change_manager_id": ITSM_TEST_CHANGE_MANAGER_USER_ID,
             },
         )
         conn.execute(
@@ -555,7 +567,7 @@ def main() -> None:
             conn.execute(
                 text("""
                 INSERT INTO itsm_configuration_items (id, tenant_id, service_id, name, ci_type, environment, status, attributes, created_at, updated_at)
-                VALUES (:id, :tenant_id, :service_id, :name, :ci_type, :environment, :status, :attributes, NOW(), NOW())
+                VALUES (:id, :tenant_id, :service_id, :name, :ci_type, :environment, :status, :attributes::jsonb, NOW(), NOW())
                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, status = EXCLUDED.status, service_id = EXCLUDED.service_id
                 """),
                 {

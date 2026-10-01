@@ -60,6 +60,7 @@ def _verify_itsm_user(db: Session, tenant_id: UUID, user_id: UUID) -> str:
         )
     return role
 
+
 DEFAULT_SEED_SERVICES = [
     {
         "service_name": "Workplace Technology",

@@ -1441,6 +1441,8 @@ class IncidentService:
             # Reopening ticket
             ticket.resolved_at = None
             ticket.sla_resolution_met_at = None
+            if payload.status_reason and payload.status_reason.strip():
+                ticket.status_reason = payload.status_reason.strip()
 
         ticket.status = target_status
         ticket.updated_at = transition_time
@@ -1484,6 +1486,7 @@ class IncidentService:
             ticket=ticket,
             action="status_changed",
             actor_id=actor_id,
+            reason=payload.status_reason,
             trace_items=[f"old_status={current_status}", f"new_status={target_status}"],
             before_summary={"status": current_status},
             after_summary=new_val,

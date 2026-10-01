@@ -12,7 +12,11 @@ from fastapi import HTTPException, status
 def get_storage_base_dir() -> Path:
     base_dir = os.getenv("ITSM_STORAGE_DIR", "data/uploads")
     path = Path(base_dir).resolve()
-    path.mkdir(parents=True, exist_ok=True)
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        path = Path("/app/.authclaw/uploads").resolve()
+        path.mkdir(parents=True, exist_ok=True)
     return path
 
 

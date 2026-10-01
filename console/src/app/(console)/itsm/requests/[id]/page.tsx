@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
   ArrowLeft,
+  Ban,
   BookOpen,
   CheckCircle2,
   Clock,
@@ -24,6 +25,7 @@ import IncidentStatusBadge from "@/components/itsm/incident-status-badge";
 import ActivityTimeline from "@/components/itsm/activity-timeline";
 import StatusModal from "@/components/itsm/status-modal";
 import AttachmentSection, { AttachmentItem } from "@/components/itsm/attachment-section";
+import CancelTicketModal from "@/components/itsm/cancel-ticket-modal";
 
 function formatFieldLabel(key: string): string {
   return key
@@ -50,6 +52,7 @@ export default function ServiceRequestDetailPage() {
   const [userRole, setUserRole] = useState<string | null>(null);
   const [showStatusModal, setShowStatusModal] = useState<boolean>(false);
   const [targetModalStatus, setTargetModalStatus] = useState<string | undefined>(undefined);
+  const [showCancelModal, setShowCancelModal] = useState<boolean>(false);
 
   const fetchRequestData = useCallback(async () => {
     if (!requestId) return;
@@ -140,10 +143,10 @@ export default function ServiceRequestDetailPage() {
         <p className="text-xs text-[#6B7488]">You do not have permission to view this service request.</p>
         <div className="pt-2">
           <Link
-            href="/itsm/requests"
+            href={userRole === "REQUESTER" ? "/itsm/incidents" : "/itsm/requests"}
             className="px-4 py-2 bg-[#6D28D9] text-white rounded-lg text-xs font-semibold hover:bg-[#5B21B6] transition"
           >
-            Back to Requests
+            {userRole === "REQUESTER" ? "Back to My Tickets" : "Back to Requests"}
           </Link>
         </div>
       </div>
@@ -159,10 +162,10 @@ export default function ServiceRequestDetailPage() {
         <p className="text-xs text-[#6B7488]">The requested service request could not be found or belongs to another workspace.</p>
         <div className="pt-2">
           <Link
-            href="/itsm/requests"
+            href={userRole === "REQUESTER" ? "/itsm/incidents" : "/itsm/requests"}
             className="px-4 py-2 bg-[#6D28D9] text-white rounded-lg text-xs font-semibold hover:bg-[#5B21B6] transition"
           >
-            Back to Requests
+            {userRole === "REQUESTER" ? "Back to My Tickets" : "Back to Requests"}
           </Link>
         </div>
       </div>
@@ -177,10 +180,10 @@ export default function ServiceRequestDetailPage() {
         <h2 className="text-base font-bold text-[#0E1726]">Unable to load service request. Please try again.</h2>
         <div className="flex items-center justify-center gap-3 pt-2">
           <Link
-            href="/itsm/requests"
+            href={userRole === "REQUESTER" ? "/itsm/incidents" : "/itsm/requests"}
             className="px-4 py-2 bg-white border border-[#E6E9F0] text-[#475069] rounded-lg text-xs font-medium hover:bg-[#F5F7FA] transition"
           >
-            Back to Requests
+            {userRole === "REQUESTER" ? "Back to My Tickets" : "Back to Requests"}
           </Link>
           <button
             onClick={() => fetchRequestData()}
@@ -205,11 +208,11 @@ export default function ServiceRequestDetailPage() {
         <div className="space-y-1.5">
           <div>
             <Link
-              href="/itsm/requests"
+              href={userRole === "REQUESTER" ? "/itsm/incidents" : "/itsm/requests"}
               id="back-to-requests-link"
               className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#6D28D9] hover:text-[#5B21B6] transition"
             >
-              <ArrowLeft className="w-3.5 h-3.5" /> Back to Requests
+              <ArrowLeft className="w-3.5 h-3.5" /> {userRole === "REQUESTER" ? "Back to My Tickets" : "Back to Requests"}
             </Link>
           </div>
           <div className="flex items-center gap-2.5 flex-wrap pt-0.5">
@@ -241,7 +244,18 @@ export default function ServiceRequestDetailPage() {
             Search Knowledge
           </Link>
 
-          {!isTerminal && (
+          {userRole === "REQUESTER" && ["NEW", "ASSIGNED", "IN_PROGRESS", "PENDING"].includes(request.status) && (
+            <button
+              onClick={() => setShowCancelModal(true)}
+              id="requester-cancel-request-action"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-rose-200 bg-white hover:bg-rose-50 text-rose-600 text-xs font-semibold transition shadow-xs"
+            >
+              <Ban className="w-3.5 h-3.5" />
+              Cancel Request
+            </button>
+          )}
+
+          {!isTerminal && userRole !== "REQUESTER" && (
             <button
               onClick={() => {
                 setTargetModalStatus(undefined);
@@ -475,6 +489,18 @@ export default function ServiceRequestDetailPage() {
           initialStatus={targetModalStatus}
           statusEndpoint={`/api/itsm/requests/${request.id}/status`}
           onClose={() => setShowStatusModal(false)}
+          onSuccess={() => {
+            fetchRequestData();
+          }}
+        />
+      )}
+
+      {showCancelModal && request && (
+        <CancelTicketModal
+          ticketNumber={request.ticket_number}
+          ticketId={request.id}
+          statusEndpoint={`/api/itsm/requests/${request.id}/status`}
+          onClose={() => setShowCancelModal(false)}
           onSuccess={() => {
             fetchRequestData();
           }}

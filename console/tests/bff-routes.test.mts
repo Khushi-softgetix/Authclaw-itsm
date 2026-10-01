@@ -81,5 +81,9 @@ test("maps approved BFF routes and rejects broader proxy access", () => {
   assert.deepEqual(resolveBffRoute("POST", "itsm/incidents/inc-1/attachments"), { backendPath: "/v1/itsm/incidents/inc-1/attachments", body: "json", status: 201 });
   assert.deepEqual(resolveBffRoute("GET", "itsm/requests/req-1/attachments"), { backendPath: "/v1/itsm/requests/req-1/attachments", body: "none", status: undefined });
   assert.deepEqual(resolveBffRoute("POST", "itsm/requests/req-1/attachments"), { backendPath: "/v1/itsm/requests/req-1/attachments", body: "json", status: 201 });
+  assert.deepEqual(resolveBffRoute("POST", "itsm/requests"), { backendPath: "/v1/itsm/requests", body: "json", status: 201 });
+  assert.deepEqual(resolveBffRoute("GET", "itsm/approvals"), { backendPath: "/v1/itsm/approvals", body: "none", status: undefined });
+  assert.deepEqual(resolveBffRoute("POST", "itsm/approvals/app-1/approve"), { backendPath: "/v1/itsm/approvals/app-1/approve", body: "optional-json", status: undefined });
+  assert.deepEqual(resolveBffRoute("POST", "itsm/approvals/app-1/reject"), { backendPath: "/v1/itsm/approvals/app-1/reject", body: "optional-json", status: undefined });
   assert.equal(resolveBffRoute("GET", "itsm/admin/slas"), null);
 });

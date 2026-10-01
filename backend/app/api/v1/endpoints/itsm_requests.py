@@ -16,6 +16,7 @@ from app.schemas.itsm_incidents import (
 )
 from app.schemas.itsm_requests import (
     ServiceRequestAssignRequest,
+    ServiceRequestCreateRequest,
     ServiceRequestResponse,
     ServiceRequestStatusUpdateRequest,
 )
@@ -95,6 +96,31 @@ def list_requests(
     )
 
 
+@router.post(
+    "",
+    response_model=ServiceRequestResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create service request",
+    description="Submit a new service request from the service catalog.",
+)
+def create_request(
+    payload: ServiceRequestCreateRequest,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    actor_id = UUID(str(request.state.user_id))
+    t_id = UUID(tenant_id)
+    _get_user_role_and_validate(db, t_id, actor_id)
+
+    return RequestService.create_request(
+        db=db,
+        tenant_id=t_id,
+        actor_id=actor_id,
+        payload=payload,
+    )
+
+
 @router.get(
     "/{request_id}",
     response_model=ServiceRequestResponse,
@@ -144,10 +170,51 @@ def change_request_status(
     deny_itsm_auditor_mutation(request, db, role, "request.status.change")
 
     if role == "REQUESTER":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Requesters are not permitted to update service request status",
-        )
+        target_status = payload.status.strip().upper() if payload.status else ""
+        if target_status == "CANCELLED":
+            ticket = RequestService.get_request(db, t_id, request_id)
+            if str(ticket.requester_id) != str(actor_id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You can only cancel service requests that you submitted",
+                )
+            if ticket.status in {"CLOSED", "CANCELLED"}:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot cancel service request in terminal status '{ticket.status}'",
+                )
+            if ticket.status == "RESOLVED":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot cancel a resolved service request. You may reopen it if the issue is not fixed",
+                )
+            if not payload.status_reason or not payload.status_reason.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="A reason is required to cancel the ticket",
+                )
+        elif target_status == "IN_PROGRESS":
+            ticket = RequestService.get_request(db, t_id, request_id)
+            if str(ticket.requester_id) != str(actor_id):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="You can only reopen service requests that you submitted",
+                )
+            if ticket.status != "RESOLVED":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Cannot reopen service request in status '{ticket.status}'. Only RESOLVED service requests can be reopened",
+                )
+            if not payload.status_reason or not payload.status_reason.strip():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="A reason is required to reopen the ticket",
+                )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Requesters are not permitted to update service request status",
+            )
 
     return RequestService.change_request_status(
         db=db,

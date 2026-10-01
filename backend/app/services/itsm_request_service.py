@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
+from difflib import SequenceMatcher
 import logging
+import re
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import inspect, or_, text
+from sqlalchemy import func, inspect, or_, text
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import (
@@ -15,8 +17,11 @@ from app.db.models import (
     ITSMServiceCatalogItem,
     ITSMServiceRequestDetail,
     ITSMTeam,
+    ITSMTeamMember,
     ITSMTicket,
     ITSMTicketActivity,
+    ITSMUserAccess,
+    Notification,
     PendingApproval,
     User,
 )
@@ -29,6 +34,7 @@ from app.schemas.itsm_requests import (
     ServiceRequestStatusUpdateRequest,
 )
 from app.services.audit_store import append_audit_event
+from app.services.notifications import create_notification
 
 logger = logging.getLogger("authclaw.itsm.requests")
 
@@ -190,6 +196,24 @@ class RequestService:
             service_id = catalog_item.service_id
             fulfillment_group = catalog_item.fulfillment_group
 
+        service = catalog_item.service if (catalog_item and catalog_item.service) else (
+            db.query(ITSMService).filter(ITSMService.id == service_id, ITSMService.tenant_id == tenant_id).first() if service_id else None
+        )
+
+        # Resolve responsible group and assignee if not explicitly configured on catalog item
+        resolved_team_name, resolved_agent_id, _ = cls.resolve_responsible_recipients(
+            db=db,
+            tenant_id=tenant_id,
+            ticket=None,
+            catalog_item=catalog_item,
+            service=service,
+            actor_id=actor_id,
+        )
+
+        if not fulfillment_group and resolved_team_name:
+            fulfillment_group = resolved_team_name
+        assignee_id = resolved_agent_id
+
         title = payload.title.strip() if payload.title and payload.title.strip() else (
             catalog_item.name if catalog_item else "Service Request"
         )
@@ -197,7 +221,7 @@ class RequestService:
         from app.services.itsm_incident_service import IncidentService
         ticket_number = IncidentService.generate_ticket_number(db, tenant_id, "SERVICE_REQUEST", prefix="REQ")
 
-        initial_status = "ASSIGNED" if fulfillment_group else "NEW"
+        initial_status = "ASSIGNED" if (fulfillment_group or assignee_id) else "NEW"
         status_reason = None
         if catalog_item and catalog_item.approval_required:
             initial_status = "PENDING"
@@ -219,6 +243,7 @@ class RequestService:
             status_reason=status_reason,
             source_channel=payload.source_channel or "PORTAL",
             requester_id=actor_id,
+            assignee_id=assignee_id,
             assignment_group=fulfillment_group,
             service_id=service_id,
             category="SERVICE_REQUEST",
@@ -333,6 +358,17 @@ class RequestService:
 
         db.commit()
         db.refresh(ticket)
+
+        cls.notify_catalog_service_request_created(
+            db=db,
+            tenant_id=tenant_id,
+            ticket=ticket,
+            catalog_item=catalog_item,
+            service=service,
+            actor_id=actor_id,
+            quantity=payload.quantity,
+        )
+
         return cls._build_response(ticket, detail)
 
     @classmethod
@@ -759,7 +795,506 @@ class RequestService:
         )
         db.commit()
         db.refresh(activity)
+
+        # Notify requester if this is a public comment from an agent/non-requester
+        cls.notify_requester_public_comment(
+            db=db,
+            tenant_id=tenant_id,
+            ticket=ticket,
+            activity=activity,
+            actor_id=actor_id,
+            is_internal=payload.is_internal,
+        )
+
+        # Notify assigned agent if this is a public comment from the requester
+        cls.notify_assignee_public_comment(
+            db=db,
+            tenant_id=tenant_id,
+            ticket=ticket,
+            activity=activity,
+            actor_id=actor_id,
+            is_internal=payload.is_internal,
+        )
+
         return activity
+
+    @classmethod
+    def notify_assignee_public_comment(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        ticket: ITSMTicket,
+        activity: ITSMTicketActivity,
+        actor_id: Optional[UUID] = None,
+        is_internal: bool = False,
+    ) -> Optional[Notification]:
+        """Dispatches an in-app notification to the assigned service agent when a requester posts a public comment."""
+        try:
+            # 1. Ticket must have an assigned individual agent
+            if not ticket.assignee_id:
+                return None
+
+            # 2. Must have actor_id and ticket requester_id
+            if not actor_id or not ticket.requester_id:
+                return None
+
+            # 3. Only notify when the requester posts the comment
+            if str(actor_id) != str(ticket.requester_id):
+                return None
+
+            # 4. Prevent self-notification if actor is the assignee
+            if str(actor_id) == str(ticket.assignee_id):
+                return None
+
+            # 5. Check internal notes and non-public comments
+            act_type = (activity.activity_type or "").strip().upper()
+            is_internal_flag = is_internal or bool((activity.activity_metadata or {}).get("is_internal"))
+            if is_internal_flag or act_type in ("NOTE", "INTERNAL_NOTE", "WORK_NOTE"):
+                return None
+
+            if act_type not in ("COMMENT", "PUBLIC_COMMENT", "REPLY"):
+                return None
+
+            if activity.content and activity.content.startswith("Attached file:"):
+                return None
+
+            ticket_num = ticket.ticket_number or "REQ"
+            title = f"New reply on {ticket_num}"
+            body = "Requester has replied to your service request."
+            link = f"/itsm/requests/{ticket.id}"
+
+            # Ensure tenant context is set for RLS before querying/inserting notifications
+            db.execute(
+                text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                {"tenant_id": str(tenant_id)},
+            )
+
+            # Deduplication: suppress duplicate notification within 5 seconds for the same request comment
+            recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=5)
+            existing = (
+                db.query(Notification)
+                .filter(
+                    Notification.tenant_id == tenant_id,
+                    Notification.user_id == ticket.assignee_id,
+                    Notification.link == link,
+                    Notification.body == body,
+                    Notification.created_at >= recent_cutoff,
+                )
+                .first()
+            )
+            if existing:
+                return existing
+
+            return create_notification(
+                db=db,
+                tenant_id=tenant_id,
+                user_id=ticket.assignee_id,
+                type="itsm.request.comment",
+                severity="info",
+                title=title,
+                body=body,
+                link=link,
+            )
+        except Exception as exc:
+            logger.warning("Failed to dispatch assignee comment notification for request %s: %s", getattr(ticket, "ticket_number", ticket.id), exc)
+            return None
+
+    @classmethod
+    def notify_requester_public_comment(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        ticket: ITSMTicket,
+        activity: ITSMTicketActivity,
+        actor_id: Optional[UUID] = None,
+        is_internal: bool = False,
+    ) -> Optional[Notification]:
+        """Dispatches an in-app notification to the ticket requester when an agent posts a public comment."""
+        try:
+            if not ticket.requester_id:
+                return None
+
+            if actor_id and str(actor_id) == str(ticket.requester_id):
+                return None
+
+            act_type = (activity.activity_type or "").strip().upper()
+            is_internal_flag = is_internal or bool((activity.activity_metadata or {}).get("is_internal"))
+            if is_internal_flag or act_type in ("NOTE", "INTERNAL_NOTE", "WORK_NOTE"):
+                return None
+
+            if act_type not in ("COMMENT", "PUBLIC_COMMENT", "REPLY"):
+                return None
+
+            if activity.content and activity.content.startswith("Attached file:"):
+                return None
+
+            ticket_num = ticket.ticket_number or "REQ"
+            title = f"New reply on {ticket_num}"
+            if ticket.title:
+                body = f"Agent has replied to your service request '{ticket.title}'."
+            else:
+                body = "Agent has replied to your service request."
+            link = f"/itsm/requests/{ticket.id}"
+
+            # Ensure tenant context is set for RLS before querying/inserting notifications
+            db.execute(
+                text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                {"tenant_id": str(tenant_id)},
+            )
+
+            # Deduplication: suppress duplicate notification within 5 seconds for the same request comment
+            recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=5)
+            existing = (
+                db.query(Notification)
+                .filter(
+                    Notification.tenant_id == tenant_id,
+                    Notification.user_id == ticket.requester_id,
+                    Notification.link == link,
+                    Notification.body == body,
+                    Notification.created_at >= recent_cutoff,
+                )
+                .first()
+            )
+            if existing:
+                return existing
+
+            return create_notification(
+                db=db,
+                tenant_id=tenant_id,
+                user_id=ticket.requester_id,
+                type="itsm.request.comment",
+                severity="info",
+                title=title,
+                body=body,
+                link=link,
+            )
+        except Exception as exc:
+            logger.warning("Failed to dispatch requester comment notification for request %s: %s", getattr(ticket, "ticket_number", ticket.id), exc)
+            return None
+
+    @classmethod
+    def resolve_responsible_recipients(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        ticket: Optional[ITSMTicket] = None,
+        catalog_item: Optional[ITSMServiceCatalogItem] = None,
+        service: Optional[ITSMService] = None,
+        actor_id: Optional[UUID] = None,
+    ) -> tuple[Optional[str], Optional[UUID], list[UUID]]:
+        """
+        Identify responsible team and individual agent for a catalog item / service,
+        and resolve recipient user IDs according to project rules:
+        - If an individual agent is configured/assigned, notify that agent.
+        - If only a team is configured, notify active members of that team in the tenant.
+        - Do not notify every service agent in the tenant.
+        - Do not invent a recipient if no valid assignment exists.
+        - Never notify the requester (actor_id).
+        """
+        try:
+            # Ensure tenant context is set for RLS before querying users / access / teams
+            db.execute(
+                text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                {"tenant_id": str(tenant_id)},
+            )
+
+            # 1. Identify candidate individual agent
+            candidate_agent_id: Optional[UUID] = None
+            if ticket and ticket.assignee_id:
+                candidate_agent_id = ticket.assignee_id
+            elif service and service.owner_user_id:
+                candidate_agent_id = service.owner_user_id
+
+            # Validate candidate agent if present
+            resolved_agent_id: Optional[UUID] = None
+            if candidate_agent_id:
+                agent_user = (
+                    db.query(User)
+                    .filter(
+                        User.id == candidate_agent_id,
+                        User.tenant_id == tenant_id,
+                        User.is_active.is_(True),
+                    )
+                    .first()
+                )
+                if agent_user and (not actor_id or str(agent_user.id) != str(actor_id)):
+                    access = (
+                        db.query(ITSMUserAccess)
+                        .filter(
+                            ITSMUserAccess.tenant_id == tenant_id,
+                            ITSMUserAccess.user_id == agent_user.id,
+                        )
+                        .first()
+                    )
+                    is_agent_role = (
+                        (access and access.has_itsm_access and (access.itsm_role or "").upper() not in ("REQUESTER", "AUDITOR"))
+                        or (agent_user.role or "").lower() in ("agent", "admin", "owner")
+                    )
+                    if is_agent_role:
+                        resolved_agent_id = agent_user.id
+
+            # 2. Identify candidate team
+            candidate_team_str: Optional[str] = None
+            if ticket and ticket.assignment_group and ticket.assignment_group.strip():
+                candidate_team_str = ticket.assignment_group.strip()
+            elif catalog_item and catalog_item.fulfillment_group and catalog_item.fulfillment_group.strip():
+                candidate_team_str = catalog_item.fulfillment_group.strip()
+            elif service and service.escalation_team and service.escalation_team.strip():
+                candidate_team_str = service.escalation_team.strip()
+
+            active_teams = (
+                db.query(ITSMTeam)
+                .filter(
+                    ITSMTeam.tenant_id == tenant_id,
+                    ITSMTeam.is_active.is_(True),
+                )
+                .order_by(ITSMTeam.created_at.asc())
+                .all()
+            )
+
+            matched_team: Optional[ITSMTeam] = None
+
+            def normalize_team_str(s: str) -> str:
+                s = s.lower().strip()
+                for suffix in (" team", " group", " dept", " department"):
+                    if s.endswith(suffix):
+                        s = s[:-len(suffix)].strip()
+                return s
+
+            def words_match(a: str, b: str) -> bool:
+                wa = re.findall(r'[a-z0-9]{3,}', a.lower())
+                wb = re.findall(r'[a-z0-9]{3,}', b.lower())
+                for w1 in wa:
+                    for w2 in wb:
+                        if w1 == w2:
+                            return True
+                        if len(w1) >= 5 and len(w2) >= 5 and (w1[:5] == w2[:5]):
+                            return True
+                        if w1.startswith("requir") and w2.startswith("requir"):
+                            return True
+                        if SequenceMatcher(None, w1, w2).ratio() >= 0.85:
+                            return True
+                return False
+
+            if candidate_team_str:
+                norm_cand = normalize_team_str(candidate_team_str)
+                cand_matches = []
+                for tm in active_teams:
+                    tm_norm = normalize_team_str(tm.name)
+                    if tm.name.strip().lower() == candidate_team_str.lower():
+                        cand_matches.append((1, tm))
+                    elif tm_norm == norm_cand:
+                        cand_matches.append((2, tm))
+                    elif norm_cand in tm_norm or tm_norm in norm_cand:
+                        cand_matches.append((3, tm))
+                if cand_matches:
+                    def score_cand(item):
+                        prio, tm = item
+                        m_count = db.query(ITSMTeamMember).filter(ITSMTeamMember.team_id == tm.id, ITSMTeamMember.tenant_id == tenant_id).count()
+                        return (prio, -m_count)
+                    cand_matches.sort(key=score_cand)
+                    matched_team = cand_matches[0][1]
+
+            if not matched_team and not candidate_team_str:
+                cat_name = (catalog_item.name or "").strip() if catalog_item else ""
+                cat_slug = (catalog_item.slug or "").strip() if catalog_item else ""
+                svc_name = (service.name or "").strip() if service else ""
+                svc_slug = (service.slug or "").strip() if service else ""
+                tkt_title = (ticket.title or "").strip() if ticket else ""
+                combined_text = f"{cat_name} {cat_slug} {svc_name} {svc_slug} {tkt_title}".lower()
+
+                inferred_matches = []
+                for tm in active_teams:
+                    t_name = tm.name.strip().lower()
+                    if not t_name:
+                        continue
+                    if t_name in (cat_name.lower(), svc_name.lower(), cat_slug.lower(), svc_slug.lower()):
+                        inferred_matches.append((1, tm))
+                    elif words_match(t_name, f"{cat_name} {svc_name}"):
+                        inferred_matches.append((2, tm))
+                    elif len(t_name) >= 3 and (t_name in combined_text or combined_text in t_name):
+                        inferred_matches.append((3, tm))
+
+                if not inferred_matches:
+                    hardware_keywords = ("pc", "laptop", "hardware", "computer", "device", "workstation")
+                    if any(k in combined_text for k in hardware_keywords):
+                        for tm in active_teams:
+                            t_name = tm.name.strip().lower()
+                            if any(target in t_name for target in ("it support", "hardware", "workplace", "desktop support")):
+                                inferred_matches.append((4, tm))
+
+                if inferred_matches:
+                    def score_inf(item):
+                        prio, tm = item
+                        m_count = db.query(ITSMTeamMember).filter(ITSMTeamMember.team_id == tm.id, ITSMTeamMember.tenant_id == tenant_id).count()
+                        return (prio, -m_count)
+                    inferred_matches.sort(key=score_inf)
+                    matched_team = inferred_matches[0][1]
+
+            candidate_team_name = matched_team.name.strip() if matched_team else candidate_team_str
+
+            # 3. Resolve recipients based on project assignment rules:
+            # - If an individual agent is configured/assigned, notify that agent.
+            # - If only a team is configured, notify active members of that specific team.
+            # - Do not notify every agent in tenant.
+            # - Do not invent a recipient if no valid assignment exists.
+            recipients: list[UUID] = []
+            if resolved_agent_id:
+                recipients = [resolved_agent_id]
+            elif matched_team:
+                team_member_rows = (
+                    db.query(ITSMTeamMember.user_id)
+                    .outerjoin(User, (User.id == ITSMTeamMember.user_id) & (User.tenant_id == ITSMTeamMember.tenant_id))
+                    .filter(
+                        ITSMTeamMember.tenant_id == tenant_id,
+                        ITSMTeamMember.team_id == matched_team.id,
+                        or_(User.id.is_(None), User.is_active.is_(True)),
+                    )
+                    .all()
+                )
+                member_ids = {r[0] for r in team_member_rows if r[0]}
+                if actor_id:
+                    member_ids.discard(actor_id)
+
+                valid_members: set[UUID] = set()
+                for uid in member_ids:
+                    u = db.query(User).filter(User.id == uid, User.tenant_id == tenant_id, User.is_active.is_(True)).first()
+                    if not u:
+                        continue
+                    acc = db.query(ITSMUserAccess).filter(ITSMUserAccess.tenant_id == tenant_id, ITSMUserAccess.user_id == uid).first()
+                    is_agent_role = (
+                        (acc and acc.has_itsm_access and (acc.itsm_role or "").upper() not in ("REQUESTER", "AUDITOR"))
+                        or (u.role or "").lower() in ("agent", "admin", "owner")
+                    )
+                    if is_agent_role:
+                        valid_members.add(uid)
+                recipients = list(valid_members)
+            elif candidate_team_name:
+                # Fallback by team name if entity wasn't in active_teams list
+                team_member_rows = (
+                    db.query(ITSMTeamMember.user_id)
+                    .join(ITSMTeam, (ITSMTeam.id == ITSMTeamMember.team_id) & (ITSMTeam.tenant_id == ITSMTeamMember.tenant_id))
+                    .outerjoin(User, (User.id == ITSMTeamMember.user_id) & (User.tenant_id == ITSMTeamMember.tenant_id))
+                    .filter(
+                        ITSMTeam.tenant_id == tenant_id,
+                        ITSMTeamMember.tenant_id == tenant_id,
+                        func.lower(ITSMTeam.name) == func.lower(candidate_team_name),
+                        ITSMTeam.is_active.is_(True),
+                        or_(User.id.is_(None), User.is_active.is_(True)),
+                    )
+                    .all()
+                )
+                member_ids = {r[0] for r in team_member_rows if r[0]}
+                if actor_id:
+                    member_ids.discard(actor_id)
+
+                valid_members = set()
+                for uid in member_ids:
+                    u = db.query(User).filter(User.id == uid, User.tenant_id == tenant_id, User.is_active.is_(True)).first()
+                    if not u:
+                        continue
+                    acc = db.query(ITSMUserAccess).filter(ITSMUserAccess.tenant_id == tenant_id, ITSMUserAccess.user_id == uid).first()
+                    is_agent_role = (
+                        (acc and acc.has_itsm_access and (acc.itsm_role or "").upper() not in ("REQUESTER", "AUDITOR"))
+                        or (u.role or "").lower() in ("agent", "admin", "owner")
+                    )
+                    if is_agent_role:
+                        valid_members.add(uid)
+                recipients = list(valid_members)
+
+            return (candidate_team_name, resolved_agent_id, recipients)
+        except Exception as exc:
+            logger.warning("Error resolving responsible recipients: %s", exc)
+            return (None, None, [])
+
+    @classmethod
+    def notify_catalog_service_request_created(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        ticket: ITSMTicket,
+        catalog_item: Optional[ITSMServiceCatalogItem] = None,
+        service: Optional[ITSMService] = None,
+        actor_id: Optional[UUID] = None,
+        quantity: int = 1,
+    ) -> list[Notification]:
+        """Dispatches an in-app notification to the responsible Service Agent / team when a catalog request is created."""
+        created_notifications: list[Notification] = []
+        try:
+            if not ticket:
+                return []
+
+            # Ensure tenant context is set for RLS before querying/inserting notifications
+            db.execute(
+                text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                {"tenant_id": str(tenant_id)},
+            )
+
+            # Resolve responsible recipients
+            _, _, recipient_ids = cls.resolve_responsible_recipients(
+                db=db,
+                tenant_id=tenant_id,
+                ticket=ticket,
+                catalog_item=catalog_item,
+                service=service,
+                actor_id=actor_id,
+            )
+
+            ticket_ref = getattr(ticket, "ticket_number", getattr(ticket, "id", "unknown"))
+
+            if not recipient_ids:
+                logger.info(
+                    "No responsible agent or team configured for catalog request %s; skipping notification",
+                    ticket_ref,
+                )
+                return []
+
+            item_display_name = (
+                catalog_item.name
+                if catalog_item and catalog_item.name
+                else (service.name if service and service.name else (ticket.title or "Service Request"))
+            )
+            title = f"New service request: {ticket.ticket_number}"
+            body = f"Requester has submitted a new service request for '{item_display_name}' (Quantity: {quantity})."
+            link = f"/itsm/requests/{ticket.id}"
+
+            for recipient_id in recipient_ids:
+                # Deduplication: ensure one notification per recipient for this service request
+                existing = (
+                    db.query(Notification)
+                    .filter(
+                        Notification.tenant_id == tenant_id,
+                        Notification.user_id == recipient_id,
+                        Notification.type == "itsm.request.created",
+                        Notification.link == link,
+                    )
+                    .first()
+                )
+                if existing:
+                    created_notifications.append(existing)
+                    continue
+
+                notif = create_notification(
+                    db=db,
+                    tenant_id=tenant_id,
+                    user_id=recipient_id,
+                    type="itsm.request.created",
+                    severity="info",
+                    title=title,
+                    body=body,
+                    link=link,
+                )
+                if notif:
+                    created_notifications.append(notif)
+
+            return created_notifications
+        except Exception as exc:
+            logger.warning(
+                "Failed to dispatch catalog request creation notification for ticket %s: %s",
+                getattr(ticket, "ticket_number", getattr(ticket, "id", "unknown")),
+                exc,
+            )
+            return []
 
     @staticmethod
     def _record_activity(

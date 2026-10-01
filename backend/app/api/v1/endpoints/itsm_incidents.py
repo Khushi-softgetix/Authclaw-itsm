@@ -649,29 +649,13 @@ def add_incident_activity(
                 detail="Access denied: Incident is not assigned to you or your team",
             )
 
-    res = IncidentService.add_activity(
+    return IncidentService.add_activity(
         db=db,
         tenant_id=t_id,
         incident_id=incident_id,
         actor_id=actor_id,
         payload=payload,
     )
-    try:
-        from app.services.notifications import create_notification
-        title = f"Comment added on {incident.ticket_number}" if str(actor_id) == str(incident.requester_id) else f"IT Agent update on {incident.ticket_number}"
-        create_notification(
-            db=db,
-            tenant_id=t_id,
-            user_id=incident.requester_id,
-            type="itsm.incident.comment",
-            severity="info",
-            title=title,
-            body=payload.content[:120],
-            link=f"/itsm/incidents/{incident.id}",
-        )
-    except Exception:
-        pass
-    return res
 
 
 @router.get(

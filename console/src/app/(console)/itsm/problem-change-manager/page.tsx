@@ -15,33 +15,37 @@ import {
 export default function ProblemChangeManagerPage() {
   return (
     <div className="space-y-8 max-w-6xl mx-auto" id="pcm-portal-container">
-      {/* Top Header Banner matching Knowledge banner style */}
+      {/* Top Header Banner matching My Tickets header style */}
       <div
-        className="bg-gradient-to-r from-[#1E40AF] to-[#3B82F6] rounded-2xl p-6 sm:p-8 text-white shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6"
+        className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm"
         id="pcm-portal-header"
       >
-        <div className="space-y-2">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 text-white text-xs font-semibold backdrop-blur-sm">
-            <ShieldCheck className="w-3.5 h-3.5 text-blue-200" />
-            <span>Problem &amp; Change Governance · Step 1 Foundation</span>
+        <div className="flex items-start sm:items-center gap-4">
+          <div className="w-12 h-12 rounded-xl bg-[#DDCEFB] text-[#6D28D9] flex items-center justify-center shrink-0">
+            <ShieldCheck className="w-6 h-6" />
           </div>
-          <h1
-            className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white"
-            id="pcm-portal-title"
-          >
-            Problem and Change Manager
-          </h1>
-          <p
-            className="text-sm text-blue-100 max-w-xl"
-            id="pcm-portal-subtitle"
-          >
-            Problem and Change Management Workspace
-          </p>
+          <div>
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#F1ECFE] text-[#6D28D9] text-[11px] font-semibold mb-1 border border-[#DDD6FE]">
+              <span>Problem &amp; Change Governance · Step 1 Foundation</span>
+            </div>
+            <h1
+              className="text-xl sm:text-2xl font-extrabold text-[#0E1726] tracking-tight"
+              id="pcm-portal-title"
+            >
+              Problem and Change Manager
+            </h1>
+            <p
+              className="text-xs text-[#6B7488] mt-1 max-w-xl"
+              id="pcm-portal-subtitle"
+            >
+              Problem and Change Management Workspace
+            </p>
+          </div>
         </div>
 
         <div className="shrink-0">
-          <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/15 text-white text-xs font-semibold border border-white/20 backdrop-blur-sm">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+          <div className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-[#FAF8FF] text-[#6D28D9] text-xs font-semibold border border-[#DDD6FE]">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
             <span>Role Active: Problem and Change Manager</span>
           </div>
         </div>

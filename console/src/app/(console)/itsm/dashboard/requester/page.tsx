@@ -5,17 +5,10 @@ import Link from "next/link";
 import {
   User,
   Plus,
-  Search,
   BookOpen,
-  LifeBuoy,
   Clock,
   CheckCircle2,
   AlertCircle,
-  ArrowRight,
-  ExternalLink,
-  Laptop,
-  Key,
-  ShieldCheck,
   Zap,
 } from "lucide-react";
 import { Incident } from "@/lib/itsm-types";
@@ -39,7 +32,6 @@ export default function RequesterDashboardPage() {
     avg_resolution_hours: 0,
   });
   const [loading, setLoading] = useState(true);
-  const [searchKnowledge, setSearchKnowledge] = useState("");
 
   useEffect(() => {
     async function loadData() {
@@ -69,34 +61,38 @@ export default function RequesterDashboardPage() {
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-8">
       {/* Top Banner */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 bg-gradient-to-r from-[#1E40AF] to-[#3B82F6] rounded-2xl p-6 sm:p-8 text-white shadow-sm">
-        <div className="space-y-2">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 text-white text-xs font-semibold backdrop-blur-sm">
-            <User className="w-3.5 h-3.5" />
-            <span>Requester Self-Service Portal</span>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm">
+        <div className="flex items-start sm:items-center gap-4">
+          <div className="w-12 h-12 rounded-xl bg-[#DDCEFB] text-[#6D28D9] flex items-center justify-center shrink-0">
+            <User className="w-6 h-6" />
           </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-            How can IT Operations help you today?
-          </h1>
-          <p className="text-sm text-blue-100 max-w-xl">
-            Submit issues, request access, or search our verified knowledge base for immediate solutions.
-          </p>
+          <div>
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#F1ECFE] text-[#6D28D9] text-[11px] font-semibold mb-1 border border-[#DDD6FE]">
+              <span>Requester Self-Service Portal</span>
+            </div>
+            <h1 className="text-xl sm:text-2xl font-extrabold text-[#0E1726] tracking-tight">
+              How can IT Operations help you today?
+            </h1>
+            <p className="text-xs text-[#6B7488] mt-1 max-w-xl">
+              Submit issues, request access, or search our verified knowledge base for immediate solutions.
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-3 shrink-0">
           <Link
             href="/itsm/incidents/new"
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white text-[#1E40AF] font-bold text-xs hover:bg-blue-50 transition shadow-sm"
+            className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-[#6D28D9] hover:bg-[#5B21B6] text-white rounded-xl text-xs font-bold shadow-sm transition"
           >
             <Plus className="w-4 h-4" />
             <span>Report an Issue</span>
           </Link>
-          <a
-            href="#knowledge"
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white/10 text-white font-semibold text-xs hover:bg-white/20 transition border border-white/20"
+          <Link
+            href="/itsm/knowledge"
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-[#F1ECFE] hover:bg-[#E9DFFC] text-[#6D28D9] border border-[#DDD6FE] rounded-xl text-xs font-semibold shadow-xs transition"
           >
             <BookOpen className="w-4 h-4" />
             <span>Browse KB</span>
-          </a>
+          </Link>
         </div>
       </div>
 
@@ -147,206 +143,79 @@ export default function RequesterDashboardPage() {
         </div>
       </div>
 
-      {/* Quick Catalog Actions */}
-      <div className="bg-white p-6 rounded-2xl border border-[#E6E9F0] shadow-sm space-y-4">
-        <h2 className="text-sm font-bold uppercase tracking-wider text-[#0E1726]">
-          Fast Service Catalog Requests
-        </h2>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Link
-            href="/itsm/incidents/new"
-            className="flex items-start gap-3 p-4 rounded-xl border border-[#E6E9F0] hover:border-[#2563EB] hover:bg-[#F8FAFC] transition group"
-          >
-            <div className="w-9 h-9 rounded-lg bg-blue-50 text-blue-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
-              <Laptop className="w-4.5 h-4.5" />
-            </div>
-            <div>
-              <div className="text-xs font-bold text-[#0E1726]">Hardware &amp; Equipment</div>
-              <div className="text-[11px] text-[#6B7488] mt-0.5">Monitors, laptops, and peripherals</div>
-            </div>
-          </Link>
-
-          <Link
-            href="/itsm/incidents/new"
-            className="flex items-start gap-3 p-4 rounded-xl border border-[#E6E9F0] hover:border-[#7C3AED] hover:bg-[#F8FAFC] transition group"
-          >
-            <div className="w-9 h-9 rounded-lg bg-purple-50 text-purple-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
-              <Key className="w-4.5 h-4.5" />
-            </div>
-            <div>
-              <div className="text-xs font-bold text-[#0E1726]">Software Access &amp; SSO</div>
-              <div className="text-[11px] text-[#6B7488] mt-0.5">GitHub, AWS, and SaaS licenses</div>
-            </div>
-          </Link>
-
-          <Link
-            href="/itsm/incidents/new"
-            className="flex items-start gap-3 p-4 rounded-xl border border-[#E6E9F0] hover:border-[#10B981] hover:bg-[#F8FAFC] transition group"
-          >
-            <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
-              <ShieldCheck className="w-4.5 h-4.5" />
-            </div>
-            <div>
-              <div className="text-xs font-bold text-[#0E1726]">Security &amp; MFA Reset</div>
-              <div className="text-[11px] text-[#6B7488] mt-0.5">Token lost or credentials locked</div>
-            </div>
-          </Link>
-
-          <Link
-            href="/itsm/incidents/new"
-            className="flex items-start gap-3 p-4 rounded-xl border border-[#E6E9F0] hover:border-[#D97706] hover:bg-[#F8FAFC] transition group"
-          >
-            <div className="w-9 h-9 rounded-lg bg-amber-50 text-amber-600 flex items-center justify-center shrink-0 group-hover:scale-105 transition">
-              <LifeBuoy className="w-4.5 h-4.5" />
-            </div>
-            <div>
-              <div className="text-xs font-bold text-[#0E1726]">General IT Assistance</div>
-              <div className="text-[11px] text-[#6B7488] mt-0.5">WiFi, VPN, or conference systems</div>
-            </div>
-          </Link>
-        </div>
-      </div>
-
-      {/* Main Grid: My Active Tickets & Knowledge Base */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Left 2 Cols: My Active Tickets */}
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-[#E6E9F0] shadow-sm p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-bold text-[#0E1726]">My Incidents</h2>
-            <div className="flex items-center gap-3">
-              <Link
-                href="/itsm/incidents"
-                className="text-xs font-semibold text-[#475069] hover:text-[#0E1726]"
-              >
-                View All
-              </Link>
-              <Link
-                href="/itsm/incidents/new"
-                className="text-xs font-semibold text-[#6D28D9] hover:text-[#5B21B6] flex items-center gap-1"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                <span>Report an Issue</span>
-              </Link>
-            </div>
-          </div>
-
-          {loading ? (
-            <div className="py-12 text-center text-xs text-[#6B7488]">Loading your incidents...</div>
-          ) : incidents.length === 0 ? (
-            <div className="py-12 text-center space-y-3">
-              <div className="w-10 h-10 rounded-full bg-purple-50 text-[#6D28D9] flex items-center justify-center mx-auto">
-                <CheckCircle2 className="w-5 h-5" />
-              </div>
-              <p className="text-xs font-semibold text-[#0E1726]">You have no active incidents</p>
-              <p className="text-xs text-[#6B7488] max-w-sm mx-auto">
-                Everything looks healthy. If you experience an issue, click &quot;Report an Issue&quot; above.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs">
-                <thead>
-                  <tr className="border-b border-[#F0F2F6] text-[#8C95A8] font-bold uppercase tracking-wider">
-                    <th className="pb-3">Incident #</th>
-                    <th className="pb-3">Title / Problem</th>
-                    <th className="pb-3">Status</th>
-                    <th className="pb-3">Priority</th>
-                    <th className="pb-3">Created / Updated</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#F0F2F6]">
-                  {incidents.map((inc) => (
-                    <tr key={inc.id} className="hover:bg-[#F9FAFB] transition">
-                      <td className="py-3 font-mono font-bold text-[#6D28D9]">
-                        <Link href={`/itsm/incidents/${inc.id}`} className="hover:underline">
-                          {inc.ticket_number}
-                        </Link>
-                      </td>
-                      <td className="py-3 font-medium text-[#0E1726] max-w-[240px] truncate">
-                        <Link href={`/itsm/incidents/${inc.id}`} className="hover:text-[#6D28D9]">
-                          {inc.title}
-                        </Link>
-                      </td>
-                      <td className="py-3">
-                        <IncidentStatusBadge status={inc.status} />
-                      </td>
-                      <td className="py-3">
-                        <IncidentPriorityBadge priority={inc.priority} />
-                      </td>
-                      <td className="py-3 text-[#6B7488]">
-                        {formatDateTime(inc.updated_at || inc.created_at)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-
-        {/* Right Col: Knowledge Base Suggestions */}
-        <div id="knowledge" className="bg-white rounded-2xl border border-[#E6E9F0] shadow-sm p-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-base font-bold text-[#0E1726]">Self-Service Knowledge</h2>
-            <Link href="/itsm/knowledge" className="text-xs font-semibold text-[#6D28D9] hover:underline flex items-center gap-1">
-              <span>View All KB</span>
-              <BookOpen className="w-3.5 h-3.5" />
+      {/* My Incidents */}
+      <div className="bg-white rounded-2xl border border-[#E6E9F0] shadow-sm p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-base font-bold text-[#0E1726]">My Incidents</h2>
+          <div className="flex items-center gap-3">
+            <Link
+              href="/itsm/incidents"
+              className="text-xs font-semibold text-[#475069] hover:text-[#0E1726]"
+            >
+              View All
+            </Link>
+            <Link
+              href="/itsm/incidents/new"
+              className="text-xs font-semibold text-[#6D28D9] hover:text-[#5B21B6] flex items-center gap-1"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Report an Issue</span>
             </Link>
           </div>
-          <div className="relative">
-            <Search className="w-3.5 h-3.5 text-[#8C95A8] absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Search guides, VPN, SSO..."
-              value={searchKnowledge}
-              onChange={(e) => setSearchKnowledge(e.target.value)}
-              className="w-full pl-9 pr-3 py-2 text-xs rounded-xl border border-[#E6E9F0] focus:outline-none focus:border-[#2563EB] bg-[#F9FAFB]"
-            />
-          </div>
-
-          <div className="space-y-2.5 pt-2">
-            {[
-              {
-                title: "Connecting to Global VPN with WireGuard",
-                category: "Networking",
-                views: "1.2k views",
-              },
-              {
-                title: "Requesting Temporary Cloud Sandbox IAM Roles",
-                category: "DevOps",
-                views: "890 views",
-              },
-              {
-                title: "Troubleshooting Okta Single Sign-On Cookies",
-                category: "Authentication",
-                views: "2.4k views",
-              },
-              {
-                title: "Setting up Hardware Security Keys (YubiKey)",
-                category: "Security",
-                views: "640 views",
-              },
-            ]
-              .filter(
-                (item) =>
-                  !searchKnowledge ||
-                  item.title.toLowerCase().includes(searchKnowledge.toLowerCase())
-              )
-              .map((kb, idx) => (
-                <Link
-                  key={idx}
-                  href="/itsm/knowledge"
-                  className="block p-3 rounded-xl border border-[#F0F2F6] hover:border-[#CBD5E1] hover:bg-[#F8FAFC] transition cursor-pointer"
-                >
-                  <div className="flex items-center justify-between text-[10px] text-[#8C95A8] mb-1">
-                    <span className="font-semibold text-[#2563EB]">{kb.category}</span>
-                    <span>{kb.views}</span>
-                  </div>
-                  <h4 className="text-xs font-semibold text-[#0E1726]">{kb.title}</h4>
-                </Link>
-              ))}
-          </div>
         </div>
+
+        {loading ? (
+          <div className="py-12 text-center text-xs text-[#6B7488]">Loading your incidents...</div>
+        ) : incidents.length === 0 ? (
+          <div className="py-12 text-center space-y-3">
+            <div className="w-10 h-10 rounded-full bg-purple-50 text-[#6D28D9] flex items-center justify-center mx-auto">
+              <CheckCircle2 className="w-5 h-5" />
+            </div>
+            <p className="text-xs font-semibold text-[#0E1726]">You have no active incidents</p>
+            <p className="text-xs text-[#6B7488] max-w-sm mx-auto">
+              Everything looks healthy. If you experience an issue, click &quot;Report an Issue&quot; above.
+            </p>
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead>
+                <tr className="border-b border-[#F0F2F6] text-[#8C95A8] font-bold uppercase tracking-wider">
+                  <th className="pb-3">Incident #</th>
+                  <th className="pb-3">Title / Problem</th>
+                  <th className="pb-3">Status</th>
+                  <th className="pb-3">Priority</th>
+                  <th className="pb-3">Created / Updated</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#F0F2F6]">
+                {incidents.map((inc) => (
+                  <tr key={inc.id} className="hover:bg-[#F9FAFB] transition">
+                    <td className="py-3 font-mono font-bold text-[#6D28D9]">
+                      <Link href={`/itsm/incidents/${inc.id}`} className="hover:underline">
+                        {inc.ticket_number}
+                      </Link>
+                    </td>
+                    <td className="py-3 font-medium text-[#0E1726] max-w-[240px] truncate">
+                      <Link href={`/itsm/incidents/${inc.id}`} className="hover:text-[#6D28D9]">
+                        {inc.title}
+                      </Link>
+                    </td>
+                    <td className="py-3">
+                      <IncidentStatusBadge status={inc.status} />
+                    </td>
+                    <td className="py-3">
+                      <IncidentPriorityBadge priority={inc.priority} />
+                    </td>
+                    <td className="py-3 text-[#6B7488]">
+                      {formatDateTime(inc.updated_at || inc.created_at)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   );

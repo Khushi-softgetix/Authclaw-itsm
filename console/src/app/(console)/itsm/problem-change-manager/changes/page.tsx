@@ -176,42 +176,46 @@ export default function ChangeManagementQueuePage() {
 
   return (
     <div className="space-y-8 max-w-7xl mx-auto" id="pcm-changes-page">
-      {/* Top Header Banner matching Problem / Knowledge Banner */}
+      {/* Top Header Banner matching My Tickets header style */}
       <div
-        className="bg-gradient-to-r from-[#1E40AF] to-[#3B82F6] rounded-2xl p-6 sm:p-8 text-white shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6"
+        className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm"
         id="pcm-changes-header"
       >
-        <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <Link
-              href="/itsm/problem-change-manager"
-              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 text-white text-xs font-semibold backdrop-blur-sm hover:bg-white/25 transition"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Back to Dashboard</span>
-            </Link>
-            <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-white/15 text-white text-xs font-semibold backdrop-blur-sm">
-              <GitPullRequest className="w-3.5 h-3.5 text-purple-200" />
-              <span>Change Governance</span>
-            </span>
+        <div className="flex items-start sm:items-center gap-4">
+          <div className="w-12 h-12 rounded-xl bg-[#DDCEFB] text-[#6D28D9] flex items-center justify-center shrink-0">
+            <GitPullRequest className="w-6 h-6" />
           </div>
+          <div>
+            <div className="flex flex-wrap items-center gap-2 mb-1">
+              <Link
+                href="/itsm/problem-change-manager"
+                className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#F5F7FA] text-[#475069] text-[11px] font-semibold hover:bg-[#E6E9F0] hover:text-[#0E1726] transition border border-[#E6E9F0]"
+              >
+                <ArrowLeft className="w-3 h-3" />
+                <span>Back to Dashboard</span>
+              </Link>
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#F1ECFE] text-[#6D28D9] text-[11px] font-semibold border border-[#DDD6FE]">
+                <span>Change Governance</span>
+              </span>
+            </div>
 
-          <h1
-            id="pcm-changes-title"
-            className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white"
-          >
-            Changes
-          </h1>
-          <p id="pcm-changes-subtitle" className="text-sm text-blue-100 max-w-xl">
-            Review and manage planned changes to IT services.
-          </p>
+            <h1
+              id="pcm-changes-title"
+              className="text-xl sm:text-2xl font-extrabold text-[#0E1726] tracking-tight"
+            >
+              Changes
+            </h1>
+            <p id="pcm-changes-subtitle" className="text-xs text-[#6B7488] mt-1 max-w-xl">
+              Review and manage planned changes to IT services.
+            </p>
+          </div>
         </div>
 
         <div className="flex items-center gap-3 shrink-0">
           <button
             onClick={() => fetchData()}
             disabled={loading}
-            className="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white/15 hover:bg-white/25 text-white text-xs font-semibold border border-white/20 backdrop-blur-sm transition disabled:opacity-60"
+            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-[#F1ECFE] hover:bg-[#E9DFFC] text-[#6D28D9] border border-[#DDD6FE] rounded-xl text-xs font-semibold shadow-xs transition disabled:opacity-60"
             title="Refresh changes"
             id="pcm-change-refresh-button"
           >

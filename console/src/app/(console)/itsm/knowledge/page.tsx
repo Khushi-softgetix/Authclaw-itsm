@@ -120,6 +120,7 @@ function KnowledgePageContent() {
   ];
 
   const isPCM = currentUserRole === "PROCESS_CHANGE_MANAGER";
+  const isServiceAgent = currentUserRole === "SERVICE_AGENT";
 
   // Check current session role
   useEffect(() => {
@@ -447,48 +448,90 @@ function KnowledgePageContent() {
       {/* HEADER SECTION */}
       {isPCM ? (
         /* Problem and Change Manager Governance Header */
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white border border-[#E6E9F0] p-6 rounded-2xl shadow-xs">
-          <div>
-            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#F1ECFE] text-[#6D28D9] text-[11px] font-bold mb-2">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Knowledge Governance</span>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm">
+          <div className="flex items-start sm:items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-[#DDCEFB] text-[#6D28D9] flex items-center justify-center shrink-0">
+              <BookOpen className="w-6 h-6" />
             </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold text-[#0E1726] tracking-tight">Knowledge</h1>
-            <p className="text-xs sm:text-sm text-[#6B7488] mt-1">Review, maintain, and govern ITSM knowledge.</p>
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#F1ECFE] text-[#6D28D9] text-[11px] font-semibold mb-1 border border-[#DDD6FE]">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Knowledge Governance</span>
+              </div>
+              <h1 className="text-xl sm:text-2xl font-extrabold text-[#0E1726] tracking-tight">
+                Knowledge
+              </h1>
+              <p className="text-xs text-[#6B7488] mt-1">
+                Review, maintain, and govern ITSM knowledge.
+              </p>
+            </div>
           </div>
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2.5 shrink-0">
             <button
               id="pcm-create-article-btn"
               onClick={() => {
                 setShowCreateModal(true);
                 setActionError(null);
               }}
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#6D28D9] hover:bg-[#5B21B6] text-white font-bold text-xs shadow-xs transition"
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-[#6D28D9] hover:bg-[#5B21B6] text-white rounded-xl text-xs font-bold shadow-sm transition"
             >
               <Plus className="w-4 h-4" />
               <span>New Article</span>
             </button>
           </div>
         </div>
-      ) : (
-        /* Standard Consumer Hero Header (Service Agents & Requesters) */
-        <div className="bg-gradient-to-r from-[#1E40AF] to-[#3B82F6] rounded-2xl p-6 sm:p-8 text-white shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 text-white text-xs font-semibold backdrop-blur-sm">
-              <BookOpen className="w-3.5 h-3.5" />
-              <span>Verified Knowledge Base</span>
+      ) : isServiceAgent ? (
+        /* Standard Consumer Hero Header (Service Agents) */
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm">
+          <div className="flex items-start sm:items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-[#DDCEFB] text-[#6D28D9] flex items-center justify-center shrink-0">
+              <BookOpen className="w-6 h-6" />
             </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              IT Operations &amp; Resolution Guides
-            </h1>
-            <p className="text-sm text-blue-100 max-w-xl">
-              Search verified resolution procedures, VPN configurations, and SSO diagnostic steps while troubleshooting incidents.
-            </p>
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#F1ECFE] text-[#6D28D9] text-[11px] font-semibold mb-1 border border-[#DDD6FE]">
+                <span>Verified Knowledge Base</span>
+              </div>
+              <h1 className="text-xl sm:text-2xl font-extrabold text-[#0E1726] tracking-tight">
+                IT Operations &amp; Resolution Guides
+              </h1>
+              <p className="text-xs text-[#6B7488] mt-1 max-w-xl">
+                Search verified resolution procedures, VPN configurations, and SSO diagnostic steps while troubleshooting incidents.
+              </p>
+            </div>
           </div>
           <div className="shrink-0">
             <Link
               href="/itsm/incidents/new"
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white text-[#1E40AF] font-bold text-xs hover:bg-blue-50 transition shadow-sm"
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-[#6D28D9] hover:bg-[#5B21B6] text-white rounded-xl text-xs font-bold shadow-sm transition"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Need Help? Report Issue</span>
+            </Link>
+          </div>
+        </div>
+      ) : (
+        /* Requester Portal Hero Header */
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm">
+          <div className="flex items-start sm:items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-[#DDCEFB] text-[#6D28D9] flex items-center justify-center shrink-0">
+              <BookOpen className="w-6 h-6" />
+            </div>
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#F1ECFE] text-[#6D28D9] text-[11px] font-semibold mb-1 border border-[#DDD6FE]">
+                <span>Verified Knowledge Base</span>
+              </div>
+              <h1 className="text-xl font-extrabold text-[#0E1726] tracking-tight">
+                IT Operations &amp; Resolution Guides
+              </h1>
+              <p className="text-xs text-[#6B7488] mt-1 max-w-xl">
+                Search verified resolution procedures, VPN configurations, and SSO diagnostic steps while troubleshooting incidents.
+              </p>
+            </div>
+          </div>
+          <div className="shrink-0">
+            <Link
+              href="/itsm/incidents/new"
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-[#6D28D9] hover:bg-[#5B21B6] text-white rounded-xl text-xs font-bold shadow-sm transition"
             >
               <Plus className="w-4 h-4" />
               <span>Need Help? Report Issue</span>

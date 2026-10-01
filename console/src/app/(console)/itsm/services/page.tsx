@@ -262,24 +262,28 @@ export default function ServicesPage() {
     return (
       <div className="space-y-8 max-w-6xl mx-auto" id="requester-services-page">
         {/* Header Banner */}
-        <div className="bg-gradient-to-r from-[#1E40AF] to-[#3B82F6] rounded-2xl p-6 sm:p-8 text-white shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-2">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 text-white text-xs font-semibold backdrop-blur-sm">
-              <Layers className="w-3.5 h-3.5" />
-              <span>Service Catalog</span>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm">
+          <div className="flex items-start sm:items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-[#DDCEFB] text-[#6D28D9] flex items-center justify-center shrink-0">
+              <Layers className="w-6 h-6" />
             </div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-              IT Service Requests &amp; Provisioning
-            </h1>
-            <p className="text-sm text-blue-100 max-w-xl">
-              Browse hardware equipment, software SSO access, and IT security services available for your workspace.
-            </p>
+            <div>
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#F1ECFE] text-[#6D28D9] text-[11px] font-semibold mb-1 border border-[#DDD6FE]">
+                <span>Service Catalog</span>
+              </div>
+              <h1 className="text-xl font-extrabold text-[#0E1726] tracking-tight">
+                IT Service Requests &amp; Provisioning
+              </h1>
+              <p className="text-xs text-[#6B7488] mt-1 max-w-xl">
+                Browse hardware equipment, software SSO access, and IT security services available for your workspace.
+              </p>
+            </div>
           </div>
 
           <div className="shrink-0">
             <Link
               href="/itsm/incidents/new"
-              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white text-[#1E40AF] font-bold text-xs hover:bg-blue-50 transition shadow-sm"
+              className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-[#6D28D9] hover:bg-[#5B21B6] text-white rounded-xl text-xs font-bold shadow-sm transition"
             >
               <Plus className="w-4 h-4" />
               <span>Report Broken Equipment / Bug</span>

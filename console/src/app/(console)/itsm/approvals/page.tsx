@@ -59,6 +59,15 @@ export default function RequesterApprovalsPage() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [filterTab, setFilterTab] = useState<"PENDING" | "ALL" | "APPROVED" | "REJECTED">("PENDING");
+  const [currentUser, setCurrentUser] = useState<{
+    id: string | null;
+    email: string | null;
+    itsmRole: string | null;
+  }>({
+    id: null,
+    email: null,
+    itsmRole: null,
+  });
 
   // Reject modal state
   const [rejectModalItem, setRejectModalItem] = useState<ApprovalItem | null>(null);
@@ -85,6 +94,21 @@ export default function RequesterApprovalsPage() {
   useEffect(() => {
     fetchApprovals();
   }, [fetchApprovals]);
+
+  useEffect(() => {
+    fetch("/api/auth/session")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((session) => {
+        if (session) {
+          setCurrentUser({
+            id: session.userId || null,
+            email: session.email || null,
+            itsmRole: session.itsmRole || null,
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const handleApprove = async (item: ApprovalItem) => {
     setActionLoadingId(item.id);
@@ -160,24 +184,28 @@ export default function RequesterApprovalsPage() {
   return (
     <div className="space-y-8 max-w-6xl mx-auto" id="requester-approvals-page">
       {/* Header Banner */}
-      <div className="bg-gradient-to-r from-[#4F46E5] to-[#7C3AED] rounded-2xl p-6 sm:p-8 text-white shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
-        <div className="space-y-2">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/15 text-white text-xs font-semibold backdrop-blur-sm">
-            <FileCheck className="w-3.5 h-3.5" />
-            <span>Review &amp; Governance</span>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm">
+        <div className="flex items-start sm:items-center gap-4">
+          <div className="w-12 h-12 rounded-xl bg-[#DDCEFB] text-[#6D28D9] flex items-center justify-center shrink-0">
+            <FileCheck className="w-6 h-6" />
           </div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight">
-            My Approvals
-          </h1>
-          <p className="text-sm text-indigo-100 max-w-xl">
-            Review, approve, or reject catalog service requests requiring manager verification and authorization.
-          </p>
+          <div>
+            <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#F1ECFE] text-[#6D28D9] text-[11px] font-semibold mb-1 border border-[#DDD6FE]">
+              <span>Review &amp; Governance</span>
+            </div>
+            <h1 className="text-xl font-extrabold text-[#0E1726] tracking-tight">
+              My Approvals
+            </h1>
+            <p className="text-xs text-[#6B7488] mt-1 max-w-xl">
+              Review, approve, or reject catalog service requests requiring manager verification and authorization.
+            </p>
+          </div>
         </div>
 
         <div className="shrink-0 flex items-center gap-3">
-          <div className="bg-white/10 backdrop-blur-md rounded-xl px-4 py-3 border border-white/20 text-center min-w-[120px]">
-            <div className="text-2xl font-black">{pendingCount}</div>
-            <div className="text-[11px] text-indigo-100 font-medium">Pending Review</div>
+          <div className="bg-[#FAF8FF] rounded-xl px-5 py-2.5 border border-[#E6E9F0] text-center min-w-[120px] shadow-xs">
+            <div className="text-2xl font-black text-[#0E1726]">{pendingCount}</div>
+            <div className="text-[11px] text-[#6D28D9] font-bold">Pending Review</div>
           </div>
         </div>
       </div>
@@ -294,6 +322,10 @@ export default function RequesterApprovalsPage() {
             const isApproved = item.status === "APPROVED";
             const isRejected = item.status === "REJECTED";
             const isActionLoading = actionLoadingId === item.id;
+            const isOwnRequest = Boolean(
+              (currentUser.id && item.requester_id && currentUser.id.toLowerCase() === item.requester_id.toLowerCase()) ||
+              (currentUser.email && item.requester_email && currentUser.email.toLowerCase() === item.requester_email.toLowerCase())
+            );
 
             return (
               <div
@@ -426,31 +458,48 @@ export default function RequesterApprovalsPage() {
                         <div className="text-[11px] font-bold uppercase tracking-wider text-[#6B7488]">
                           Action Required
                         </div>
-                        <p className="text-xs text-[#6B7488]">
-                          Please evaluate this request. Approving will transition the ticket to active fulfillment.
-                        </p>
-
-                        <div className="flex flex-col sm:flex-row lg:flex-col gap-2 pt-2">
-                          <button
-                            onClick={() => handleApprove(item)}
-                            disabled={isActionLoading}
-                            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs transition shadow-sm disabled:opacity-50"
-                            id={`approve-btn-${item.id}`}
+                        {isOwnRequest ? (
+                          <div
+                            className="space-y-2 bg-[#FAF8FF] p-4 rounded-xl border border-[#DDD6FE]"
+                            id={`self-approval-notice-${item.id}`}
                           >
-                            <ThumbsUp className="w-3.5 h-3.5" />
-                            <span>{isActionLoading ? "Processing..." : "Approve Request"}</span>
-                          </button>
+                            <div className="flex items-center gap-1.5 text-xs font-bold text-[#6D28D9]">
+                              <ShieldAlert className="w-4 h-4 shrink-0 text-[#6D28D9]" />
+                              <span>Awaiting Manager Approval</span>
+                            </div>
+                            <p className="text-xs text-[#6B7488]">
+                              Segregation of Duties: You cannot approve or reject your own request. Another authorized manager must review this request.
+                            </p>
+                          </div>
+                        ) : (
+                          <>
+                            <p className="text-xs text-[#6B7488]">
+                              Please evaluate this request. Approving will transition the ticket to active fulfillment.
+                            </p>
 
-                          <button
-                            onClick={() => handleOpenRejectModal(item)}
-                            disabled={isActionLoading}
-                            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 font-semibold text-xs transition shadow-sm disabled:opacity-50"
-                            id={`reject-btn-${item.id}`}
-                          >
-                            <ThumbsDown className="w-3.5 h-3.5" />
-                            <span>Reject Request</span>
-                          </button>
-                        </div>
+                            <div className="flex flex-col sm:flex-row lg:flex-col gap-2 pt-2">
+                              <button
+                                onClick={() => handleApprove(item)}
+                                disabled={isActionLoading}
+                                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs transition shadow-sm disabled:opacity-50"
+                                id={`approve-btn-${item.id}`}
+                              >
+                                <ThumbsUp className="w-3.5 h-3.5" />
+                                <span>{isActionLoading ? "Processing..." : "Approve Request"}</span>
+                              </button>
+
+                              <button
+                                onClick={() => handleOpenRejectModal(item)}
+                                disabled={isActionLoading}
+                                className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-xl bg-white hover:bg-rose-50 text-rose-600 border border-rose-200 font-semibold text-xs transition shadow-sm disabled:opacity-50"
+                                id={`reject-btn-${item.id}`}
+                              >
+                                <ThumbsDown className="w-3.5 h-3.5" />
+                                <span>Reject Request</span>
+                              </button>
+                            </div>
+                          </>
+                        )}
                       </div>
                     ) : (
                       <div className="space-y-3 bg-[#F9FAFB] p-4 rounded-xl border border-[#EDF2F7]">

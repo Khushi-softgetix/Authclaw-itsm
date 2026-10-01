@@ -219,14 +219,14 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
       <header className="md:hidden m-3 flex items-center justify-between rounded-[20px] border border-[#E6E9F0] bg-white px-4 py-3 shadow-[0_1px_2px_rgba(11,31,63,.05),0_12px_30px_-12px_rgba(11,31,63,.18)]">
         <div className="flex items-center gap-2">
           <div className="w-8 h-8 rounded-[10px] bg-[#6D28D9] flex items-center justify-center">
-            {isItsm ? <Ticket className="w-4 h-4 text-white" /> : <ShieldCheck className="w-4 h-4 text-white" />}
+            {isItsm ? effectiveItsmRole === "AUDITOR" ? <ScrollText className="w-4 h-4 text-white" /> : <Ticket className="w-4 h-4 text-white" /> : <ShieldCheck className="w-4 h-4 text-white" />}
           </div>
           <div>
             <span className="block font-bold text-sm text-[#0E1726]">
               {isItsm ? "AuthClaw ITSM" : "AuthClaw"}
             </span>
             <span className="block text-[10px] uppercase tracking-wider text-[#6B7488]">
-              {isItsm ? "ITSM" : "Governance Layer"}
+              {isItsm ? effectiveItsmRole === "AUDITOR" ? "Audit & Evidence" : "ITSM" : "Governance Layer"}
             </span>
           </div>
         </div>
@@ -246,14 +246,14 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
         <aside className="sticky top-4 m-4 mr-0 hidden h-[calc(100vh-2rem)] w-64 flex-col overflow-hidden rounded-[20px] border border-[#E6E9F0] bg-white shadow-[0_1px_2px_rgba(11,31,63,.05),0_12px_30px_-12px_rgba(11,31,63,.18)] md:flex">
           <div className="h-16 flex items-center gap-2.5 px-6 border-b border-[#E6E9F0]">
             <div className="w-8 h-8 rounded-[10px] bg-[#6D28D9] flex items-center justify-center shadow-[0_8px_20px_-8px_rgba(109,40,217,.6)]">
-              {isItsm ? <Ticket className="w-4.5 h-4.5 text-white" /> : <ShieldCheck className="w-4.5 h-4.5 text-white" />}
+              {isItsm ? effectiveItsmRole === "AUDITOR" ? <ScrollText className="w-4.5 h-4.5 text-white" /> : <Ticket className="w-4.5 h-4.5 text-white" /> : <ShieldCheck className="w-4.5 h-4.5 text-white" />}
             </div>
             <div>
               <span className="block font-bold text-base text-[#0E1726] tracking-wide">
                 {isItsm ? "AuthClaw ITSM" : "AuthClaw"}
               </span>
               <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
-                {isItsm ? "ITSM" : "AI Governance Layer"}
+                {isItsm ? effectiveItsmRole === "AUDITOR" ? "Audit & Evidence" : "ITSM" : "AI Governance Layer"}
               </span>
             </div>
           </div>
@@ -285,14 +285,14 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
               <div className="h-16 flex items-center justify-between px-6 border-b border-[#E6E9F0]">
                 <div className="flex items-center gap-2">
                   <div className="w-8 h-8 rounded-[10px] bg-[#6D28D9] flex items-center justify-center">
-                    {isItsm ? <Ticket className="w-4.5 h-4.5 text-white" /> : <ShieldCheck className="w-4.5 h-4.5 text-white" />}
+                    {isItsm ? effectiveItsmRole === "AUDITOR" ? <ScrollText className="w-4.5 h-4.5 text-white" /> : <Ticket className="w-4.5 h-4.5 text-white" /> : <ShieldCheck className="w-4.5 h-4.5 text-white" />}
                   </div>
                   <div>
                     <span className="block font-bold text-sm text-[#0E1726]">
                       {isItsm ? "AuthClaw ITSM" : "AuthClaw"}
                     </span>
                     <span className="block text-[10px] font-semibold text-[#6B7488]">
-                      {isItsm ? "ITSM" : "Governance"}
+                      {isItsm ? effectiveItsmRole === "AUDITOR" ? "Audit & Evidence" : "ITSM" : "Governance"}
                     </span>
                   </div>
                 </div>
@@ -329,6 +329,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
                 {isItsm ? "AuthClaw ITSM" : "Governance Layer"}
               </span>
               <span className="text-[#A8B0C0]">/</span>
+              {effectiveItsmRole === "AUDITOR" ? <><span className="text-[#475069] text-sm">Audit &amp; Evidence</span><span className="text-[#A8B0C0]">/</span></> : null}
               <span className="text-[#0E1726] text-sm font-medium">{currentPage}</span>
             </div>
 

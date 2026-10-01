@@ -16,6 +16,11 @@ depends_on = None
 
 
 def upgrade() -> None:
+    bind = op.get_bind()
+    columns = {column["name"] for column in sa.inspect(bind).get_columns("itsm_major_incidents", schema="public")}
+    if "command_communications" in columns:
+        return
+
     op.add_column(
         "itsm_major_incidents",
         sa.Column(
@@ -28,4 +33,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_column("itsm_major_incidents", "command_communications")
+    bind = op.get_bind()
+    columns = {column["name"] for column in sa.inspect(bind).get_columns("itsm_major_incidents", schema="public")}
+    if "command_communications" in columns:
+        op.drop_column("itsm_major_incidents", "command_communications")

@@ -144,6 +144,36 @@ h4 {
   width: 100%;
 }
 
+.auditor-responsive-workspace {
+  container-type: inline-size;
+}
+
+.auditor-table-layout {
+  display: none;
+}
+
+.auditor-record-list {
+  display: block;
+}
+
+.auditor-recent-grid {
+  display: none;
+}
+
+.auditor-recent-cards {
+  display: block;
+}
+
+@container (min-width: 1040px) {
+  .auditor-recent-grid { display: block; }
+  .auditor-recent-cards { display: none; }
+}
+
+@container (min-width: 860px) {
+  .auditor-table-layout { display: block; }
+  .auditor-record-list { display: none; }
+}
+
 .role-portal > header h1 {
   text-wrap: balance;
 }

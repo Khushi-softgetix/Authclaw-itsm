@@ -26,6 +26,7 @@ from app.db.models import (
     ITSMTicketCategory,
     ITSMTicketCounter,
     ITSMUserAccess,
+    Notification,
     User,
 )
 from app.schemas.itsm_incidents import (
@@ -2140,7 +2141,182 @@ class IncidentService:
 
         db.commit()
         db.refresh(activity)
+
+        # Notify requester if this is a public comment from an agent/operator
+        cls.notify_requester_public_comment(
+            db=db,
+            tenant_id=tenant_id,
+            ticket=ticket,
+            activity=activity,
+            actor_id=actor_id,
+            is_internal=payload.is_internal,
+        )
+
+        # Notify assigned agent if this is a public comment from the requester
+        cls.notify_assignee_public_comment(
+            db=db,
+            tenant_id=tenant_id,
+            ticket=ticket,
+            activity=activity,
+            actor_id=actor_id,
+            is_internal=payload.is_internal,
+        )
+
         return activity
+
+    @classmethod
+    def notify_assignee_public_comment(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        ticket: ITSMTicket,
+        activity: ITSMTicketActivity,
+        actor_id: Optional[UUID] = None,
+        is_internal: bool = False,
+    ) -> Optional[Notification]:
+        """Dispatches an in-app notification to the assigned service agent when a requester posts a public comment."""
+        try:
+            # 1. Ticket must have an assigned individual agent
+            if not ticket.assignee_id:
+                return None
+
+            # 2. Must have actor_id and ticket requester_id
+            if not actor_id or not ticket.requester_id:
+                return None
+
+            # 3. Only notify when the requester posts the comment
+            if str(actor_id) != str(ticket.requester_id):
+                return None
+
+            # 4. Prevent self-notification if actor is the assignee
+            if str(actor_id) == str(ticket.assignee_id):
+                return None
+
+            # 5. Check internal notes and non-public comments
+            act_type = (activity.activity_type or "").strip().upper()
+            is_internal_flag = is_internal or bool((activity.activity_metadata or {}).get("is_internal"))
+            if is_internal_flag or act_type in ("NOTE", "INTERNAL_NOTE", "WORK_NOTE"):
+                return None
+
+            if act_type not in ("COMMENT", "PUBLIC_COMMENT", "REPLY"):
+                return None
+
+            if activity.content and activity.content.startswith("Attached file:"):
+                return None
+
+            ticket_num = ticket.ticket_number or "INC"
+            title = f"New reply on {ticket_num}"
+            body = "Requester has replied to your incident."
+            link = f"/itsm/incidents/{ticket.id}"
+
+            # Ensure tenant context is set for RLS before querying/inserting notifications
+            db.execute(
+                text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                {"tenant_id": str(tenant_id)},
+            )
+
+            # Deduplication: suppress duplicate notification within 5 seconds for the same incident comment
+            recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=5)
+            existing = (
+                db.query(Notification)
+                .filter(
+                    Notification.tenant_id == tenant_id,
+                    Notification.user_id == ticket.assignee_id,
+                    Notification.link == link,
+                    Notification.body == body,
+                    Notification.created_at >= recent_cutoff,
+                )
+                .first()
+            )
+            if existing:
+                return existing
+
+            return create_notification(
+                db=db,
+                tenant_id=tenant_id,
+                user_id=ticket.assignee_id,
+                type="itsm.incident.comment",
+                severity="info",
+                title=title,
+                body=body,
+                link=link,
+            )
+        except Exception as exc:
+            logger.warning("Failed to dispatch assignee comment notification for incident %s: %s", getattr(ticket, "ticket_number", ticket.id), exc)
+            return None
+
+    @classmethod
+    def notify_requester_public_comment(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        ticket: ITSMTicket,
+        activity: ITSMTicketActivity,
+        actor_id: Optional[UUID] = None,
+        is_internal: bool = False,
+    ) -> Optional[Notification]:
+        """Dispatches an in-app notification to the ticket requester when an agent posts a public comment."""
+        try:
+            if not ticket.requester_id:
+                return None
+
+            if actor_id and str(actor_id) == str(ticket.requester_id):
+                return None
+
+            act_type = (activity.activity_type or "").strip().upper()
+            is_internal_flag = is_internal or bool((activity.activity_metadata or {}).get("is_internal"))
+            if is_internal_flag or act_type in ("NOTE", "INTERNAL_NOTE", "WORK_NOTE"):
+                return None
+
+            if act_type not in ("COMMENT", "PUBLIC_COMMENT", "REPLY"):
+                return None
+
+            if activity.content and activity.content.startswith("Attached file:"):
+                return None
+
+            ticket_num = ticket.ticket_number or "INC"
+            title = f"New reply on {ticket_num}"
+            if ticket.title:
+                body = f"Agent has replied to your incident '{ticket.title}'."
+            else:
+                body = "Agent has replied to your incident."
+            link = f"/itsm/incidents/{ticket.id}"
+
+            # Ensure tenant context is set for RLS before querying/inserting notifications
+            db.execute(
+                text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                {"tenant_id": str(tenant_id)},
+            )
+
+            # Deduplication: suppress duplicate notification within 5 seconds for the same incident comment
+            recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=5)
+            existing = (
+                db.query(Notification)
+                .filter(
+                    Notification.tenant_id == tenant_id,
+                    Notification.user_id == ticket.requester_id,
+                    Notification.link == link,
+                    Notification.body == body,
+                    Notification.created_at >= recent_cutoff,
+                )
+                .first()
+            )
+            if existing:
+                return existing
+
+            return create_notification(
+                db=db,
+                tenant_id=tenant_id,
+                user_id=ticket.requester_id,
+                type="itsm.incident.comment",
+                severity="info",
+                title=title,
+                body=body,
+                link=link,
+            )
+        except Exception as exc:
+            logger.warning("Failed to dispatch requester comment notification for incident %s: %s", getattr(ticket, "ticket_number", ticket.id), exc)
+            return None
 
     @classmethod
     def list_activities(

@@ -64,9 +64,9 @@ class ServiceAgentRequestsTestCase(unittest.TestCase):
             conn.execute(
                 text(
                     "INSERT INTO public.tenants (id, name, tier, status, created_at, updated_at) "
-                    "VALUES (:id, 'Tenant A Request Test', 'ENTERPRISE', 'active', now(), now())"
+                    "VALUES (:id, :name, 'ENTERPRISE', 'active', now(), now())"
                 ),
-                {"id": cls.tenant_id},
+                {"id": cls.tenant_id, "name": f"Tenant A Request Test {uuid4().hex[:8]}"},
             )
 
             # Tenant A Agent User
@@ -189,9 +189,9 @@ class ServiceAgentRequestsTestCase(unittest.TestCase):
             conn.execute(
                 text(
                     "INSERT INTO public.tenants (id, name, tier, status, created_at, updated_at) "
-                    "VALUES (:id, 'Tenant B Request Test', 'ENTERPRISE', 'active', now(), now())"
+                    "VALUES (:id, :name, 'ENTERPRISE', 'active', now(), now())"
                 ),
-                {"id": cls.tenant_b_id},
+                {"id": cls.tenant_b_id, "name": f"Tenant B Request Test {uuid4().hex[:8]}"},
             )
             conn.execute(
                 text(
@@ -233,14 +233,20 @@ class ServiceAgentRequestsTestCase(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
-        with cls.migrator_engine.begin() as conn:
-            conn.execute(text("DELETE FROM public.itsm_tickets WHERE tenant_id IN (:t1, :t2)"), {"t1": cls.tenant_id, "t2": cls.tenant_b_id})
-            conn.execute(text("DELETE FROM public.itsm_service_catalog_items WHERE tenant_id IN (:t1, :t2)"), {"t1": cls.tenant_id, "t2": cls.tenant_b_id})
-            conn.execute(text("DELETE FROM public.itsm_services WHERE tenant_id IN (:t1, :t2)"), {"t1": cls.tenant_id, "t2": cls.tenant_b_id})
-            conn.execute(text("DELETE FROM public.itsm_user_access WHERE tenant_id IN (:t1, :t2)"), {"t1": cls.tenant_id, "t2": cls.tenant_b_id})
-            conn.execute(text("DELETE FROM public.api_keys WHERE tenant_id IN (:t1, :t2)"), {"t1": cls.tenant_id, "t2": cls.tenant_b_id})
-            conn.execute(text("DELETE FROM public.users WHERE tenant_id IN (:t1, :t2)"), {"t1": cls.tenant_id, "t2": cls.tenant_b_id})
-            conn.execute(text("DELETE FROM public.tenants WHERE id IN (:t1, :t2)"), {"t1": cls.tenant_id, "t2": cls.tenant_b_id})
+        try:
+            with cls.migrator_engine.begin() as conn:
+                conn.execute(text("DELETE FROM public.notifications WHERE tenant_id IN (:t1, :t2)"), {"t1": cls.tenant_id, "t2": cls.tenant_b_id})
+                conn.execute(text("DELETE FROM public.itsm_tickets WHERE tenant_id IN (:t1, :t2)"), {"t1": cls.tenant_id, "t2": cls.tenant_b_id})
+                conn.execute(text("DELETE FROM public.itsm_service_catalog_items WHERE tenant_id IN (:t1, :t2)"), {"t1": cls.tenant_id, "t2": cls.tenant_b_id})
+                conn.execute(text("DELETE FROM public.itsm_services WHERE tenant_id IN (:t1, :t2)"), {"t1": cls.tenant_id, "t2": cls.tenant_b_id})
+                conn.execute(text("DELETE FROM public.itsm_user_access WHERE tenant_id IN (:t1, :t2)"), {"t1": cls.tenant_id, "t2": cls.tenant_b_id})
+                conn.execute(text("DELETE FROM public.api_keys WHERE tenant_id IN (:t1, :t2)"), {"t1": cls.tenant_id, "t2": cls.tenant_b_id})
+                conn.execute(text("DELETE FROM public.users WHERE tenant_id IN (:t1, :t2)"), {"t1": cls.tenant_id, "t2": cls.tenant_b_id})
+                conn.execute(text("DELETE FROM public.tenants WHERE id IN (:t1, :t2)"), {"t1": cls.tenant_id, "t2": cls.tenant_b_id})
+        except Exception:
+            pass
+        finally:
+            cls.migrator_engine.dispose()
 
     def test_01_agent_can_list_service_requests(self):
         """SERVICE_AGENT can list service requests within tenant."""

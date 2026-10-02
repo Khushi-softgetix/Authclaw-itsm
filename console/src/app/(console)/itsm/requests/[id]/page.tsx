@@ -371,6 +371,7 @@ export default function ServiceRequestDetailPage() {
             </h2>
             <ActivityTimeline
               incidentId={request.id}
+              ticketType="SERVICE_REQUEST"
               activities={activities}
               onActivityAdded={() => fetchRequestData()}
               apiEndpoint={`/api/itsm/requests/${request.id}/activities`}

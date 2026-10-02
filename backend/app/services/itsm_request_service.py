@@ -827,77 +827,91 @@ class RequestService:
         activity: ITSMTicketActivity,
         actor_id: Optional[UUID] = None,
         is_internal: bool = False,
-    ) -> Optional[Notification]:
-        """Dispatches an in-app notification to the assigned service agent when a requester posts a public comment."""
+    ) -> list[Notification]:
+        """Dispatches an in-app notification to the assigned service agent(s) when a requester posts a public comment."""
         try:
-            # 1. Ticket must have an assigned individual agent
-            if not ticket.assignee_id:
-                return None
-
-            # 2. Must have actor_id and ticket requester_id
-            if not actor_id or not ticket.requester_id:
-                return None
-
-            # 3. Only notify when the requester posts the comment
-            if str(actor_id) != str(ticket.requester_id):
-                return None
-
-            # 4. Prevent self-notification if actor is the assignee
-            if str(actor_id) == str(ticket.assignee_id):
-                return None
-
-            # 5. Check internal notes and non-public comments
+            # 1. Check internal notes and non-public comments
             act_type = (activity.activity_type or "").strip().upper()
             is_internal_flag = is_internal or bool((activity.activity_metadata or {}).get("is_internal"))
             if is_internal_flag or act_type in ("NOTE", "INTERNAL_NOTE", "WORK_NOTE"):
-                return None
+                return []
 
             if act_type not in ("COMMENT", "PUBLIC_COMMENT", "REPLY"):
-                return None
+                return []
 
             if activity.content and activity.content.startswith("Attached file:"):
-                return None
+                return []
 
-            ticket_num = ticket.ticket_number or "REQ"
-            title = f"New reply on {ticket_num}"
-            body = "Requester has replied to your service request."
-            link = f"/itsm/requests/{ticket.id}"
+            # 2. Must have actor_id and ticket requester_id
+            if not actor_id or not ticket.requester_id:
+                return []
 
-            # Ensure tenant context is set for RLS before querying/inserting notifications
+            # 3. Only notify when the requester posts the comment
+            if str(actor_id) != str(ticket.requester_id):
+                return []
+
+            # 4. Ensure tenant context is set for RLS before querying/inserting notifications
             db.execute(
                 text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
                 {"tenant_id": str(tenant_id)},
             )
 
-            # Deduplication: suppress duplicate notification within 5 seconds for the same request comment
-            recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=5)
-            existing = (
-                db.query(Notification)
-                .filter(
-                    Notification.tenant_id == tenant_id,
-                    Notification.user_id == ticket.assignee_id,
-                    Notification.link == link,
-                    Notification.body == body,
-                    Notification.created_at >= recent_cutoff,
-                )
-                .first()
-            )
-            if existing:
-                return existing
-
-            return create_notification(
+            # 5. Resolve responsible recipients using the same reliable logic as request creation
+            _, _, recipient_ids = cls.resolve_responsible_recipients(
                 db=db,
                 tenant_id=tenant_id,
-                user_id=ticket.assignee_id,
-                type="itsm.request.comment",
-                severity="info",
-                title=title,
-                body=body,
-                link=link,
+                ticket=ticket,
+                actor_id=actor_id,
             )
+
+            # Extra guard: exclude actor_id (the requester who posted the message)
+            recipient_ids = [uid for uid in recipient_ids if str(uid) != str(actor_id)]
+
+            if not recipient_ids:
+                return []
+
+            ticket_num = ticket.ticket_number or "REQ"
+            title = f"New message on request: {ticket_num}"
+            body = "Requester has sent a new message on your service request."
+            link = f"/itsm/requests/{ticket.id}"
+
+            created_notifications: list[Notification] = []
+            recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=5)
+
+            for recipient_id in recipient_ids:
+                # Deduplication: suppress duplicate notification within 5 seconds for the same request comment
+                existing = (
+                    db.query(Notification)
+                    .filter(
+                        Notification.tenant_id == tenant_id,
+                        Notification.user_id == recipient_id,
+                        Notification.link == link,
+                        Notification.type == "itsm.request.comment",
+                        Notification.created_at >= recent_cutoff,
+                    )
+                    .first()
+                )
+                if existing:
+                    created_notifications.append(existing)
+                    continue
+
+                notif = create_notification(
+                    db=db,
+                    tenant_id=tenant_id,
+                    user_id=recipient_id,
+                    type="itsm.request.comment",
+                    severity="info",
+                    title=title,
+                    body=body,
+                    link=link,
+                )
+                if notif:
+                    created_notifications.append(notif)
+
+            return created_notifications
         except Exception as exc:
             logger.warning("Failed to dispatch assignee comment notification for request %s: %s", getattr(ticket, "ticket_number", ticket.id), exc)
-            return None
+            return []
 
     @classmethod
     def notify_requester_public_comment(
@@ -997,6 +1011,27 @@ class RequestService:
                 text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
                 {"tenant_id": str(tenant_id)},
             )
+
+            # Auto-populate service and catalog_item from ticket if not explicitly passed
+            if ticket:
+                if not service and ticket.service_id:
+                    service = (
+                        db.query(ITSMService)
+                        .filter(ITSMService.id == ticket.service_id, ITSMService.tenant_id == tenant_id)
+                        .first()
+                    )
+                if not catalog_item:
+                    detail = (
+                        db.query(ITSMServiceRequestDetail)
+                        .options(joinedload(ITSMServiceRequestDetail.catalog_item))
+                        .filter(
+                            ITSMServiceRequestDetail.tenant_id == tenant_id,
+                            ITSMServiceRequestDetail.ticket_id == ticket.id,
+                        )
+                        .first()
+                    )
+                    if detail and detail.catalog_item:
+                        catalog_item = detail.catalog_item
 
             # 1. Identify candidate individual agent
             candidate_agent_id: Optional[UUID] = None

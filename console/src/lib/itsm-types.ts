@@ -691,3 +691,33 @@ export interface UpdateKBArticlePayload {
   change_summary?: string | null;
   service_id?: string | null;
 }
+
+export interface ITSMProductivityMacro {
+  id: string;
+  tenant_id: string;
+  name: string;
+  slug: string;
+  description?: string | null;
+  applicable_ticket_type: "INCIDENT" | "SERVICE_REQUEST" | "ALL" | string;
+  response_template: string;
+  status_change?: string | null;
+  status_reason?: string | null;
+  priority_change?: string | null;
+  follow_up_hours?: number | null;
+  is_active: boolean;
+  current_published_version?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MacroApplyResult {
+  macro_id: string;
+  macro_name: string;
+  response_template: string;
+  status_changed: boolean;
+  new_status?: string | null;
+  reminder_created: boolean;
+  follow_up_hours?: number | null;
+  message: string;
+}
+

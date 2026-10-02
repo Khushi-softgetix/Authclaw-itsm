@@ -515,6 +515,7 @@ export default function IncidentDetailPage() {
 
               <ActivityTimeline
                 incidentId={incident.id}
+                ticketType="INCIDENT"
                 activities={activities}
                 onActivityAdded={() => fetchIncidentData()}
               />

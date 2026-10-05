@@ -47,6 +47,9 @@ export interface Incident {
   resolved_at?: string | null;
   closed_at?: string | null;
   closed_by?: string | null;
+  approval_status?: "PENDING" | "APPROVED" | "REJECTED" | "NOT_REQUIRED" | string | null;
+  approval_required?: boolean;
+  rejection_reason?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -374,6 +377,9 @@ export interface ServiceRequest {
   created_at: string;
   updated_at: string;
   request_detail?: ServiceRequestDetailData | null;
+  approval_status?: "PENDING" | "APPROVED" | "REJECTED" | "NOT_REQUIRED" | string | null;
+  approval_required?: boolean;
+  rejection_reason?: string | null;
 }
 
 export interface ITSMServiceCIData {

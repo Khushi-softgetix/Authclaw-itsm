@@ -17,6 +17,7 @@ from app.db.models import (
     ITSMServiceRequestDetail,
     ITSMTicket,
     ITSMTicketActivity,
+    Notification,
     PendingApproval,
     User,
 )
@@ -25,6 +26,7 @@ from app.schemas.itsm_approvals import (
     ITSMApprovalResponse,
 )
 from app.services.audit_store import append_audit_event
+from app.services.notifications import add_notification
 
 logger = logging.getLogger("authclaw.itsm.approvals")
 
@@ -197,6 +199,16 @@ def _build_approval_response(
                 if "quantity" in form_data and quantity == 1:
                     quantity = form_data.get("quantity", 1)
 
+    assignment_group = ticket.assignment_group if ticket else None
+    assignee_id = ticket.assignee_id if ticket else None
+    assignee_email = None
+    if ticket and hasattr(ticket, "assignee") and ticket.assignee:
+        assignee_email = ticket.assignee.email
+    elif assignee_id:
+        ass_u = db.query(User).filter(User.id == assignee_id).first()
+        if ass_u:
+            assignee_email = ass_u.email
+
     return ITSMApprovalResponse(
         id=approval.id,
         tenant_id=approval.tenant_id,
@@ -218,6 +230,9 @@ def _build_approval_response(
         requester_email=requester_email,
         approver_id=approval.approver_id,
         approver_email=approver_email,
+        assignment_group=assignment_group,
+        assignee_id=assignee_id,
+        assignee_email=assignee_email,
         form_data=form_data,
         resolution_reason=approval.resolution_reason,
         expires_at=approval.expires_at,
@@ -485,6 +500,38 @@ def approve_request(
     except Exception as e:
         logger.warning("Audit savepoint failed: %s", e)
 
+    # Dispatch in-app notification to requester
+    recipient_id = approval.requester_id or (ticket.requester_id if ticket else None)
+    if recipient_id:
+        try:
+            recent_cutoff = now - timedelta(seconds=10)
+            existing = (
+                db.query(Notification)
+                .filter(
+                    Notification.tenant_id == t_id,
+                    Notification.user_id == recipient_id,
+                    Notification.type == "itsm.request.approval",
+                    Notification.link == f"/itsm/requests/{ticket.id if ticket else approval.id}",
+                    Notification.created_at >= recent_cutoff,
+                )
+                .first()
+            )
+            if not existing:
+                ticket_ref = ticket.ticket_number if (ticket and ticket.ticket_number) else (f"Request {ticket.id}" if ticket else "Service Request")
+                ticket_title = ticket.title if (ticket and ticket.title) else ticket_ref
+                add_notification(
+                    db,
+                    tenant_id=t_id,
+                    user_id=recipient_id,
+                    type="itsm.request.approval",
+                    severity="info",
+                    title=f"Service Request Approved: {ticket_ref}",
+                    body=f"Your request '{ticket_title}' has been approved and moved to in-progress fulfillment.",
+                    link=f"/itsm/requests/{ticket.id if ticket else approval.id}",
+                )
+        except Exception as e:
+            logger.warning("Failed to dispatch approval notification: %s", e)
+
     db.commit()
     db.refresh(approval)
     if ticket:
@@ -634,6 +681,41 @@ def reject_request(
             logger.warning("Audit event emission failed for rejection: %s", e)
     except Exception as e:
         logger.warning("Audit savepoint failed: %s", e)
+
+    # Dispatch in-app notification to requester
+    recipient_id = approval.requester_id or (ticket.requester_id if ticket else None)
+    if recipient_id:
+        try:
+            recent_cutoff = now - timedelta(seconds=10)
+            existing = (
+                db.query(Notification)
+                .filter(
+                    Notification.tenant_id == t_id,
+                    Notification.user_id == recipient_id,
+                    Notification.type == "itsm.request.rejection",
+                    Notification.link == f"/itsm/requests/{ticket.id if ticket else approval.id}",
+                    Notification.created_at >= recent_cutoff,
+                )
+                .first()
+            )
+            if not existing:
+                ticket_ref = ticket.ticket_number if (ticket and ticket.ticket_number) else (f"Request {ticket.id}" if ticket else "Service Request")
+                ticket_title = ticket.title if (ticket and ticket.title) else ticket_ref
+                body_msg = f"Your request '{ticket_title}' was rejected."
+                if reason:
+                    body_msg += f" Reason: {reason}"
+                add_notification(
+                    db,
+                    tenant_id=t_id,
+                    user_id=recipient_id,
+                    type="itsm.request.rejection",
+                    severity="warning",
+                    title=f"Service Request Rejected: {ticket_ref}",
+                    body=body_msg,
+                    link=f"/itsm/requests/{ticket.id if ticket else approval.id}",
+                )
+        except Exception as e:
+            logger.warning("Failed to dispatch rejection notification: %s", e)
 
     db.commit()
     db.refresh(approval)

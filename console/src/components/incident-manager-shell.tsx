@@ -6,6 +6,7 @@ import { usePathname, useRouter } from "next/navigation";
 import {
   Building,
   ChevronDown,
+  ClipboardCheck,
   LayoutDashboard,
   ListFilter,
   LogOut,
@@ -39,6 +40,7 @@ export default function IncidentManagerShell({
     { href: "/itsm/incident-manager", label: "Overview", icon: LayoutDashboard, exact: true },
     { href: "/itsm/incident-manager/incidents", label: "Incidents", icon: ListFilter },
     { href: "/itsm/incident-manager/major-incidents", label: "Major Incidents", icon: Radio },
+    { href: "/itsm/incident-manager/approvals", label: "Service Request Approvals", icon: ClipboardCheck },
   ];
 
   const currentPage =
@@ -48,7 +50,9 @@ export default function IncidentManagerShell({
         ? "Major Incidents"
         : pathname.startsWith("/itsm/incident-manager/incidents")
           ? "Incidents"
-          : "Workspace";
+          : pathname.startsWith("/itsm/incident-manager/approvals")
+            ? "Service Request Approvals"
+            : "Workspace";
 
   const handleLogout = async () => {
     try {

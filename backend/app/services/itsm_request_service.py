@@ -54,11 +54,15 @@ class RequestService:
     def _build_response(
         ticket: ITSMTicket,
         detail: Optional[ITSMServiceRequestDetail] = None,
+        approval: Optional[PendingApproval] = None,
     ) -> ServiceRequestResponse:
         """Convert an ITSMTicket and its detail snapshot into ServiceRequestResponse."""
         detail_data = None
+        is_approval_required = False
         if detail:
             cat_name = detail.catalog_item.name if detail.catalog_item else None
+            if detail.catalog_item:
+                is_approval_required = bool(detail.catalog_item.approval_required)
             detail_data = ServiceRequestDetailData(
                 catalog_item_id=detail.catalog_item_id,
                 catalog_item_name=cat_name,
@@ -66,6 +70,32 @@ class RequestService:
                 intake_schema_snapshot=detail.intake_schema_snapshot or {},
                 submitted_form_data=detail.submitted_form_data or {},
             )
+
+        if approval:
+            is_approval_required = True
+
+        approval_status = None
+        rejection_reason = None
+        if approval:
+            approval_status = approval.status
+            if approval.status == "REJECTED":
+                rejection_reason = approval.resolution_reason or ticket.status_reason
+        elif is_approval_required:
+            if ticket.status == "PENDING":
+                approval_status = "PENDING"
+            elif ticket.status in ("IN_PROGRESS", "RESOLVED", "CLOSED"):
+                approval_status = "APPROVED"
+            elif ticket.status == "CANCELLED":
+                approval_status = "REJECTED"
+                rejection_reason = ticket.status_reason
+            else:
+                approval_status = "PENDING"
+        elif ticket.ticket_type == "SERVICE_REQUEST":
+            approval_status = "NOT_REQUIRED"
+
+        if not rejection_reason and ticket.status == "CANCELLED" and ticket.status_reason:
+            if "reject" in ticket.status_reason.lower():
+                rejection_reason = ticket.status_reason
 
         requester_email = ticket.requester.email if ticket.requester else None
         assignee_email = ticket.assignee.email if ticket.assignee else None
@@ -104,6 +134,9 @@ class RequestService:
             created_at=ticket.created_at,
             updated_at=ticket.updated_at,
             request_detail=detail_data,
+            approval_required=is_approval_required,
+            approval_status=approval_status,
+            rejection_reason=rejection_reason,
         )
 
     @staticmethod
@@ -369,7 +402,7 @@ class RequestService:
             quantity=payload.quantity,
         )
 
-        return cls._build_response(ticket, detail)
+        return cls._build_response(ticket, detail, approval if (catalog_item and catalog_item.approval_required) else None)
 
     @classmethod
     def list_requests(
@@ -439,9 +472,10 @@ class RequestService:
 
         tickets = query.order_by(ITSMTicket.created_at.desc()).offset(offset).limit(limit).all()
 
-        # Batch load request details for returned tickets
+        # Batch load request details and approvals for returned tickets
         ticket_ids = [t.id for t in tickets]
         details_map = {}
+        approvals_map = {}
         if ticket_ids:
             details = (
                 db.query(ITSMServiceRequestDetail)
@@ -455,7 +489,20 @@ class RequestService:
             for d in details:
                 details_map[d.ticket_id] = d
 
-        return [cls._build_response(t, details_map.get(t.id)) for t in tickets]
+            ticket_id_strs = [str(tid) for tid in ticket_ids]
+            approvals = (
+                db.query(PendingApproval)
+                .filter(
+                    PendingApproval.tenant_id == tenant_id,
+                    PendingApproval.action_type.in_(["service_request_approval", "itsm_service_request"]),
+                    PendingApproval.action_id.in_(ticket_id_strs),
+                )
+                .all()
+            )
+            for a in approvals:
+                approvals_map[a.action_id] = a
+
+        return [cls._build_response(t, details_map.get(t.id), approvals_map.get(str(t.id))) for t in tickets]
 
     @classmethod
     def get_request(
@@ -495,7 +542,18 @@ class RequestService:
             .first()
         )
 
-        return cls._build_response(ticket, detail)
+        approval = (
+            db.query(PendingApproval)
+            .filter(
+                PendingApproval.tenant_id == tenant_id,
+                PendingApproval.action_type.in_(["service_request_approval", "itsm_service_request"]),
+                PendingApproval.action_id == str(ticket.id),
+            )
+            .order_by(PendingApproval.created_at.desc())
+            .first()
+        )
+
+        return cls._build_response(ticket, detail, approval)
 
     @classmethod
     def change_request_status(
@@ -535,6 +593,23 @@ class RequestService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Cannot transition service request in terminal status '{current_status}'",
             )
+
+        if target_status in {"IN_PROGRESS", "RESOLVED"}:
+            pending_approval = (
+                db.query(PendingApproval)
+                .filter(
+                    PendingApproval.tenant_id == tenant_id,
+                    PendingApproval.action_type == "service_request_approval",
+                    PendingApproval.action_id == str(ticket.id),
+                    PendingApproval.status == "PENDING",
+                )
+                .first()
+            )
+            if pending_approval:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Cannot transition service request to IN_PROGRESS or RESOLVED while approval is pending",
+                )
 
         allowed = ALLOWED_REQUEST_TRANSITIONS.get(current_status, set())
         if target_status not in allowed:
@@ -614,7 +689,17 @@ class RequestService:
             )
             .first()
         )
-        return cls._build_response(ticket, detail)
+        approval = (
+            db.query(PendingApproval)
+            .filter(
+                PendingApproval.tenant_id == tenant_id,
+                PendingApproval.action_type.in_(["service_request_approval", "itsm_service_request"]),
+                PendingApproval.action_id == str(ticket.id),
+            )
+            .order_by(PendingApproval.created_at.desc())
+            .first()
+        )
+        return cls._build_response(ticket, detail, approval)
 
     @classmethod
     def assign_request(
@@ -715,7 +800,17 @@ class RequestService:
             )
             .first()
         )
-        return cls._build_response(ticket, detail)
+        approval = (
+            db.query(PendingApproval)
+            .filter(
+                PendingApproval.tenant_id == tenant_id,
+                PendingApproval.action_type.in_(["service_request_approval", "itsm_service_request"]),
+                PendingApproval.action_id == str(ticket.id),
+            )
+            .order_by(PendingApproval.created_at.desc())
+            .first()
+        )
+        return cls._build_response(ticket, detail, approval)
 
     @classmethod
     def list_activities(

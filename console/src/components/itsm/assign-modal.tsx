@@ -8,11 +8,13 @@ import { apiErrorMessage } from "@/lib/errors";
 import { Incident, IncidentReferenceItem, TenantUser } from "@/lib/itsm-types";
 
 interface AssignModalProps {
-  incident: Incident;
+  incident: Incident | { id: string; ticket_number?: string | null; assignee_id?: string | null; assignment_group?: string | null };
   onClose: () => void;
-  onSuccess: (updated: Incident) => void;
+  onSuccess: (updated: any) => void;
   usersEndpoint?: string;
   referenceEndpoint?: string;
+  assignEndpoint?: string;
+  title?: string;
 }
 
 const COMMON_GROUPS = [
@@ -195,7 +197,7 @@ function SearchableSelect({
   );
 }
 
-export default function AssignModal({ incident, onClose, onSuccess, usersEndpoint = "/api/users", referenceEndpoint }: AssignModalProps) {
+export default function AssignModal({ incident, onClose, onSuccess, usersEndpoint = "/api/users", referenceEndpoint, assignEndpoint, title }: AssignModalProps) {
   const [users, setUsers] = useState<TenantUser[]>([]);
   const [teams, setTeams] = useState<IncidentReferenceItem[]>([]);
   const [assigneeId, setAssigneeId] = useState<string>(incident.assignee_id || "");
@@ -240,10 +242,11 @@ export default function AssignModal({ incident, onClose, onSuccess, usersEndpoin
         assignment_group: assignmentGroup.trim() ? assignmentGroup.trim() : null,
       };
 
-      const res = await fetch(`/api/itsm/incidents/${incident.id}/assign`, jsonRequest("POST", payload));
+      const endpoint = assignEndpoint || `/api/itsm/incidents/${incident.id}/assign`;
+      const res = await fetch(endpoint, jsonRequest("POST", payload));
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(apiErrorMessage(data, "Failed to assign incident"));
+        throw new Error(apiErrorMessage(data, assignEndpoint ? "Failed to update assignment" : "Failed to assign incident"));
       }
 
       const updated = await res.json();
@@ -258,7 +261,7 @@ export default function AssignModal({ incident, onClose, onSuccess, usersEndpoin
 
   return (
     <ModalShell
-      title={`Assign Incident · ${incident.ticket_number}`}
+      title={title || `Assign Incident · ${incident.ticket_number || ""}`}
       onClose={onClose}
       error={error}
       maxWidthClass="max-w-[440px]"

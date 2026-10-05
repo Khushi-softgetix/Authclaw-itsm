@@ -119,6 +119,15 @@ class ITSMApprovalsSecurityTestCase(unittest.TestCase):
         cls.approval_admin_override = uuid4()
         cls.ticket_admin_override = uuid4()
 
+        cls.approval_guard = uuid4()
+        cls.ticket_guard = uuid4()
+
+        cls.approval_flow = uuid4()
+        cls.ticket_flow = uuid4()
+
+        cls.approval_reject_flow = uuid4()
+        cls.ticket_reject_flow = uuid4()
+
         now = datetime.now(timezone.utc)
 
         with cls.migrator_engine.begin() as conn:
@@ -188,13 +197,20 @@ class ITSMApprovalsSecurityTestCase(unittest.TestCase):
                 ),
                 {"id": cls.catalog_item_id, "tenant_id": cls.tenant_id, "service_id": cls.service_id},
             )
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_teams (id, tenant_id, name, description, is_active, created_at, updated_at) "
+                    "VALUES (gen_random_uuid(), :tenant_id, 'Platform Support', 'Platform Support Team', true, now(), now())"
+                ),
+                {"tenant_id": cls.tenant_id},
+            )
 
             # Helper to create ticket + pending_approval pair
             def create_approval_pair(app_id, tkt_id, tkt_num, title, assigned_approver_id=None):
                 conn.execute(
                     text(
                         "INSERT INTO public.itsm_tickets (id, tenant_id, ticket_number, title, description, ticket_type, status, priority, urgency, impact, requester_id, service_id, created_at, updated_at) "
-                        "VALUES (:id, :tenant_id, :ticket_number, :title, 'Request Description', 'SERVICE_REQUEST', 'AWAITING_APPROVAL', 'P3', 'MEDIUM', 'MEDIUM', :requester_id, :service_id, now(), now())"
+                        "VALUES (:id, :tenant_id, :ticket_number, :title, 'Request Description', 'SERVICE_REQUEST', 'PENDING', 'P3', 'MEDIUM', 'MEDIUM', :requester_id, :service_id, now(), now())"
                     ),
                     {
                         "id": tkt_id,
@@ -203,6 +219,17 @@ class ITSMApprovalsSecurityTestCase(unittest.TestCase):
                         "title": title,
                         "requester_id": cls.requester_user_id,
                         "service_id": cls.service_id,
+                    },
+                )
+                conn.execute(
+                    text(
+                        "INSERT INTO public.itsm_service_request_details (id, tenant_id, ticket_id, catalog_item_id, catalog_item_version, intake_schema_snapshot, submitted_form_data, created_at) "
+                        "VALUES (gen_random_uuid(), :tenant_id, :ticket_id, :catalog_item_id, 1, '{}', '{}', now())"
+                    ),
+                    {
+                        "tenant_id": cls.tenant_id,
+                        "ticket_id": tkt_id,
+                        "catalog_item_id": cls.catalog_item_id,
                     },
                 )
                 conn.execute(
@@ -231,6 +258,9 @@ class ITSMApprovalsSecurityTestCase(unittest.TestCase):
             create_approval_pair(cls.approval_pcm_rej, cls.ticket_pcm_rej, "REQ-PCM-REJ", "PCM Rejection Test")
             create_approval_pair(cls.approval_assigned, cls.ticket_assigned, "REQ-ASSIGNED", "Assigned Approval Test", assigned_approver_id=cls.manager_user_id)
             create_approval_pair(cls.approval_admin_override, cls.ticket_admin_override, "REQ-ADMIN-OVR", "Admin Override Test", assigned_approver_id=cls.manager_user_id)
+            create_approval_pair(cls.approval_guard, cls.ticket_guard, "REQ-GUARD", "Guard & Assignment Test")
+            create_approval_pair(cls.approval_flow, cls.ticket_flow, "REQ-FLOW", "Approved Fulfillment Test")
+            create_approval_pair(cls.approval_reject_flow, cls.ticket_reject_flow, "REQ-REJ-FLOW", "Reject Fulfillment Test")
 
     @classmethod
     def tearDownClass(cls):
@@ -376,6 +406,109 @@ class ITSMApprovalsSecurityTestCase(unittest.TestCase):
             json={"reason": "Cross-tenant intrusion attempt"},
         )
         self.assertEqual(response.status_code, 404)
+
+    # --- 7. Phase 1 Guardrails & Workflow Tests ---
+    def test_fulfillment_blocked_with_409_while_approval_pending(self):
+        """Service agent attempting to start fulfillment (IN_PROGRESS) or resolve (RESOLVED) while approval is pending MUST receive HTTP 409 Conflict."""
+        # 1. Try IN_PROGRESS
+        res_progress = self.client.post(
+            f"/v1/itsm/requests/{self.ticket_guard}/status",
+            headers={"Authorization": f"Bearer {self.agent_key}"},
+            json={"status": "IN_PROGRESS"},
+        )
+        self.assertEqual(res_progress.status_code, 409)
+        self.assertIn("while approval is pending", res_progress.json()["detail"])
+
+        # 2. Try RESOLVED
+        res_resolve = self.client.post(
+            f"/v1/itsm/requests/{self.ticket_guard}/status",
+            headers={"Authorization": f"Bearer {self.agent_key}"},
+            json={"status": "RESOLVED", "resolution_code": "FULFILLED", "resolution_summary": "Premature attempt"},
+        )
+        self.assertEqual(res_resolve.status_code, 409)
+        self.assertIn("while approval is pending", res_resolve.json()["detail"])
+
+    def test_team_assignment_remains_possible_while_approval_pending(self):
+        """Incident Manager or Agent can assign/reassign a supporting team while approval is pending."""
+        res_assign = self.client.post(
+            f"/v1/itsm/requests/{self.ticket_guard}/assign",
+            headers={"Authorization": f"Bearer {self.manager_key}"},
+            json={"assignment_group": "Platform Support", "assignee_id": str(self.agent_user_id)},
+        )
+        self.assertEqual(res_assign.status_code, 200)
+        data = res_assign.json()
+        self.assertEqual(data["assignment_group"], "Platform Support")
+        self.assertEqual(data["assignee_id"], str(self.agent_user_id))
+        self.assertEqual(data["status"], "PENDING")
+
+    def test_fulfillment_allowed_after_approval(self):
+        """Once approved by an authorized manager, the ticket moves to IN_PROGRESS and agent can resolve it."""
+        # Manager approves
+        res_app = self.client.post(
+            f"/v1/itsm/approvals/{self.approval_flow}/approve",
+            headers={"Authorization": f"Bearer {self.manager_key}"},
+            json={"reason": "Approved for fulfillment"},
+        )
+        self.assertEqual(res_app.status_code, 200)
+        self.assertEqual(res_app.json()["status"], "APPROVED")
+        self.assertEqual(res_app.json()["ticket_status"], "IN_PROGRESS")
+
+        # Now Agent resolves
+        res_resolve = self.client.post(
+            f"/v1/itsm/requests/{self.ticket_flow}/status",
+            headers={"Authorization": f"Bearer {self.agent_key}"},
+            json={"status": "RESOLVED", "resolution_code": "FULFILLED", "resolution_summary": "Sandbox created"},
+        )
+        self.assertEqual(res_resolve.status_code, 200)
+        self.assertEqual(res_resolve.json()["status"], "RESOLVED")
+
+    def test_rejection_blocks_fulfillment(self):
+        """Rejected request moves to CANCELLED and cannot be transitioned to IN_PROGRESS or RESOLVED."""
+        res_rej = self.client.post(
+            f"/v1/itsm/approvals/{self.approval_reject_flow}/reject",
+            headers={"Authorization": f"Bearer {self.pcm_key}"},
+            json={"reason": "Project cancelled"},
+        )
+        self.assertEqual(res_rej.status_code, 200)
+        self.assertEqual(res_rej.json()["status"], "REJECTED")
+        self.assertEqual(res_rej.json()["ticket_status"], "CANCELLED")
+
+        # Attempt to fulfill cancelled ticket returns 409
+        res_progress = self.client.post(
+            f"/v1/itsm/requests/{self.ticket_reject_flow}/status",
+            headers={"Authorization": f"Bearer {self.agent_key}"},
+            json={"status": "IN_PROGRESS"},
+        )
+        self.assertEqual(res_progress.status_code, 409)
+
+    def test_requester_receives_approval_and_rejection_notifications(self):
+        """Approving or rejecting a request dispatches an in-app notification to the requester."""
+        with self.migrator_engine.connect() as conn:
+            # Check approval notification for requester
+            app_notif = conn.execute(
+                text(
+                    "SELECT type, severity, title, body, link FROM public.notifications "
+                    "WHERE tenant_id = :tenant_id AND user_id = :user_id AND type = 'itsm.request.approval'"
+                ),
+                {"tenant_id": self.tenant_id, "user_id": self.requester_user_id},
+            ).first()
+            self.assertIsNotNone(app_notif, "Requester should have received an approval notification")
+            self.assertEqual(app_notif.type, "itsm.request.approval")
+            self.assertEqual(app_notif.severity, "info")
+            self.assertIn("Approved", app_notif.title)
+
+            # Check rejection notification for requester
+            rej_notif = conn.execute(
+                text(
+                    "SELECT type, severity, title, body, link FROM public.notifications "
+                    "WHERE tenant_id = :tenant_id AND user_id = :user_id AND type = 'itsm.request.rejection'"
+                ),
+                {"tenant_id": self.tenant_id, "user_id": self.requester_user_id},
+            ).first()
+            self.assertIsNotNone(rej_notif, "Requester should have received a rejection notification")
+            self.assertEqual(rej_notif.type, "itsm.request.rejection")
+            self.assertEqual(rej_notif.severity, "warning")
+            self.assertIn("Rejected", rej_notif.title)
 
 
 if __name__ == "__main__":

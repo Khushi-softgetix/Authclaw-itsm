@@ -53,6 +53,9 @@ class ServiceRequestResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     request_detail: Optional[ServiceRequestDetailData] = None
+    approval_required: bool = False
+    approval_status: Optional[str] = None
+    rejection_reason: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

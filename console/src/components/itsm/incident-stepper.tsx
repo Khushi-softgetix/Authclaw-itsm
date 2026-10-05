@@ -5,6 +5,7 @@ import { Check, XCircle } from "lucide-react";
 
 interface IncidentStepperProps {
   currentStatus: string;
+  labels?: Partial<Record<string, string>>;
 }
 
 const ORDERED_STEPS = ["NEW", "ASSIGNED", "IN_PROGRESS", "RESOLVED", "CLOSED"] as const;
@@ -19,11 +20,12 @@ const STEP_LABELS: Record<string, string> = {
   CANCELLED: "Cancelled",
 };
 
-export default function IncidentStepper({ currentStatus }: IncidentStepperProps) {
+export default function IncidentStepper({ currentStatus, labels }: IncidentStepperProps) {
   const norm = currentStatus?.toUpperCase().trim() || "NEW";
   const isCancelled = norm === "CANCELLED";
   const isPending = norm === "PENDING";
   const isClosed = norm === "CLOSED";
+  const effectiveLabels = { ...STEP_LABELS, ...labels };
 
   const getStepIndex = (st: string) => {
     switch (st) {
@@ -57,7 +59,7 @@ export default function IncidentStepper({ currentStatus }: IncidentStepperProps)
           ORDERED_STEPS.map((step, idx) => {
             const isCompleted = isClosed ? idx <= currentIndex : idx < currentIndex;
             const isCurrent = idx === currentIndex;
-            const label = isCurrent && isPending ? "Pending" : STEP_LABELS[step];
+            const label = isCurrent && isPending ? (effectiveLabels.PENDING || "Pending") : (effectiveLabels[step] || STEP_LABELS[step]);
 
             return (
               <React.Fragment key={step}>

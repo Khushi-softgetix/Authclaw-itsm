@@ -17,13 +17,16 @@ import {
   Tag,
   User,
   Users,
+  XCircle,
 } from "lucide-react";
 import { formatDateTime, itsmSlaConfig } from "@/lib/itsm-format";
 import { IncidentActivity, ServiceRequest } from "@/lib/itsm-types";
 import IncidentPriorityBadge from "@/components/itsm/incident-priority-badge";
 import IncidentStatusBadge from "@/components/itsm/incident-status-badge";
+import IncidentStepper from "@/components/itsm/incident-stepper";
 import ActivityTimeline from "@/components/itsm/activity-timeline";
 import StatusModal from "@/components/itsm/status-modal";
+import AssignModal from "@/components/itsm/assign-modal";
 import AttachmentSection, { AttachmentItem } from "@/components/itsm/attachment-section";
 import CancelTicketModal from "@/components/itsm/cancel-ticket-modal";
 
@@ -53,6 +56,7 @@ export default function ServiceRequestDetailPage() {
   const [showStatusModal, setShowStatusModal] = useState<boolean>(false);
   const [targetModalStatus, setTargetModalStatus] = useState<string | undefined>(undefined);
   const [showCancelModal, setShowCancelModal] = useState<boolean>(false);
+  const [showAssignModal, setShowAssignModal] = useState<boolean>(false);
 
   const fetchRequestData = useCallback(async () => {
     if (!requestId) return;
@@ -201,26 +205,60 @@ export default function ServiceRequestDetailPage() {
   const formData = request.request_detail?.submitted_form_data || {};
   const formEntries = Object.entries(formData);
 
+  const isApprovalPending =
+    request.approval_status === "PENDING" ||
+    (Boolean(request.approval_required) && request.status === "PENDING");
+  const isApprovalApproved =
+    request.approval_status === "APPROVED" ||
+    (Boolean(request.approval_required) && ["IN_PROGRESS", "RESOLVED", "CLOSED"].includes(request.status));
+  const isApprovalRejected =
+    request.approval_status === "REJECTED" ||
+    request.status === "CANCELLED";
+
   return (
     <div className="space-y-6 max-w-6xl mx-auto" id="service-agent-request-detail">
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="space-y-1.5">
-          <div>
-            <Link
-              href={userRole === "REQUESTER" ? "/itsm/incidents" : "/itsm/requests"}
-              id="back-to-requests-link"
-              className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#6D28D9] hover:text-[#5B21B6] transition"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" /> {userRole === "REQUESTER" ? "Back to My Tickets" : "Back to Requests"}
-            </Link>
-          </div>
+            {userRole === "REQUESTER" ? (
+              <Link
+                href="/itsm/incidents"
+                id="back-to-requests-link"
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#6D28D9] hover:text-[#5B21B6] transition"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" /> Back to My Tickets
+              </Link>
+            ) : (
+              <Link
+                href="/itsm/requests"
+                id="back-to-requests-link"
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#6D28D9] hover:text-[#5B21B6] transition"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" /> Back to Requests
+              </Link>
+            )}
           <div className="flex items-center gap-2.5 flex-wrap pt-0.5">
             <span className="font-mono text-xs font-bold px-2.5 py-0.5 rounded bg-purple-50 text-[#6D28D9] border border-purple-200">
               {request.ticket_number}
             </span>
             <IncidentPriorityBadge priority={request.priority} />
             <IncidentStatusBadge status={request.status} />
+            {/* Approval Status Badge */}
+            {request.approval_required || request.approval_status ? (
+              isApprovalApproved ? (
+                <span id="approval-status-approved-badge" className="inline-flex items-center gap-1 font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded text-[11px]">
+                  <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Approved
+                </span>
+              ) : isApprovalRejected ? (
+                <span id="approval-status-rejected-badge" className="inline-flex items-center gap-1 font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded text-[11px]">
+                  <XCircle className="w-3 h-3 text-rose-600" /> Rejected
+                </span>
+              ) : (
+                <span id="approval-status-pending-badge" className="inline-flex items-center gap-1 font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded text-[11px]">
+                  <Clock className="w-3 h-3 text-amber-600" /> Awaiting Approval
+                </span>
+              )
+            ) : null}
             {slaConfig && (
               <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold border ${slaConfig.badge}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${slaConfig.dot}`} />
@@ -255,34 +293,62 @@ export default function ServiceRequestDetailPage() {
             </button>
           )}
 
-          {!isTerminal && userRole !== "REQUESTER" && (
-            <button
-              onClick={() => {
-                setTargetModalStatus(undefined);
-                setShowStatusModal(true);
-              }}
-              id="agent-update-status-action"
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-[#E6E9F0] bg-white hover:bg-[#F9FAFB] text-[#0E1726] text-xs font-semibold transition shadow-xs"
-            >
-              Update Status
-            </button>
+          {/* Fulfillment actions for Service Agent: Locked when awaiting approval or rejected */}
+          {userRole !== "REQUESTER" && (
+            isApprovalPending ? (
+              <button
+                type="button"
+                disabled
+                id="agent-update-status-action"
+                title="Fulfillment actions are disabled while awaiting approval"
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-gray-200 bg-gray-50 text-gray-400 text-xs font-semibold cursor-not-allowed shadow-xs"
+              >
+                Update Status
+              </button>
+            ) : !isTerminal && !isApprovalRejected ? (
+              <button
+                onClick={() => {
+                  setTargetModalStatus(undefined);
+                  setShowStatusModal(true);
+                }}
+                id="agent-update-status-action"
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-[#E6E9F0] bg-white hover:bg-[#F9FAFB] text-[#0E1726] text-xs font-semibold transition shadow-xs"
+              >
+                Update Status
+              </button>
+            ) : null
           )}
 
-          {(request.status === "IN_PROGRESS" || request.status === "PENDING") && (
-            <button
-              onClick={() => {
-                setTargetModalStatus("RESOLVED");
-                setShowStatusModal(true);
-              }}
-              id="agent-resolve-request-action"
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition shadow-xs"
-            >
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              Resolve Request
-            </button>
+          {/* Resolve Request: Disabled/hidden when approval is pending or rejected */}
+          {userRole !== "REQUESTER" && (request.status === "IN_PROGRESS" || request.status === "PENDING") && (
+            isApprovalPending ? (
+              <button
+                type="button"
+                disabled
+                id="agent-resolve-request-action"
+                title="Cannot resolve request while awaiting approval"
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-gray-100 text-gray-400 border border-gray-200 text-xs font-semibold cursor-not-allowed shadow-xs"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5 text-gray-400" />
+                Resolve Request
+              </button>
+            ) : !isApprovalRejected ? (
+              <button
+                onClick={() => {
+                  setTargetModalStatus("RESOLVED");
+                  setShowStatusModal(true);
+                }}
+                id="agent-resolve-request-action"
+                className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold transition shadow-xs"
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                Resolve Request
+              </button>
+            ) : null
           )}
 
-          {request.status === "RESOLVED" && (
+          {/* Reopen Request: Available when resolved and not rejected */}
+          {userRole !== "REQUESTER" && request.status === "RESOLVED" && !isApprovalRejected && (
             <button
               onClick={() => {
                 setTargetModalStatus("IN_PROGRESS");
@@ -298,10 +364,113 @@ export default function ServiceRequestDetailPage() {
         </div>
       </div>
 
+      {/* Approval & Fulfillment Status Banners */}
+      {isApprovalPending && (
+        <div id="service-request-awaiting-approval-message" className="rounded-2xl border border-amber-200 bg-amber-50/90 p-4.5 shadow-xs flex items-start gap-3.5">
+          <Clock className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-amber-900">
+                Awaiting Manager Approval
+              </h3>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300">
+                Fulfillment Locked
+              </span>
+            </div>
+            <p className="text-xs text-amber-800 leading-relaxed">
+              This service request requires manager sign-off before fulfillment can begin. Status changes and resolution actions are disabled until approval is granted. Team and agent assignment can still be managed.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {isApprovalRejected && (
+        <div id="service-request-rejected-message" className="rounded-2xl border border-rose-200 bg-rose-50/90 p-4.5 shadow-xs flex items-start gap-3.5">
+          <XCircle className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-rose-900">
+                Request Rejected
+              </h3>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-100 text-rose-800 border border-rose-300">
+                Cancelled
+              </span>
+            </div>
+            <p className="text-xs text-rose-800 leading-relaxed">
+              This service request was rejected during the approval review and has been cancelled. Fulfillment actions are prevented.
+            </p>
+            {(request.rejection_reason || request.status_reason) && (
+              <div id="request-detail-rejection-reason" className="mt-2 text-xs font-semibold text-rose-950 bg-white/70 border border-rose-200 rounded-xl px-3 py-2">
+                <span className="text-rose-600 font-bold uppercase tracking-wider text-[10px] block">Rejection Reason:</span>
+                <span className="font-medium text-rose-900">{request.rejection_reason || request.status_reason}</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {isApprovalApproved && request.approval_required && (
+        <div id="service-request-approved-message" className="rounded-2xl border border-emerald-200 bg-emerald-50/80 p-3.5 shadow-xs flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+            <div className="text-xs text-emerald-900">
+              <span className="font-bold">Manager Approval Granted.</span> This request has been approved and moved to fulfillment.
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main Grid: Left Details & Activities / Right Sidebar */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Left Column: Details, Variables, Activities (8 cols) */}
         <div className="lg:col-span-8 space-y-6">
+          {/* Work Progress Stepper */}
+          <div className="bg-white rounded-2xl border border-[#E6E9F0] p-6 shadow-xs space-y-4" id="request-work-progress-card">
+            <div className="flex items-center justify-between border-b border-[#F1F3F9] pb-3">
+              <div>
+                <h2 className="text-sm font-bold text-[#0E1726]">Fulfillment Progress</h2>
+                <p className="text-xs text-[#6B7488] mt-0.5">Live lifecycle progress and work status tracking</p>
+              </div>
+              {request.approval_required && (
+                <div className="flex items-center gap-1.5 text-xs">
+                  <span className="text-[#8C95A8] font-medium text-[11px]">Approval:</span>
+                  {isApprovalApproved ? (
+                    <span className="inline-flex items-center gap-1 font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full text-[11px]">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Approved
+                    </span>
+                  ) : isApprovalRejected ? (
+                    <span className="inline-flex items-center gap-1 font-bold text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-full text-[11px]">
+                      <XCircle className="w-3 h-3 text-rose-600" /> Rejected
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1 font-bold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full text-[11px]">
+                      <Clock className="w-3 h-3 text-amber-600" /> Pending Sign-Off
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+            <IncidentStepper currentStatus={request.status} labels={{ RESOLVED: "Delivered" }} />
+            {request.status === "RESOLVED" && request.resolved_at && (
+              <div className="text-xs text-emerald-800 bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-start gap-2.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold">Request Resolved on {formatDateTime(request.resolved_at)}</span>
+                  {request.resolution_summary && (
+                    <p className="mt-1 text-emerald-900 font-normal leading-relaxed">{request.resolution_summary}</p>
+                  )}
+                </div>
+              </div>
+            )}
+            {request.status === "CLOSED" && request.closed_at && (
+              <div className="text-xs text-slate-800 bg-slate-50 border border-slate-200 rounded-xl p-3 flex items-start gap-2.5">
+                <CheckCircle2 className="w-4 h-4 text-slate-600 shrink-0 mt-0.5" />
+                <div>
+                  <span className="font-bold">Request Closed on {formatDateTime(request.closed_at)}</span>
+                </div>
+              </div>
+            )}
+          </div>
           {/* Request Overview Card */}
           <div className="bg-white rounded-2xl border border-[#E6E9F0] p-6 shadow-xs space-y-4">
             <div className="flex items-center justify-between">
@@ -441,6 +610,17 @@ export default function ServiceRequestDetailPage() {
                   {request.assignee_email || "Unassigned"}
                 </span>
               </div>
+              {userRole !== "REQUESTER" && (
+                <button
+                  type="button"
+                  id="agent-assign-request-action"
+                  onClick={() => setShowAssignModal(true)}
+                  className="w-full mt-2 py-2 px-3 rounded-xl border border-[#E6E9F0] bg-white hover:bg-[#F9FAFB] text-[#0E1726] text-xs font-semibold transition shadow-xs flex items-center justify-center gap-1.5"
+                >
+                  <Users className="w-3.5 h-3.5 text-[#6D28D9]" />
+                  <span>{request.assignment_group ? "Reassign Team" : "Assign Team"}</span>
+                </button>
+              )}
             </div>
           </div>
 
@@ -502,6 +682,29 @@ export default function ServiceRequestDetailPage() {
           statusEndpoint={`/api/itsm/requests/${request.id}/status`}
           onClose={() => setShowCancelModal(false)}
           onSuccess={() => {
+            fetchRequestData();
+          }}
+        />
+      )}
+
+      {showAssignModal && request && (
+        <AssignModal
+          incident={request as any}
+          title={`Assign Request · ${request.ticket_number}`}
+          assignEndpoint={`/api/itsm/requests/${request.id}/assign`}
+          onClose={() => setShowAssignModal(false)}
+          onSuccess={(updated) => {
+            setRequest((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    assignment_group: updated.assignment_group,
+                    assignee_id: updated.assignee_id,
+                    assignee_email: updated.assignee_email,
+                  }
+                : null
+            );
+            setShowAssignModal(false);
             fetchRequestData();
           }}
         />

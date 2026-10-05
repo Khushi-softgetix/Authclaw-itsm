@@ -35,6 +35,9 @@ class ITSMApprovalResponse(BaseModel):
     requester_email: Optional[str] = None
     approver_id: Optional[UUID] = None
     approver_email: Optional[str] = None
+    assignment_group: Optional[str] = None
+    assignee_id: Optional[UUID] = None
+    assignee_email: Optional[str] = None
     form_data: dict[str, Any] = Field(default_factory=dict)
     resolution_reason: Optional[str] = None
     expires_at: Optional[datetime] = None

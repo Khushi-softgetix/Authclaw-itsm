@@ -241,6 +241,8 @@ test("Command queue distinguishes major incidents from candidates with clear sel
   assert.match(page, /lg:grid-cols-\[minmax\(0,2fr\)_150px_minmax\(180px,1fr\)_minmax\(170px,1fr\)_32px\]/);
   assert.match(page, /Search title or incident number/);
   assert.match(page, /Command ownership/);
+  assert.match(page, /Assigned resolver/);
+  assert.match(page, /incident\.assignee_email \|\| references\.users\.find\(user=>user\.id===incident\.assignee_id\)\?\.email/);
   assert.match(page, /Situation summary/);
   assert.match(page, /Edit command details/);
   assert.match(page, /Decision needed/);

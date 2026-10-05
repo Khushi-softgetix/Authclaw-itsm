@@ -4,7 +4,7 @@ import { ItsmPublicFooter } from "@/itsm/components/itsm-public-footer";
 
 export default function ItsmPublicLayout({ children }: { children: ReactNode }) {
   return (
-    <div className="min-h-screen flex flex-col bg-[#FAFBFD] text-[#0E1726]">
+    <div className="flex min-h-screen flex-col bg-white text-[#0E1726]">
       <ItsmPublicHeader />
       <main className="flex-1">{children}</main>
       <ItsmPublicFooter />

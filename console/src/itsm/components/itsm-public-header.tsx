@@ -1,145 +1,75 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Ticket, Menu, X, ArrowRight } from "lucide-react";
+import { useState } from "react";
+import { ArrowRight, ChevronDown, Menu, Ticket, X } from "lucide-react";
+
+const navLinks = [
+  { label: "Home", href: "/itsm" },
+  { label: "Capabilities", href: "/itsm#capabilities" },
+  { label: "Roles", href: "/itsm/roles" },
+  { label: "Trust", href: "/itsm#trust" },
+] as const;
 
 export function ItsmPublicHeader() {
   const pathname = usePathname();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [isScrolled, setIsScrolled] = useState(false);
-
-  useEffect(() => {
-    const handleScroll = () => {
-      setIsScrolled(window.scrollY > 20);
-    };
-    window.addEventListener("scroll", handleScroll);
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, []);
-
-  const navLinks = [
-    { label: "Home", href: "/itsm" },
-    { label: "Capabilities", href: "/itsm#capabilities" },
-    { label: "Roles", href: "/itsm/roles" },
-    { label: "Trust", href: "/itsm#trust" },
-  ];
 
   return (
-    <header
-      className={`sticky top-0 z-50 transition-all duration-200 ${
-        isScrolled
-          ? "bg-white/95 backdrop-blur-md border-b border-[#E6E9F0] shadow-[0_1px_2px_rgba(11,31,63,.05)]"
-          : "bg-white border-b border-transparent"
-      }`}
-    >
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-6 sm:px-8">
-        {/* Brand Left */}
-        <div className="flex items-center gap-3">
-          <Link href="/itsm" className="flex items-center gap-2.5 group">
-            <div className="w-8 h-8 rounded-[10px] bg-[#6D28D9] flex items-center justify-center shadow-[0_4px_12px_-4px_rgba(109,40,217,.5)] group-hover:scale-105 transition-transform">
-              <Ticket className="w-4.5 h-4.5 text-white" />
-            </div>
-            <div>
-              <div className="flex items-center gap-1.5">
-                <span className="font-bold text-base tracking-tight text-[#0E1726]">
-                  AuthClaw
-                </span>
-                <span className="font-semibold text-base text-[#6D28D9]">
-                  ITSM
-                </span>
-              </div>
-            </div>
+    <header className="sticky top-0 z-50 border-b border-[#E6E9F0] bg-white/95 backdrop-blur-md">
+      <div className="mx-auto flex min-h-[66px] max-w-7xl items-center gap-4 px-6 sm:px-8">
+        <div className="flex min-w-0 flex-1 items-center gap-3 lg:flex-initial">
+          <Link href="/" aria-label="AuthClaw home" className="flex shrink-0 items-center gap-2.5 rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9] focus-visible:ring-offset-4">
+            <span className="mark" aria-hidden="true" />
+            <span className="min-w-0">
+              <span className="block whitespace-nowrap text-lg font-bold tracking-[-0.02em] text-[#0E1726]">AuthClaw <span className="text-[#6D28D9]">.ai</span></span>
+              <span className="block whitespace-nowrap text-[10px] font-medium text-[#6B7488] sm:hidden">IT Service Management</span>
+            </span>
           </Link>
-          <span className="hidden lg:inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-semibold text-[#6B7488] bg-[#F1ECFE] text-[#6D28D9] rounded-md border border-[#E9D5FF]">
-            AI-Native Service Management
-          </span>
+          <span aria-hidden="true" className="hidden h-7 w-px bg-[#DDE1E9] sm:block" />
+          <Link href="/itsm" className="hidden items-center gap-2 rounded-md text-sm font-medium text-[#475069] transition-colors hover:text-[#0E1726] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9] sm:flex">
+            <Ticket aria-hidden="true" className="h-4 w-4 text-[#6D28D9]" />
+            IT Service Management
+          </Link>
         </div>
 
-        {/* Navigation Center */}
-        <nav className="hidden md:flex items-center gap-1 text-xs font-medium text-[#475069]" aria-label="ITSM Product Navigation">
-          {navLinks.map((item) => {
+        <nav className="mx-auto hidden items-center gap-7 text-sm font-medium text-[#475069] md:flex" aria-label="ITSM Product Navigation">
+          <Link href="/product" className="inline-flex items-center gap-1.5 transition-colors hover:text-[#0E1726] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9]">Product<ChevronDown aria-hidden="true" className="h-3.5 w-3.5" /></Link>
+          {navLinks.slice(1).map((item) => {
             const active = pathname === item.href;
             return (
-              <Link
-                key={item.label}
-                href={item.href}
-                className={`px-3.5 py-1.5 rounded-lg transition-colors ${
-                  active
-                    ? "text-[#6D28D9] bg-[#F1ECFE] font-semibold"
-                    : "hover:text-[#0E1726] hover:bg-[#F5F7FA]"
-                }`}
-              >
+              <Link key={item.label} href={item.href} aria-current={active ? "page" : undefined} className={`transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9] ${active ? "text-[#6D28D9]" : "hover:text-[#0E1726]"}`}>
                 {item.label}
               </Link>
             );
           })}
         </nav>
 
-        {/* Action Buttons Right */}
-        <div className="hidden md:flex items-center gap-3">
-          <Link
-            href="/itsm/login"
-            className="text-xs font-semibold text-[#475069] hover:text-[#0E1726] px-3.5 py-2 rounded-lg hover:bg-[#F5F7FA] transition"
-          >
-            Login
-          </Link>
-          <Link
-            href="/demo"
-            className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-[#6D28D9] hover:bg-[#5B21B6] px-4 py-2 rounded-[10px] shadow-[0_4px_12px_-4px_rgba(109,40,217,.5)] transition active:scale-98"
-            style={{ color: "#ffffff" }}
-          >
-            <span style={{ color: "#ffffff" }}>Book a Demo</span>
-            <ArrowRight className="w-3.5 h-3.5 text-white" style={{ color: "#ffffff" }} />
-          </Link>
+        <div className="hidden items-center gap-4 md:flex">
+          <Link href="/itsm/login" className="text-sm font-semibold text-[#475069] transition-colors hover:text-[#0E1726] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9]">Sign in</Link>
+          <Link href="/demo" className="inline-flex min-h-11 items-center gap-2 rounded-[10px] bg-[#6D28D9] px-5 text-sm font-semibold text-white shadow-[0_10px_20px_-10px_rgba(109,40,217,.8)] transition hover:bg-[#5B21B6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9] focus-visible:ring-offset-2">Book a demo<ArrowRight aria-hidden="true" className="h-4 w-4" /></Link>
         </div>
 
-        {/* Mobile Hamburger */}
-        <div className="flex md:hidden items-center gap-2">
-          <button
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="p-2 text-[#475069] hover:text-[#0E1726] rounded-lg hover:bg-[#F5F7FA] focus:outline-none"
-            aria-label="Toggle navigation menu"
-          >
-            {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-          </button>
-        </div>
+        <button type="button" onClick={() => setMobileMenuOpen((open) => !open)} className="ml-auto inline-flex h-11 w-11 items-center justify-center rounded-[10px] border border-[#DDE1E9] text-[#0E1726] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9] md:hidden" aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={mobileMenuOpen}>
+          {mobileMenuOpen ? <X aria-hidden="true" className="h-5 w-5" /> : <Menu aria-hidden="true" className="h-5 w-5" />}
+        </button>
       </div>
 
-      {/* Mobile Drawer */}
-      {mobileMenuOpen && (
-        <div className="md:hidden border-b border-[#E6E9F0] bg-white px-6 py-4 space-y-3 shadow-lg animate-in slide-in-from-top-2 duration-150">
-          <div className="space-y-1">
+      {mobileMenuOpen ? (
+        <div className="border-t border-[#E6E9F0] bg-white px-6 pb-5 pt-3 md:hidden">
+          <nav aria-label="Mobile ITSM product navigation" className="mx-auto max-w-7xl space-y-1">
+            <Link href="/product" onClick={() => setMobileMenuOpen(false)} className="flex min-h-11 items-center justify-between border-b border-[#EEF1F5] px-1 text-sm font-medium text-[#475069]">Product<ArrowRight aria-hidden="true" className="h-4 w-4" /></Link>
             {navLinks.map((item) => (
-              <Link
-                key={item.label}
-                href={item.href}
-                onClick={() => setMobileMenuOpen(false)}
-                className="block px-3 py-2 text-sm font-medium text-[#475069] hover:text-[#0E1726] hover:bg-[#F5F7FA] rounded-lg"
-              >
-                {item.label}
-              </Link>
+              <Link key={item.label} href={item.href} onClick={() => setMobileMenuOpen(false)} className="flex min-h-11 items-center justify-between border-b border-[#EEF1F5] px-1 text-sm font-medium text-[#475069]">{item.label}<ArrowRight aria-hidden="true" className="h-4 w-4" /></Link>
             ))}
-          </div>
-          <div className="pt-3 border-t border-[#E6E9F0] flex flex-col gap-2">
-            <Link
-              href="/itsm/login"
-              onClick={() => setMobileMenuOpen(false)}
-              className="w-full text-center py-2 text-xs font-semibold text-[#475069] border border-[#E6E9F0] rounded-[10px]"
-            >
-              Login to ITSM
-            </Link>
-            <Link
-              href="/demo"
-              onClick={() => setMobileMenuOpen(false)}
-              className="w-full text-center py-2 text-xs font-semibold text-white bg-[#6D28D9] rounded-[10px]"
-              style={{ color: "#ffffff" }}
-            >
-              <span style={{ color: "#ffffff" }}>Book a Demo</span>
-            </Link>
+          </nav>
+          <div className="mx-auto mt-4 grid max-w-7xl grid-cols-2 gap-3">
+            <Link href="/itsm/login" onClick={() => setMobileMenuOpen(false)} className="inline-flex min-h-11 items-center justify-center rounded-[10px] border border-[#D7DCE5] text-sm font-semibold text-[#0E1726]">Sign in</Link>
+            <Link href="/demo" onClick={() => setMobileMenuOpen(false)} className="inline-flex min-h-11 items-center justify-center rounded-[10px] bg-[#6D28D9] text-sm font-semibold text-white">Book a demo</Link>
           </div>
         </div>
-      )}
+      ) : null}
     </header>
   );
 }

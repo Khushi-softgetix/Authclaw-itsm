@@ -42,6 +42,11 @@ export interface Incident {
   sla_resolution_due_at?: string | null;
   sla_resolution_met_at?: string | null;
   sla_status: string;
+  sla_paused_at?: string | null;
+  sla_accumulated_pause_seconds?: number;
+  sla_due_at?: string | null;
+  sla_started_at?: string | null;
+  sla_remaining_seconds?: number | null;
   resolution_code?: string | null;
   resolution_summary?: string | null;
   resolved_at?: string | null;
@@ -367,6 +372,11 @@ export interface ServiceRequest {
   sla_response_met_at?: string | null;
   sla_resolution_due_at?: string | null;
   sla_resolution_met_at?: string | null;
+  sla_paused_at?: string | null;
+  sla_accumulated_pause_seconds?: number;
+  sla_due_at?: string | null;
+  sla_started_at?: string | null;
+  sla_remaining_seconds?: number | null;
   resolution_code?: string | null;
   resolution_summary?: string | null;
   resolved_at?: string | null;

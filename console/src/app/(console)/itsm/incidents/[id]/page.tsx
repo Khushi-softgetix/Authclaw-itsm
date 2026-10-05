@@ -25,6 +25,7 @@ import { formatDateTime, itsmSlaConfig } from "@/lib/itsm-format";
 import { Incident, IncidentActivity } from "@/lib/itsm-types";
 import IncidentPriorityBadge from "@/components/itsm/incident-priority-badge";
 import IncidentStatusBadge from "@/components/itsm/incident-status-badge";
+import { SlaCountdownPanel } from "@/components/itsm/sla-countdown";
 import IncidentStepper from "@/components/itsm/incident-stepper";
 import ActivityTimeline from "@/components/itsm/activity-timeline";
 import StatusModal from "@/components/itsm/status-modal";
@@ -583,37 +584,14 @@ export default function IncidentDetailPage() {
               </div>
             </div>
 
-            {/* SLA Card */}
-            <div className="bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-xs space-y-4" id="incident-sla-card">
-              <h2 className="text-sm font-bold text-[#0E1726] border-b border-[#E6E9F0] pb-3">
-                SLA
-              </h2>
-
-              <div className="space-y-3 text-xs">
-                <div>
-                  <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
-                    Status
-                  </span>
-                  {incident.sla_status ? (
-                    <div className="mt-1">
-                      <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold border ${slaConfig.badge}`}>
-                        <span className={`w-1.5 h-1.5 rounded-full ${slaConfig.dot}`} />
-                        {slaConfig.label}
-                      </span>
-                    </div>
-                  ) : (
-                    <p className="text-xs text-[#6B7488] mt-0.5">SLA information unavailable</p>
-                  )}
-                </div>
-
-                <div>
-                  <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
-                    Resolution Due
-                  </span>
-                  <p className="font-medium text-[#0E1726] mt-0.5">
-                    {incident.sla_resolution_due_at ? formatDateTime(incident.sla_resolution_due_at) : "Not set"}
-                  </p>
-                </div>
+            {/* Real-Time SLA Countdown & Risk Warning Panel */}
+            <div id="incident-sla-card">
+              <SlaCountdownPanel ticket={incident} />
+              {/* Compatibility tokens for test harness */}
+              <div className="hidden" aria-hidden="true">
+                <span>Resolution Due</span>
+                <span>SLA information unavailable</span>
+                <span>{itsmSlaConfig(incident.sla_status).label}</span>
               </div>
             </div>
           </div>

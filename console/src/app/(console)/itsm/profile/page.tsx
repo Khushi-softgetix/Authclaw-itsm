@@ -20,10 +20,80 @@ interface SessionInfo {
   tenantName?: string;
   itsmRole?: string;
   platformRole?: string;
+  productAccess?: { governance?: boolean; itsm?: boolean };
   authenticatedAt?: string;
 }
 
-export default function RequesterProfilePage() {
+function getRoleProfileTitle(role?: string): string {
+  switch (role?.toUpperCase()) {
+    case "REQUESTER":
+      return "Requester Profile";
+    case "SERVICE_AGENT":
+      return "Service Agent Profile";
+    case "INCIDENT_MANAGER":
+      return "Incident Manager Profile";
+    case "PROCESS_CHANGE_MANAGER":
+      return "Problem and Change Manager Profile";
+    case "PLATFORM_ADMINISTRATOR":
+      return "Platform Administrator Profile";
+    case "AUDITOR":
+    case "ITSM_AUDITOR":
+      return "Auditor Profile";
+    default:
+      return "ITSM Profile";
+  }
+}
+
+function getRoleSubtitle(role?: string): string {
+  switch (role?.toUpperCase()) {
+    case "REQUESTER":
+      return "Your authenticated employee self-service session and workspace entitlement details.";
+    case "SERVICE_AGENT":
+      return "Your authenticated service agent session and operational queue entitlement details.";
+    case "INCIDENT_MANAGER":
+      return "Your authenticated incident management session and command center entitlement details.";
+    case "PROCESS_CHANGE_MANAGER":
+      return "Your authenticated problem and change governance session entitlement details.";
+    case "PLATFORM_ADMINISTRATOR":
+      return "Your authenticated platform administrator session and workspace management scope.";
+    case "AUDITOR":
+    case "ITSM_AUDITOR":
+      return "Your authenticated compliance auditor session and audit trail inspection scope.";
+    default:
+      return "Your authenticated AuthClaw user session and workspace entitlement details.";
+  }
+}
+
+function getProductEntitlement(role?: string): string {
+  if (role?.toUpperCase() === "REQUESTER") {
+    return "AuthClaw ITSM Requester Self-Service";
+  }
+  return "AuthClaw ITSM";
+}
+
+function getAvatarInitials(email?: string, role?: string): string {
+  if (email && email.length >= 2) {
+    return email.slice(0, 2).toUpperCase();
+  }
+  switch (role?.toUpperCase()) {
+    case "SERVICE_AGENT":
+      return "AG";
+    case "INCIDENT_MANAGER":
+      return "IM";
+    case "PROCESS_CHANGE_MANAGER":
+      return "PM";
+    case "PLATFORM_ADMINISTRATOR":
+      return "AD";
+    case "AUDITOR":
+    case "ITSM_AUDITOR":
+      return "AU";
+    case "REQUESTER":
+    default:
+      return "RQ";
+  }
+}
+
+export default function ITSMProfilePage() {
   const router = useRouter();
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
@@ -43,6 +113,7 @@ export default function RequesterProfilePage() {
             tenantName: data.tenantName,
             itsmRole: data.itsmRole || "REQUESTER",
             platformRole: data.platformRole || "NONE",
+            productAccess: data.productAccess,
             authenticatedAt: new Date().toISOString(),
           });
         }
@@ -68,20 +139,22 @@ export default function RequesterProfilePage() {
     }
   };
 
+  const role = session?.itsmRole;
+
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
       {/* Page Header */}
       <div className="bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="flex items-center gap-4">
           <div className="w-12 h-12 rounded-xl bg-[#F3E8FF] text-[#6D28D9] flex items-center justify-center shrink-0 font-bold text-lg">
-            {session?.userEmail ? session.userEmail.slice(0, 2).toUpperCase() : "RQ"}
+            {getAvatarInitials(session?.userEmail, role)}
           </div>
           <div>
-            <h1 className="text-xl font-extrabold text-[#0E1726] tracking-tight">
-              Requester Profile
+            <h1 className="text-xl font-extrabold text-[#0E1726] tracking-tight" id="profile-role-title">
+              {getRoleProfileTitle(role)}
             </h1>
-            <p className="text-xs text-[#6B7488] mt-1">
-              Your authenticated AuthClaw user session and workspace entitlement details.
+            <p className="text-xs text-[#6B7488] mt-1" id="profile-role-subtitle">
+              {getRoleSubtitle(role)}
             </p>
           </div>
         </div>
@@ -111,7 +184,7 @@ export default function RequesterProfilePage() {
                 Email Address
               </span>
               <span className="text-xs font-bold text-[#0E1726] mt-0.5 block">
-                {loading ? "Loading..." : session?.userEmail || "requester@authclaw.com"}
+                {loading ? "Loading..." : session?.userEmail || "user@authclaw.com"}
               </span>
             </div>
 
@@ -157,8 +230,8 @@ export default function RequesterProfilePage() {
               <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
                 Product Entitlement
               </span>
-              <span className="text-xs font-medium text-[#0E1726] mt-0.5 block">
-                AuthClaw ITSM Requester Self-Service
+              <span className="text-xs font-medium text-[#0E1726] mt-0.5 block" id="profile-product-entitlement">
+                {getProductEntitlement(role)}
               </span>
             </div>
 

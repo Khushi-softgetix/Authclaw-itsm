@@ -8,6 +8,6 @@ httpx==0.28.1
 
 # Development
 black==26.5.1
-flake8==7.3.0
-mypy==2.2.0
-isort==8.0.1
+flake8==7.4.1
+mypy==2.4.0
+isort==9.0.2

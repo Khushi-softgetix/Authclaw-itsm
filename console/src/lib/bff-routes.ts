@@ -18,9 +18,15 @@ const AUDITOR_ALLOWED: Partial<Record<BffMethod, RegExp>> = {
 const NO_BODY_POST = /^(users\/me\/mfa\/setup|notifications\/(?:read-all|[^/]+\/read)|policies\/[^/]+\/activate|ephemeral-workers\/tokens\/[^/]+\/revoke|workflows\/[^/]+\/(?:reject|remediate)|approvals\/[^/]+\/reject|itsm\/knowledge\/[^/]+\/(?:publish|archive|retire|draft)|itsm\/admin\/users\/[^/]+\/deactivate)$/;
 const OPTIONAL_BODY_POST = /^(?:(?:workflows|approvals)\/[^/]+\/approve|itsm\/approvals\/[^/]+\/(?:approve|reject)|itsm\/problems\/[^/]+\/close)$/;
 const CREATED = /^(users|tenants|provider-credentials|red-team|gateways|ephemeral-workers\/tokens|api-keys(?:\/[^/]+\/rotate)?|itsm\/incidents|itsm\/incidents\/operations\/saved-views|itsm\/incidents\/[^/]+\/(?:activities|attachments)|itsm\/requests|itsm\/requests\/[^/]+\/(?:activities|attachments)|itsm\/problems\/[^/]+\/create-change|itsm\/knowledge|itsm\/admin\/(?:users\/(?:invite|create)|teams(?:\/[^/]+\/members)?|services|configuration-items|service-catalog|business-calendars|sla-policies))$/;
+const ALERT_ALLOWED: Partial<Record<BffMethod, RegExp>> = {
+  GET: /^itsm\/alerts(?:\/(?:linkable-records|related\/major-incidents\/[^/]+|[^/]+))?$/,
+  POST: /^itsm\/alerts(?:\/[^/]+\/(?:links|publish|updates|recover))?$/,
+  PATCH: /^itsm\/alerts\/[^/]+\/draft$/,
+};
+const ALERT_CREATED = /^itsm\/alerts(?:\/[^/]+\/links)?$/;
 
 export function resolveBffRoute(method: BffMethod, path: string) {
-  if (!ALLOWED[method].test(path) && !AUDITOR_ALLOWED[method]?.test(path)) return null;
+  if (!ALLOWED[method].test(path) && !AUDITOR_ALLOWED[method]?.test(path) && !ALERT_ALLOWED[method]?.test(path)) return null;
 
   let backendPath = `/v1/${path}`;
   if (path === "approvals" || path.startsWith("approvals/")) {
@@ -40,6 +46,6 @@ export function resolveBffRoute(method: BffMethod, path: string) {
       : NO_BODY_POST.test(path)
         ? "none"
         : "json";
-  const status = method === "DELETE" ? 204 : path === "users/invite" ? 202 : CREATED.test(path) && method === "POST" ? 201 : undefined;
+  const status = method === "DELETE" ? 204 : path === "users/invite" ? 202 : (CREATED.test(path) || ALERT_CREATED.test(path)) && method === "POST" ? 201 : undefined;
   return { backendPath, body, status };
 }

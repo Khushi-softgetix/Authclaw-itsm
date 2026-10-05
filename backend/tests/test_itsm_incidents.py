@@ -161,6 +161,33 @@ class IncidentOperationsUnitTest(unittest.TestCase):
         self.assertTrue(now - (now - timedelta(hours=4)) >= IDLE_THRESHOLD)
         self.assertTrue(now - (now - timedelta(hours=4, seconds=1)) >= IDLE_THRESHOLD)
 
+    def test_incident_lists_apply_stable_creation_order_before_pagination(self):
+        for list_method in (
+            IncidentService.list_incidents,
+            IncidentService.list_incident_operations_queue,
+        ):
+            with self.subTest(list_method=list_method.__name__):
+                db = MagicMock()
+                query = MagicMock()
+                db.query.return_value = query
+                query.filter.return_value = query
+                query.order_by.return_value = query
+                query.offset.return_value = query
+                query.limit.return_value = query
+                query.all.return_value = []
+                query.count.return_value = 0
+
+                list_method(db, uuid4(), offset=20, limit=20)
+
+                ordering = [str(expression) for expression in query.order_by.call_args.args]
+                self.assertEqual(
+                    ordering,
+                    ["itsm_tickets.created_at DESC", "itsm_tickets.id DESC"],
+                )
+                calls = [call[0] for call in query.method_calls]
+                self.assertLess(calls.index("order_by"), calls.index("offset"))
+                self.assertLess(calls.index("offset"), calls.index("limit"))
+
     def test_business_calendar_skips_closed_time_and_holidays(self):
         calendar = SimpleNamespace(
             timezone="UTC",
@@ -355,17 +382,35 @@ class ITSMIncidentTestCase(unittest.TestCase):
         tenant_id, user_id, api_key = self.create_fixture_tenant("list")
         headers = {"Authorization": f"Bearer {api_key}"}
 
+        incident_ids = []
         for i in range(3):
-            self.client.post(
+            create_res = self.client.post(
                 "/v1/itsm/incidents",
                 json={"title": f"Incident batch {i}", "description": f"Batch {i}"},
                 headers=headers,
             )
+            self.assertEqual(create_res.status_code, 201, create_res.text)
+            incident_ids.append(create_res.json()["id"])
+
+        created_base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with self.migrator_engine.begin() as conn:
+            for index, incident_id in enumerate(incident_ids):
+                conn.execute(
+                    text(
+                        "UPDATE public.itsm_tickets SET created_at=:created_at "
+                        "WHERE id=:id AND tenant_id=:tenant"
+                    ),
+                    {
+                        "created_at": created_base + timedelta(minutes=index),
+                        "id": UUID(incident_id),
+                        "tenant": tenant_id,
+                    },
+                )
 
         list_res = self.client.get("/v1/itsm/incidents", headers=headers)
         self.assertEqual(list_res.status_code, 200)
         items = list_res.json()
-        self.assertGreaterEqual(len(items), 3)
+        self.assertEqual([item["id"] for item in items], list(reversed(incident_ids)))
 
     # 5. Filter incidents
     def test_05_filter_incidents(self):
@@ -1030,6 +1075,20 @@ class ITSMIncidentTestCase(unittest.TestCase):
         p1_id = create("Payments unavailable", "P1")
         p2_id = create("Checkout degraded", "P2")
         p3_id = create("Printer unavailable", "P3")
+        created_base = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with self.migrator_engine.begin() as conn:
+            for index, incident_id in enumerate((p1_id, p2_id, p3_id)):
+                conn.execute(
+                    text(
+                        "UPDATE public.itsm_tickets SET created_at=:created_at "
+                        "WHERE id=:id AND tenant_id=:tenant"
+                    ),
+                    {
+                        "created_at": created_base + timedelta(minutes=index),
+                        "id": UUID(incident_id),
+                        "tenant": tenant_id,
+                    },
+                )
         assigned = self.client.post(
             f"/v1/itsm/incidents/{p1_id}/assign",
             json={"assignment_group": "Incident Response", "assignee_id": str(user_id)},
@@ -1050,9 +1109,24 @@ class ITSMIncidentTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         queue = response.json()
         self.assertEqual(queue["total"], 3)
-        self.assertEqual([row["incident"]["id"] for row in queue["items"]], [p1_id, p2_id])
+        self.assertEqual([row["incident"]["id"] for row in queue["items"]], [p3_id, p2_id])
         self.assertNotIn(other.json()["id"], [row["incident"]["id"] for row in queue["items"]])
-        self.assertEqual(queue["items"][0]["operations"]["attention_reasons"], ["HIGH_PRIORITY"])
+        self.assertEqual(queue["items"][1]["operations"]["attention_reasons"], ["HIGH_PRIORITY"])
+
+        next_page = self.client.get(
+            "/v1/itsm/incidents/operations/queue?limit=2&offset=2",
+            headers=headers,
+        ).json()
+        self.assertEqual([row["incident"]["id"] for row in next_page["items"]], [p1_id])
+
+        priority_queue = self.client.get(
+            "/v1/itsm/incidents/operations/queue?limit=2&sort_by=priority",
+            headers=headers,
+        ).json()
+        self.assertEqual(
+            [row["incident"]["id"] for row in priority_queue["items"]],
+            [p1_id, p2_id],
+        )
 
         group = self.client.get(
             "/v1/itsm/incidents/operations/queue?assignment_group=Incident%20Response",

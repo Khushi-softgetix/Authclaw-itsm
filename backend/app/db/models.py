@@ -1649,6 +1649,197 @@ class ITSMMajorIncident(Base):
     )
 
 
+class ITSMOutageAlert(Base):
+    """Standalone, tenant-scoped outage communication record.
+
+    Alert is deliberately independent from an incident or Major Incident.  The
+    optional relationships live in ``ITSMOutageAlertLink`` so an operational
+    ticket never becomes a prerequisite for communicating an outage.
+    """
+
+    __tablename__ = "itsm_outage_alerts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    title = Column(String(512), nullable=False)
+    draft_message = Column(Text, nullable=False)
+    status = Column(String(32), nullable=False, default="DRAFT")
+    # The reference is intentionally opaque until product defines audience
+    # kinds and service-audience resolution.  It is never treated as proof of
+    # authorization by itself.
+    audience_policy_ref = Column(String(255), nullable=True)
+    created_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    activated_at = Column(DateTime(timezone=True), nullable=True)
+    recovered_at = Column(DateTime(timezone=True), nullable=True)
+    last_published_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    created_by = relationship("User", foreign_keys=[created_by_id])
+
+    __table_args__ = (
+        CheckConstraint("status IN ('DRAFT', 'ACTIVE', 'RECOVERED')", name="ck_itsm_outage_alert_status"),
+        Index("idx_itsm_outage_alert_tenant_status", "tenant_id", "status", "created_at"),
+        Index("idx_itsm_outage_alert_tenant_created", "tenant_id", "created_at"),
+    )
+
+
+class ITSMOutageAlertService(Base):
+    """Affected-service scope for a standalone Alert."""
+
+    __tablename__ = "itsm_outage_alert_services"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    alert_id = Column(UUID(as_uuid=True), ForeignKey("itsm_outage_alerts.id", ondelete="CASCADE"), nullable=False)
+    service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="RESTRICT"), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    alert = relationship("ITSMOutageAlert")
+    service = relationship("ITSMService")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "alert_id", "service_id", name="uq_itsm_outage_alert_service"),
+        Index("idx_itsm_outage_alert_service_alert", "tenant_id", "alert_id"),
+        Index("idx_itsm_outage_alert_service_service", "tenant_id", "service_id"),
+    )
+
+
+class ITSMOutageAlertPublication(Base):
+    """An immutable, published Alert message (initial, update, or recovery)."""
+
+    __tablename__ = "itsm_outage_alert_publications"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    alert_id = Column(UUID(as_uuid=True), ForeignKey("itsm_outage_alerts.id", ondelete="CASCADE"), nullable=False)
+    sequence_number = Column(Integer, nullable=False)
+    publication_type = Column(String(32), nullable=False)
+    message = Column(Text, nullable=False)
+    audience_policy_ref = Column(String(255), nullable=True)
+    published_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    correlation_id = Column(UUID(as_uuid=True), nullable=False, default=uuid.uuid4)
+    published_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    alert = relationship("ITSMOutageAlert")
+    published_by = relationship("User", foreign_keys=[published_by_id])
+
+    __table_args__ = (
+        CheckConstraint("publication_type IN ('INITIAL', 'UPDATE', 'RECOVERY')", name="ck_itsm_outage_publication_type"),
+        UniqueConstraint("tenant_id", "alert_id", "sequence_number", name="uq_itsm_outage_publication_sequence"),
+        Index("idx_itsm_outage_publication_alert", "tenant_id", "alert_id", "sequence_number"),
+        Index("idx_itsm_outage_publication_correlation", "tenant_id", "correlation_id"),
+    )
+
+
+class ITSMOutageAlertStateHistory(Base):
+    """Append-only Alert lifecycle evidence."""
+
+    __tablename__ = "itsm_outage_alert_state_history"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    alert_id = Column(UUID(as_uuid=True), ForeignKey("itsm_outage_alerts.id", ondelete="CASCADE"), nullable=False)
+    from_state = Column(String(32), nullable=True)
+    to_state = Column(String(32), nullable=False)
+    action = Column(String(64), nullable=False)
+    actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    correlation_id = Column(UUID(as_uuid=True), nullable=False, default=uuid.uuid4)
+    event_metadata = Column("metadata", JSON, nullable=False, default=dict)
+    occurred_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    alert = relationship("ITSMOutageAlert")
+    actor = relationship("User", foreign_keys=[actor_id])
+
+    __table_args__ = (
+        Index("idx_itsm_outage_history_alert", "tenant_id", "alert_id", "occurred_at"),
+        Index("idx_itsm_outage_history_correlation", "tenant_id", "correlation_id"),
+    )
+
+
+class ITSMOutageAlertLink(Base):
+    """Immutable, explicit Alert relationship to an Incident or Major Incident."""
+
+    __tablename__ = "itsm_outage_alert_links"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    alert_id = Column(UUID(as_uuid=True), ForeignKey("itsm_outage_alerts.id", ondelete="CASCADE"), nullable=False)
+    incident_id = Column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="RESTRICT"), nullable=True)
+    major_incident_id = Column(UUID(as_uuid=True), ForeignKey("itsm_major_incidents.id", ondelete="RESTRICT"), nullable=True)
+    linked_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    correlation_id = Column(UUID(as_uuid=True), nullable=False, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    alert = relationship("ITSMOutageAlert")
+    incident = relationship("ITSMTicket", foreign_keys=[incident_id])
+    major_incident = relationship("ITSMMajorIncident", foreign_keys=[major_incident_id])
+    linked_by = relationship("User", foreign_keys=[linked_by_id])
+
+    __table_args__ = (
+        CheckConstraint("num_nonnulls(incident_id, major_incident_id) = 1", name="ck_itsm_outage_link_target"),
+        UniqueConstraint("tenant_id", "alert_id", "incident_id", name="uq_itsm_outage_link_incident"),
+        UniqueConstraint("tenant_id", "alert_id", "major_incident_id", name="uq_itsm_outage_link_major_incident"),
+        Index("idx_itsm_outage_link_incident", "tenant_id", "incident_id"),
+        Index("idx_itsm_outage_link_major", "tenant_id", "major_incident_id"),
+    )
+
+
+class ITSMOutageAlertDelivery(Base):
+    """Channel-neutral delivery intent. No provider is implied by this record."""
+
+    __tablename__ = "itsm_outage_alert_deliveries"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    publication_id = Column(UUID(as_uuid=True), ForeignKey("itsm_outage_alert_publications.id", ondelete="CASCADE"), nullable=False)
+    channel_ref = Column(String(100), nullable=True)
+    status = Column(String(32), nullable=False, default="PENDING_CONFIGURATION")
+    idempotency_key = Column(String(255), nullable=False)
+    correlation_id = Column(UUID(as_uuid=True), nullable=False, default=uuid.uuid4)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    publication = relationship("ITSMOutageAlertPublication")
+
+    __table_args__ = (
+        CheckConstraint("status IN ('PENDING_CONFIGURATION', 'QUEUED', 'SENT', 'FAILED')", name="ck_itsm_outage_delivery_status"),
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_itsm_outage_delivery_idempotency"),
+        Index("idx_itsm_outage_delivery_publication", "tenant_id", "publication_id"),
+        Index("idx_itsm_outage_delivery_status", "tenant_id", "status", "created_at"),
+    )
+
+
+class ITSMOutageAlertDeliveryAttempt(Base):
+    """Append-only delivery attempt trace for an Alert publication."""
+
+    __tablename__ = "itsm_outage_alert_delivery_attempts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    delivery_id = Column(UUID(as_uuid=True), ForeignKey("itsm_outage_alert_deliveries.id", ondelete="CASCADE"), nullable=False)
+    attempt_number = Column(Integer, nullable=False)
+    status = Column(String(32), nullable=False)
+    provider_reference = Column(String(255), nullable=True)
+    error_detail = Column(Text, nullable=True)
+    correlation_id = Column(UUID(as_uuid=True), nullable=False, default=uuid.uuid4)
+    attempted_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    delivery = relationship("ITSMOutageAlertDelivery")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "delivery_id", "attempt_number", name="uq_itsm_outage_delivery_attempt_number"),
+        Index("idx_itsm_outage_delivery_attempt", "tenant_id", "delivery_id", "attempted_at"),
+    )
+
+
 class ITSMOnCallSchedule(Base):
     """Service on-call schedules."""
     __tablename__ = "itsm_oncall_schedules"

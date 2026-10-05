@@ -44,7 +44,7 @@ export default function IncidentManagerQueuePage() {
   const [serviceId, setServiceId] = useState("");
   const [categoryId, setCategoryId] = useState("");
   const [unassigned, setUnassigned] = useState(false);
-  const [sortBy, setSortBy] = useState("priority");
+  const [sortBy, setSortBy] = useState("created");
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -69,7 +69,7 @@ export default function IncidentManagerQueuePage() {
       setAssignmentGroup(params.get("assignment_group") || ""); setAssigneeId(params.get("assignee_id") || "");
       setServiceId(params.get("service_id") || ""); setCategoryId(params.get("category_id") || "");
       setUnassigned(params.get("unassigned") === "true");
-      setSortBy(params.get("sort_by") || "priority");
+      setSortBy(params.get("sort_by") || "created");
     }, 0);
     return () => window.clearTimeout(request);
   }, []);
@@ -135,15 +135,15 @@ export default function IncidentManagerQueuePage() {
     if (serviceId) params.set("service_id", serviceId);
     if (categoryId) params.set("category_id", categoryId);
     if (unassigned) params.set("unassigned", "true");
-    if (sortBy !== "priority") params.set("sort_by", sortBy);
+    if (sortBy !== "created") params.set("sort_by", sortBy);
     const query = params.toString();
     window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
   }, [assigneeId, assignmentGroup, attention, categoryId, priority, search, serviceId, sortBy, status, unassigned]);
 
   const groups = dashboard?.workload.assignment_groups || [];
   const assignees = dashboard?.workload.assignees || [];
-  const hasFilters = Boolean(search || status || priority || attention || assignmentGroup || assigneeId || serviceId || categoryId || unassigned || sortBy !== "priority");
-  const clearFilters = () => { setSearchInput(""); setSearch(""); setStatus(""); setPriority(""); setAttention(""); setAssignmentGroup(""); setAssigneeId(""); setServiceId(""); setCategoryId(""); setUnassigned(false); setSortBy("priority"); setOffset(0); };
+  const hasFilters = Boolean(search || status || priority || attention || assignmentGroup || assigneeId || serviceId || categoryId || unassigned || sortBy !== "created");
+  const clearFilters = () => { setSearchInput(""); setSearch(""); setStatus(""); setPriority(""); setAttention(""); setAssignmentGroup(""); setAssigneeId(""); setServiceId(""); setCategoryId(""); setUnassigned(false); setSortBy("created"); setOffset(0); };
   const currentFilters = (): IncidentSavedViewFilters => ({
     ...(search.trim() ? {search: search.trim()} : {}), ...(status ? {status} : {}),
     ...(priority ? {priority} : {}), ...(attention ? {attention: attention as IncidentSavedViewFilters["attention"]} : {}),
@@ -155,7 +155,7 @@ export default function IncidentManagerQueuePage() {
     const filters=view.filters; setSearchInput(filters.search||""); setSearch(filters.search||""); setStatus(filters.status||""); setPriority(filters.priority||"");
     setAttention(filters.attention||""); setAssignmentGroup(filters.assignment_group||""); setAssigneeId(filters.assignee_id||"");
     setServiceId(filters.service_id||""); setCategoryId(filters.category_id||"");
-    setUnassigned(Boolean(filters.unassigned)); setSortBy(filters.sort_by||"priority"); setOffset(0);
+    setUnassigned(Boolean(filters.unassigned)); setSortBy(filters.sort_by||"created"); setOffset(0);
   };
   const saveView = async () => {
     if (!viewName.trim()) return;
@@ -195,7 +195,7 @@ export default function IncidentManagerQueuePage() {
         <Filter value={serviceId} onChange={value=>{setServiceId(value);setOffset(0);}} label="Filter by service" options={[["", "All services"], ...(references?.services || []).map(item => [item.id, item.name] as const)]}/>
         <Filter value={categoryId} onChange={value=>{setCategoryId(value);setOffset(0);}} label="Filter by category" options={[["", "All categories"], ...(references?.categories || []).map(item => [item.id, item.name] as const)]}/>
         <button type="button" aria-pressed={unassigned} onClick={()=>{setUnassigned(value=>!value);setAssigneeId("");setOffset(0);}} className={`rounded-lg border px-3 py-2.5 text-xs font-semibold transition ${unassigned?"border-[#A78BFA] bg-[#F1ECFE] text-[#5B21B6]":"border-[#E6E9F0] bg-white text-[#475069] hover:border-[#DDD6FE] hover:bg-[#FAF8FF]"}`}>No individual assignee</button>
-        <Filter value={sortBy} onChange={value=>{setSortBy(value);setOffset(0);}} label="Sort incidents" options={[["priority", "Priority first"], ["sla_due", "SLA due first"], ["updated", "Recently updated"]]}/>
+        <Filter value={sortBy} onChange={value=>{setSortBy(value);setOffset(0);}} label="Sort incidents" options={[["created", "Newest incidents first"], ["priority", "Priority first"], ["sla_due", "SLA due first"], ["updated", "Recently updated"]]}/>
       </div> : null}
       <div className="mt-4 flex flex-col gap-3 border-t border-[#EAECF0] pt-4 lg:flex-row lg:items-center">
         <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2"><span className="inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wider text-[#667085]"><Bookmark className="h-3.5 w-3.5 text-[#6941C6]"/>Saved views</span>{savedViews.length ? savedViews.map(view=><span key={view.id} className="inline-flex overflow-hidden rounded-full border border-[#E4E7EC] bg-[#F9FAFB]"><button type="button" onClick={()=>applyView(view)} className="px-3 py-1.5 text-xs font-semibold text-[#475467] hover:bg-[#F2F4F7] hover:text-[#6941C6]">{view.name}</button><button type="button" onClick={()=>void deleteView(view)} aria-label={`Delete ${view.name}`} className="border-l border-[#E4E7EC] px-2 text-[#98A2B3] hover:text-[#6941C6]"><Trash2 className="h-3 w-3"/></button></span>) : <span className="text-xs text-[#98A2B3]">No saved views yet.</span>}</div>

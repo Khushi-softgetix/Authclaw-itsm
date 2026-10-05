@@ -446,7 +446,7 @@ class IncidentSavedViewFilters(BaseModel):
     service_id: Optional[UUID] = None
     category_id: Optional[UUID] = None
     unassigned: bool = False
-    sort_by: Literal["priority", "sla_due", "updated"] = "priority"
+    sort_by: Literal["created", "priority", "sla_due", "updated"] = "created"
     model_config = ConfigDict(extra="forbid")
 
 

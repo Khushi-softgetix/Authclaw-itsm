@@ -985,7 +985,12 @@ class IncidentService:
                 | ITSMTicket.ticket_number.ilike(pattern)
             )
 
-        return query.order_by(ITSMTicket.created_at.desc()).offset(offset).limit(limit).all()
+        return (
+            query.order_by(ITSMTicket.created_at.desc(), ITSMTicket.id.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
 
     @classmethod
     def list_agent_queue(
@@ -1080,7 +1085,7 @@ class IncidentService:
         search: Optional[str] = None,
         incident_ids: Optional[set[UUID]] = None,
         command_scope: bool = False,
-        sort_by: str = "priority",
+        sort_by: str = "created",
         offset: int = 0,
         limit: int = 50,
     ) -> tuple[list[ITSMTicket], int]:
@@ -1133,16 +1138,28 @@ class IncidentService:
             (ITSMTicket.priority == "P3", 3),
             else_=4,
         )
-        if sort_by == "updated":
-            ordering = (ITSMTicket.updated_at.desc(),)
+        if sort_by == "created":
+            ordering = (ITSMTicket.created_at.desc(), ITSMTicket.id.desc())
+        elif sort_by == "updated":
+            ordering = (
+                ITSMTicket.updated_at.desc(),
+                ITSMTicket.created_at.desc(),
+                ITSMTicket.id.desc(),
+            )
         elif sort_by == "sla_due":
             ordering = (
                 ITSMTicket.sla_resolution_due_at.asc().nullslast(),
                 ITSMTicket.sla_response_due_at.asc().nullslast(),
                 priority_order.asc(),
+                ITSMTicket.created_at.desc(),
+                ITSMTicket.id.desc(),
             )
         else:
-            ordering = (priority_order.asc(), ITSMTicket.updated_at.desc())
+            ordering = (
+                priority_order.asc(),
+                ITSMTicket.created_at.desc(),
+                ITSMTicket.id.desc(),
+            )
         return query.order_by(*ordering).offset(offset).limit(limit).all(), total
 
     @classmethod

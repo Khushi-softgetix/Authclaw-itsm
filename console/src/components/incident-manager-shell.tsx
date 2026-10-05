@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Building,
+  BellRing,
   ChevronDown,
   LayoutDashboard,
   ListFilter,
@@ -37,15 +38,18 @@ export default function IncidentManagerShell({
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const navItems = [
     { href: "/itsm/incident-manager", label: "Overview", icon: LayoutDashboard, exact: true },
-    { href: "/itsm/incident-manager/incidents", label: "Incidents", icon: ListFilter },
-    { href: "/itsm/incident-manager/major-incidents", label: "Major Incidents", icon: Radio },
+    { href: "/itsm/incident-manager/incidents", label: "Incident Queue", icon: ListFilter },
+    { href: "/itsm/incident-manager/major-incidents", label: "Major Incident Command", icon: Radio },
+    { href: "/itsm/incident-manager/outage-alerts", label: "Outage & Alerts", icon: BellRing },
   ];
 
   const currentPage =
     pathname === "/itsm/incident-manager"
       ? "Overview"
       : pathname.startsWith("/itsm/incident-manager/major-incidents")
-        ? "Major Incidents"
+        ? "Major Incident Command"
+        : pathname.startsWith("/itsm/incident-manager/outage-alerts")
+          ? "Outage & Alerts"
         : pathname.startsWith("/itsm/incident-manager/incidents")
           ? "Incidents"
           : "Workspace";

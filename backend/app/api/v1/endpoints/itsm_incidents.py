@@ -106,7 +106,7 @@ def incident_manager_operations_queue(
     unassigned: bool = Query(default=False, description="Only incidents without an individual assignee"),
     search: Optional[str] = Query(default=None),
     command_scope: bool = Query(default=False),
-    sort_by: str = Query(default="priority", pattern="^(priority|sla_due|updated)$"),
+    sort_by: str = Query(default="created", pattern="^(created|priority|sla_due|updated)$"),
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=50, ge=1, le=100),
     db: Session = Depends(get_tenant_db),

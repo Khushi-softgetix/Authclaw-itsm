@@ -138,7 +138,7 @@ export interface IncidentSavedViewFilters {
   service_id?: string;
   category_id?: string;
   unassigned?: boolean;
-  sort_by?: "priority" | "sla_due" | "updated";
+  sort_by?: "created" | "priority" | "sla_due" | "updated";
 }
 
 export interface IncidentSavedView {

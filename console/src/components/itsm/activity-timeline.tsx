@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useState } from "react";
-import { Lock, MessageSquare, Send, Shield, User } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
+import { CheckCircle, ChevronDown, Clock, Lock, MessageSquare, Send, Shield, User, Zap } from "lucide-react";
 import { formatDateTime } from "@/lib/itsm-format";
 import { jsonRequest } from "@/lib/client-fetch";
 import { apiErrorMessage } from "@/lib/errors";
-import { IncidentActivity, TenantUser } from "@/lib/itsm-types";
+import { IncidentActivity, ITSMProductivityMacro, TenantUser } from "@/lib/itsm-types";
 import { activityActor, activityContent, activityLabel, latestActivities } from "@/lib/incident-activity-presentation";
 
 interface ActivityTimelineProps {
@@ -16,6 +16,7 @@ interface ActivityTimelineProps {
   embedded?: boolean;
   users?: TenantUser[];
   apiEndpoint?: string;
+  ticketType?: "INCIDENT" | "SERVICE_REQUEST";
 }
 
 export default function ActivityTimeline({
@@ -26,12 +27,99 @@ export default function ActivityTimeline({
   embedded = false,
   users = [],
   apiEndpoint,
+  ticketType,
 }: ActivityTimelineProps) {
   const [content, setContent] = useState<string>("");
   const [activityType, setActivityType] = useState<string>("COMMENT");
   const [isInternal, setIsInternal] = useState<boolean>(false);
   const [submitting, setSubmitting] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+
+  const resolvedTicketType =
+    ticketType || (apiEndpoint && apiEndpoint.includes("/requests/") ? "SERVICE_REQUEST" : "INCIDENT");
+
+  const [macros, setMacros] = useState<ITSMProductivityMacro[]>([]);
+  const [macrosOpen, setMacrosOpen] = useState<boolean>(false);
+  const [applyingMacro, setApplyingMacro] = useState<boolean>(false);
+  const [appliedMacroBanner, setAppliedMacroBanner] = useState<{
+    name: string;
+    status?: string | null;
+    followUp?: number | null;
+  } | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+    fetch(`/api/itsm/macros?ticket_type=${resolvedTicketType}&active_only=true`, { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok) return [];
+        return res.json();
+      })
+      .then((data) => {
+        if (isMounted && Array.isArray(data)) {
+          setMacros(data);
+        }
+      })
+      .catch(() => {
+        if (isMounted) setMacros([]);
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, [resolvedTicketType]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setMacrosOpen(false);
+      }
+    }
+    if (macrosOpen) {
+      document.addEventListener("mousedown", handleClickOutside);
+    }
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [macrosOpen]);
+
+  const handleApplyMacro = async (macro: ITSMProductivityMacro) => {
+    try {
+      setApplyingMacro(true);
+      setError(null);
+      setMacrosOpen(false);
+
+      // 1. Insert predefined response template into existing comment box
+      setContent(macro.response_template);
+
+      // 2. Ensure public comment mode is active so customer communication is selected
+      setVisibility(false);
+
+      // 3. Automatically apply supported ticket fields & create follow-up reminder
+      const res = await fetch(`/api/itsm/macros/${macro.id}/apply`, jsonRequest("POST", {
+        ticket_id: incidentId,
+        ticket_type: resolvedTicketType,
+      }));
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(apiErrorMessage(data, "Failed to apply macro"));
+      }
+
+      const result = await res.json();
+      setAppliedMacroBanner({
+        name: macro.name,
+        status: result.new_status || macro.status_change,
+        followUp: result.follow_up_hours || macro.follow_up_hours,
+      });
+
+      // 4. Reload activities so timeline reflects field changes & reminder note
+      onActivityAdded();
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to execute macro");
+    } finally {
+      setApplyingMacro(false);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -55,6 +143,7 @@ export default function ActivityTimeline({
       }
 
       setContent("");
+      setAppliedMacroBanner(null);
       onActivityAdded();
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to post activity update");
@@ -122,33 +211,107 @@ export default function ActivityTimeline({
         id="activity-composer-form"
       >
         <div className="flex flex-wrap items-center justify-between gap-2 pb-1 border-b border-[#E6E9F0]/60">
-          <div className="flex items-center gap-1.5 p-0.5 bg-white rounded-lg border border-[#E6E9F0] shadow-2xs" aria-label="Update visibility">
-            <button
-              type="button"
-              onClick={() => setVisibility(false)}
-              id="composer-public-tab"
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition ${
-                !isInternal
-                  ? "bg-[#6D28D9] text-white shadow-xs"
-                  : "text-[#6B7488] hover:text-[#0E1726]"
-              }`}
-            >
-              <MessageSquare className="w-3 h-3" />
-              Public Comment
-            </button>
-            <button
-              type="button"
-              onClick={() => setVisibility(true)}
-              id="composer-internal-tab"
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition ${
-                isInternal
-                  ? "bg-amber-600 text-white shadow-xs"
-                  : "text-[#6B7488] hover:text-[#0E1726]"
-              }`}
-            >
-              <Lock className="w-3 h-3" />
-              Internal Note
-            </button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 p-0.5 bg-white rounded-lg border border-[#E6E9F0] shadow-2xs" aria-label="Update visibility">
+              <button
+                type="button"
+                onClick={() => setVisibility(false)}
+                id="composer-public-tab"
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition ${
+                  !isInternal
+                    ? "bg-[#6D28D9] text-white shadow-xs"
+                    : "text-[#6B7488] hover:text-[#0E1726]"
+                }`}
+              >
+                <MessageSquare className="w-3 h-3" />
+                Public Comment
+              </button>
+              <button
+                type="button"
+                onClick={() => setVisibility(true)}
+                id="composer-internal-tab"
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold transition ${
+                  isInternal
+                    ? "bg-amber-600 text-white shadow-xs"
+                    : "text-[#6B7488] hover:text-[#0E1726]"
+                }`}
+              >
+                <Lock className="w-3 h-3" />
+                Internal Note
+              </button>
+            </div>
+
+            {/* ⚡ Macros / Quick Actions Dropdown */}
+            {macros.length > 0 && (
+              <div className="relative" ref={dropdownRef}>
+                <button
+                  type="button"
+                  onClick={() => setMacrosOpen(!macrosOpen)}
+                  disabled={applyingMacro}
+                  id="composer-macros-button"
+                  className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-white border border-[#E6E9F0] text-[#0E1726] hover:bg-purple-50 hover:text-[#6D28D9] hover:border-purple-300 transition shadow-2xs disabled:opacity-50"
+                  aria-expanded={macrosOpen}
+                  aria-haspopup="true"
+                >
+                  <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
+                  <span>{applyingMacro ? "Applying..." : "Macros"}</span>
+                  <ChevronDown className="w-3 h-3 text-[#6B7488]" />
+                </button>
+
+                {macrosOpen && (
+                  <div
+                    className="absolute left-0 top-full mt-1.5 w-80 bg-white rounded-xl border border-[#E6E9F0] shadow-xl z-50 overflow-hidden divide-y divide-[#E6E9F0]"
+                    id="composer-macros-dropdown"
+                  >
+                    <div className="px-3.5 py-2.5 bg-[#FAFBFD] flex items-center justify-between">
+                      <div className="flex items-center gap-1.5">
+                        <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
+                        <span className="text-[11px] font-bold text-[#0E1726] uppercase tracking-wider">Quick Actions &amp; Macros</span>
+                      </div>
+                      <span className="text-[10px] text-[#6B7488] font-mono">{macros.length} available</span>
+                    </div>
+
+                    <div className="max-h-72 overflow-y-auto divide-y divide-[#F1F3F7]">
+                      {macros.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => handleApplyMacro(m)}
+                          className="w-full text-left p-3 hover:bg-[#F8FAFC] transition group block space-y-1"
+                          id={`macro-option-${m.slug}`}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-bold text-[#0E1726] group-hover:text-[#6D28D9] transition">
+                              {m.name}
+                            </span>
+                            <span className="text-[9px] font-mono text-[#6D28D9] bg-purple-50 border border-purple-200 px-1.5 py-0.5 rounded">
+                              1-Click
+                            </span>
+                          </div>
+
+                          {m.description && (
+                            <p className="text-[11px] text-[#6B7488] line-clamp-1">{m.description}</p>
+                          )}
+
+                          <div className="flex items-center gap-2 pt-1 flex-wrap text-[10px]">
+                            {m.status_change && (
+                              <span className="inline-flex items-center gap-1 font-medium text-amber-800 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded">
+                                Status: {m.status_change.replace(/_/g, " ")}
+                              </span>
+                            )}
+                            {m.follow_up_hours && (
+                              <span className="inline-flex items-center gap-1 font-medium text-blue-800 bg-blue-50 border border-blue-200 px-1.5 py-0.5 rounded">
+                                <Clock className="w-2.5 h-2.5" /> Follow-up: {m.follow_up_hours}h
+                              </span>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           <div className="text-[11px] font-medium">
@@ -163,6 +326,35 @@ export default function ActivityTimeline({
             )}
           </div>
         </div>
+
+        {/* Macro Applied Confirmation Banner */}
+        {appliedMacroBanner && (
+          <div
+            role="status"
+            id="macro-applied-banner"
+            className="flex items-center justify-between p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 animate-in fade-in duration-200"
+          >
+            <div className="flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 text-emerald-600 flex-shrink-0" />
+              <div>
+                <span className="font-bold">⚡ Macro Applied:</span> {appliedMacroBanner.name}
+                <span className="ml-1 text-[11px] text-emerald-800">
+                  {appliedMacroBanner.status && `· Status set to ${appliedMacroBanner.status.replace(/_/g, " ")} `}
+                  {appliedMacroBanner.followUp && `· Follow-up reminder set for ${appliedMacroBanner.followUp}h `}
+                  — Response template inserted below. You can review or edit it before sending.
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setAppliedMacroBanner(null)}
+              className="text-emerald-700 hover:text-emerald-950 text-sm font-bold ml-2 px-1"
+              aria-label="Dismiss banner"
+            >
+              ×
+            </button>
+          </div>
+        )}
 
         <textarea
           value={content}

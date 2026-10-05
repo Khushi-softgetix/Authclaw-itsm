@@ -46,6 +46,11 @@ class ServiceRequestResponse(BaseModel):
     sla_response_met_at: Optional[datetime] = None
     sla_resolution_due_at: Optional[datetime] = None
     sla_resolution_met_at: Optional[datetime] = None
+    sla_paused_at: Optional[datetime] = None
+    sla_accumulated_pause_seconds: int = 0
+    sla_due_at: Optional[datetime] = None
+    sla_started_at: Optional[datetime] = None
+    sla_remaining_seconds: Optional[float] = None
     resolution_code: Optional[str] = None
     resolution_summary: Optional[str] = None
     resolved_at: Optional[datetime] = None

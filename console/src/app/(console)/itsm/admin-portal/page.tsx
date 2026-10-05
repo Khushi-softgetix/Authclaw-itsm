@@ -12,6 +12,7 @@ import {
   ShieldCheck,
   Users,
   UsersRound,
+  Zap,
 } from "lucide-react";
 
 export default function AdminPortalPage() {
@@ -75,6 +76,16 @@ export default function AdminPortalPage() {
       badge: "Active",
       iconBg: "bg-[#FEF2F2]",
       iconColor: "text-[#DC2626]",
+    },
+    {
+      title: "Macros & Templates",
+      desc: "Configure 1-click productivity macros, canned responses, status transitions, and follow-up reminders.",
+      href: "/itsm/admin-portal/macros",
+      actionText: "Manage Macros",
+      icon: Zap,
+      badge: "Active",
+      iconBg: "bg-[#FEF3C7]",
+      iconColor: "text-[#D97706]",
     },
     {
       title: "Platform Settings",

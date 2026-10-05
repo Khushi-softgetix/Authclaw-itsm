@@ -1276,6 +1276,22 @@ class ITSMTicket(Base):
     def linked_problem_ticket_number(self) -> str | None:
         return self.linked_problem.ticket_number if self.linked_problem else None
 
+    @property
+    def sla_due_at(self) -> datetime | None:
+        response_active = bool(self.sla_response_due_at and not self.sla_response_met_at)
+        return self.sla_response_due_at if response_active else (self.sla_resolution_due_at or self.sla_response_due_at)
+
+    @property
+    def sla_started_at(self) -> datetime | None:
+        return self.created_at
+
+    @property
+    def sla_remaining_seconds(self) -> float | None:
+        if not self.sla_due_at:
+            return None
+        from app.services.itsm_sla_service import compute_sla_details
+        return compute_sla_details(self).get("remaining_seconds")
+
     __table_args__ = (
         UniqueConstraint("tenant_id", "ticket_number", name="uq_itsm_tickets_tenant_number"),
         Index("idx_itsm_tickets_tenant_status", "tenant_id", "status"),

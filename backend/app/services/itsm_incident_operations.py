@@ -9,9 +9,9 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 
 from app.db.models import ITSMTicket, ITSMTicketActivity, User
-from app.services.itsm_sla_service import business_seconds_between
+from app.services.itsm_sla_service import business_seconds_between, compute_sla_details
 
-RISK_REMAINING_FRACTION = 0.20
+RISK_REMAINING_FRACTION = 0.25
 IDLE_THRESHOLD = timedelta(hours=4)
 OPEN_STATUSES = {"NEW", "ASSIGNED", "IN_PROGRESS", "PENDING"}
 
@@ -21,27 +21,14 @@ def _utc(value: datetime | None) -> datetime | None:
 
 
 def _sla(ticket: ITSMTicket, now: datetime) -> dict[str, Any]:
-    response_active = bool(getattr(ticket, "sla_response_due_at", None) and not getattr(ticket, "sla_response_met_at", None))
-    due = _utc(ticket.sla_response_due_at) if response_active else _utc(ticket.sla_resolution_due_at) or _utc(ticket.sla_response_due_at)
-    if not due:
-        return {"status": "NO_SLA", "remaining_seconds": None}
-    effective_now = _utc(getattr(ticket, "sla_paused_at", None)) or now
-    policy = getattr(ticket, "sla_policy", None)
-    calendar = getattr(policy, "calendar", None) if policy else None
-    remaining = business_seconds_between(effective_now, due, calendar)
-    if effective_now > due:
-        return {"status": "BREACHED", "remaining_seconds": remaining}
-    target_minutes = (
-        getattr(policy, "response_target_minutes", None)
-        if response_active else getattr(policy, "resolution_target_minutes", None)
-    ) if policy else None
-    target = float(target_minutes * 60) if target_minutes else (due - _utc(ticket.created_at)).total_seconds()
-    status = (
-        "AT_RISK"
-        if target > 0 and remaining / target <= RISK_REMAINING_FRACTION
-        else "WITHIN_SLA"
-    )
-    return {"status": status, "remaining_seconds": remaining}
+    details = compute_sla_details(ticket, now)
+    status = details["status"]
+    if status not in ("NO_SLA", "WITHIN_SLA", "AT_RISK", "BREACHED"):
+        status = "WITHIN_SLA"
+    return {
+        "status": status,
+        "remaining_seconds": details["remaining_seconds"],
+    }
 
 
 def evaluate_incident_operations(

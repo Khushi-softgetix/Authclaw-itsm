@@ -114,6 +114,7 @@ from app.api.v1.endpoints.itsm_attachments import router as itsm_attachments_rou
 from app.api.v1.endpoints.itsm_audit import router as itsm_audit_router
 from app.api.v1.endpoints.itsm_approvals import router as itsm_approvals_router
 from app.api.v1.endpoints.itsm_outage_alerts import router as itsm_outage_alerts_router
+from app.api.v1.endpoints.itsm_macros import router as itsm_macros_router
 
 app.include_router(tenants_router, prefix="/v1/tenants", tags=["tenants"])
 app.include_router(gateways_router, prefix="/v1/gateways", tags=["gateways"])
@@ -167,6 +168,8 @@ app.include_router(itsm_approvals_router, prefix="/v1/itsm/approvals", tags=["it
 app.include_router(itsm_approvals_router, prefix="/api/itsm/approvals", tags=["itsm-approvals"], include_in_schema=False)
 app.include_router(itsm_outage_alerts_router, prefix="/v1/itsm/alerts", tags=["itsm-outage-alerts"])
 app.include_router(itsm_outage_alerts_router, prefix="/api/itsm/alerts", tags=["itsm-outage-alerts"], include_in_schema=False)
+app.include_router(itsm_macros_router, prefix="/v1/itsm/macros", tags=["itsm-macros"])
+app.include_router(itsm_macros_router, prefix="/api/itsm/macros", tags=["itsm-macros"], include_in_schema=False)
 
 # Ravi's imported console and existing client SDKs use `/api/v1`. Keep Kunal's
 # `/v1` routes canonical while exposing a compatibility alias during migration.
@@ -204,6 +207,7 @@ _compatibility_routers = [
     (itsm_problems_router, "/itsm/problems", "itsm-problems"),
     (itsm_changes_router, "/itsm/changes", "itsm-changes"),
     (itsm_approvals_router, "/itsm/approvals", "itsm-approvals"),
+    (itsm_macros_router, "/itsm/macros", "itsm-macros"),
 ]
 for _router, _path, _tag in _compatibility_routers:
     app.include_router(_router, prefix=f"/api/v1{_path}", tags=[_tag], include_in_schema=False)

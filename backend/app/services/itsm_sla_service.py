@@ -2,12 +2,15 @@
 from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta, timezone
+from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.db.models import ITSMBusinessCalendar, ITSMSLAPolicy, ITSMTicket
 
 
-def _utc(value: datetime) -> datetime:
+def _utc(value: datetime | None) -> datetime | None:
+    if value is None:
+        return None
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
@@ -137,3 +140,103 @@ def resume_sla(ticket: ITSMTicket, at: datetime) -> None:
                 setattr(ticket, due_field, _add_business_seconds(at, remaining, calendar))
     ticket.sla_paused_at = None
     ticket.sla_status = "WITHIN_SLA"
+
+
+def compute_sla_details(ticket: Any, now: datetime | None = None) -> dict[str, Any]:
+    """Authoritative computation of active SLA deadline, remaining seconds,
+    overdue seconds, elapsed percentage, and 3-state risk status (GREEN/AMBER/RED).
+
+    Risk States:
+    - NO_SLA: No SLA policy or deadline applied
+    - PAUSED: Ticket SLA is currently paused
+    - WITHIN_SLA (GREEN): Less than 75% of allowed SLA time elapsed
+    - AT_RISK (AMBER): 75% or more of allowed SLA time elapsed, but not breached
+    - BREACHED (RED): SLA deadline has passed
+    """
+    now = _utc(now or datetime.now(timezone.utc))
+
+    # Determine if response or resolution SLA is the active deadline
+    response_active = bool(
+        getattr(ticket, "sla_response_due_at", None)
+        and not getattr(ticket, "sla_response_met_at", None)
+    )
+    if response_active:
+        due = _utc(ticket.sla_response_due_at)
+        target_field = "response_target_minutes"
+    else:
+        due = _utc(getattr(ticket, "sla_resolution_due_at", None)) or (
+            _utc(getattr(ticket, "sla_response_due_at", None))
+        )
+        target_field = "resolution_target_minutes"
+
+    started_at = _utc(getattr(ticket, "created_at", None)) or now
+
+    if not due:
+        return {
+            "status": "NO_SLA",
+            "sla_due_at": None,
+            "sla_started_at": started_at,
+            "remaining_seconds": None,
+            "elapsed_seconds": None,
+            "total_target_seconds": None,
+            "elapsed_fraction": None,
+            "is_paused": False,
+        }
+
+    policy = getattr(ticket, "sla_policy", None)
+    calendar = getattr(policy, "calendar", None) if policy else None
+
+    # Handle pause state
+    is_paused = bool(
+        getattr(ticket, "sla_paused_at", None)
+        or getattr(ticket, "sla_status", None) == "PAUSED"
+    )
+    paused_at = _utc(getattr(ticket, "sla_paused_at", None))
+    effective_now = paused_at if (is_paused and paused_at) else now
+
+    # Authoritative remaining business seconds between effective current time and deadline
+    remaining = business_seconds_between(effective_now, due, calendar)
+
+    # Determine total SLA target duration
+    target_minutes = (
+        getattr(policy, target_field, None)
+        if policy
+        else None
+    )
+    if target_minutes and target_minutes > 0:
+        total_target_seconds = float(target_minutes * 60)
+    elif started_at and due > started_at:
+        total_target_seconds = (due - started_at).total_seconds()
+    else:
+        total_target_seconds = max(remaining, 1.0)
+
+    # Calculate elapsed duration and 75% rule
+    if effective_now > due or remaining < 0:
+        # RED: SLA deadline has passed
+        status = "BREACHED"
+        elapsed_fraction = 1.0 + (abs(remaining) / total_target_seconds if total_target_seconds > 0 else 0.0)
+        elapsed_seconds = total_target_seconds + abs(remaining)
+    else:
+        elapsed_seconds = max(0.0, total_target_seconds - remaining)
+        elapsed_fraction = elapsed_seconds / total_target_seconds if total_target_seconds > 0 else 0.0
+
+        if is_paused:
+            status = "PAUSED"
+        elif elapsed_fraction >= 0.75:
+            # AMBER: 75% or more elapsed, but not breached
+            status = "AT_RISK"
+        else:
+            # GREEN: Less than 75% elapsed
+            status = "WITHIN_SLA"
+
+    return {
+        "status": status,
+        "sla_due_at": due,
+        "sla_started_at": started_at,
+        "remaining_seconds": remaining,
+        "elapsed_seconds": elapsed_seconds,
+        "total_target_seconds": total_target_seconds,
+        "elapsed_fraction": elapsed_fraction,
+        "is_paused": is_paused,
+    }
+

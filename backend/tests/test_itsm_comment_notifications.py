@@ -688,8 +688,8 @@ class TestITSMCommentNotifications(unittest.TestCase):
     def test_11_service_request_requester_public_comment_notifies_assigned_agent(self):
         """11. Requester posts Public Comment on assigned Service Request.
         Assigned Service Agent receives exactly one notification with:
-        - Title: "New reply on {ticket_number}"
-        - Message: "Requester has replied to your service request."
+        - Title: "New message on request: {ticket_number}"
+        - Message: "Requester has sent a new message on your service request."
         - Link: "/itsm/requests/{request_id}"
         """
         req_res = self.client.post(
@@ -743,8 +743,8 @@ class TestITSMCommentNotifications(unittest.TestCase):
 
         self.assertEqual(len(relevant_notifs), initial_count + 1)
         new_notif = relevant_notifs[0]
-        self.assertEqual(new_notif["title"], f"New reply on {ticket_number}")
-        self.assertEqual(new_notif["body"], "Requester has replied to your service request.")
+        self.assertEqual(new_notif["title"], f"New message on request: {ticket_number}")
+        self.assertEqual(new_notif["body"], "Requester has sent a new message on your service request.")
         self.assertEqual(new_notif["link"], f"/itsm/requests/{request_id}")
         self.assertEqual(new_notif["type"], "itsm.request.comment")
         self.assertEqual(new_notif["severity"], "info")
@@ -755,12 +755,31 @@ class TestITSMCommentNotifications(unittest.TestCase):
         When requester comments on an unassigned ticket, no notification is created.
         No recipient is invented.
         """
+        unassigned_svc_id = uuid4()
+        unassigned_cat_id = uuid4()
+
+        with self.engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_services (id, tenant_id, name, slug, status, tier, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, 'Unassigned Null Svc', 'unassigned-null-svc', 'ACTIVE', 'TIER_1', now(), now())"
+                ),
+                {"id": unassigned_svc_id, "tenant_id": self.tenant_a_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_service_catalog_items (id, tenant_id, service_id, name, slug, version, intake_schema, is_active, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, :service_id, 'Orphan Item', 'orphan-item', 1, '{\"type\": \"object\"}'::jsonb, true, now(), now())"
+                ),
+                {"id": unassigned_cat_id, "tenant_id": self.tenant_a_id, "service_id": unassigned_svc_id},
+            )
+
         req_res = self.client.post(
             "/v1/itsm/requests",
             headers={"Authorization": f"Bearer {self.requester_a_key}"},
             json={
-                "catalog_item_id": str(self.catalog_item_a_id),
-                "title": "Unassigned Request Test",
+                "catalog_item_id": str(unassigned_cat_id),
+                "title": "Orphan Item",
                 "description": "No one assigned yet",
                 "impact": "LOW",
                 "urgency": "LOW",
@@ -1488,6 +1507,293 @@ class TestITSMCommentNotifications(unittest.TestCase):
         # Tenant B Agent checks notifications
         tb_notifs = [n for n in self._get_notifications(self.agent_b_key) if n["link"] == f"/itsm/requests/{req_id}"]
         self.assertEqual(len(tb_notifs), 0, "Agent in Tenant B must receive ZERO notifications for Tenant A requests")
+
+
+    def test_26_requester_public_comment_notifies_responsible_agent_unread_and_no_self_notification(self):
+        """26. Requester sends a new public message/comment on a Service Request:
+        - Responsible Agent receives unread notification:
+          - Title: 'New message on request: REQ-XXXXXX'
+          - Body: 'Requester has sent a new message on your service request.'
+          - Link: '/itsm/requests/{request_id}'
+          - read_at = NULL initially.
+        - Existing notification bell / unread count increments.
+        - Requester does NOT receive self-notification.
+        """
+        init_agent = self.client.get("/v1/notifications", headers={"Authorization": f"Bearer {self.agent_a_key}"})
+        self.assertEqual(init_agent.status_code, 200)
+        agent_unread_before = init_agent.json()["unread_count"]
+
+        # 1. Requester submits service catalog request
+        req_res = self.client.post(
+            "/v1/itsm/requests",
+            headers={"Authorization": f"Bearer {self.requester_a_key}"},
+            json={
+                "catalog_item_id": str(self.catalog_item_a_id),
+                "title": "PC requirement",
+                "description": "Developer setup request",
+                "quantity": 1,
+            },
+        )
+        self.assertEqual(req_res.status_code, 201)
+        req_data = req_res.json()
+        request_id = req_data["id"]
+        ticket_number = req_data["ticket_number"]
+
+        # Note agent notification count before comment
+        agent_notifs_before = len([
+            n for n in self._get_notifications(self.agent_a_key)
+            if n["link"] == f"/itsm/requests/{request_id}" and n["type"] == "itsm.request.comment"
+        ])
+        requester_notifs_before = len([
+            n for n in self._get_notifications(self.requester_a_key)
+            if n["link"] == f"/itsm/requests/{request_id}"
+        ])
+
+        # 2. Requester posts a public comment/message on the request
+        comment_res = self.client.post(
+            f"/v1/itsm/requests/{request_id}/activities",
+            headers={"Authorization": f"Bearer {self.requester_a_key}"},
+            json={
+                "activity_type": "COMMENT",
+                "content": "Please include an extra USB-C cable with the PC setup.",
+                "is_internal": False,
+            },
+        )
+        self.assertEqual(comment_res.status_code, 201)
+
+        # 3. Agent receives exactly 1 new comment notification
+        agent_notifs_after = [
+            n for n in self._get_notifications(self.agent_a_key)
+            if n["link"] == f"/itsm/requests/{request_id}" and n["type"] == "itsm.request.comment"
+        ]
+        self.assertEqual(len(agent_notifs_after), agent_notifs_before + 1, "Agent must receive exactly 1 new comment notification")
+        new_notif = agent_notifs_after[0]
+
+        # Verify title, body, link, unread state
+        self.assertEqual(new_notif["title"], f"New message on request: {ticket_number}")
+        self.assertEqual(new_notif["body"], "Requester has sent a new message on your service request.")
+        self.assertEqual(new_notif["link"], f"/itsm/requests/{request_id}")
+        self.assertEqual(new_notif["type"], "itsm.request.comment")
+        self.assertEqual(new_notif["severity"], "info")
+        self.assertIsNone(new_notif["read_at"], "Notification must be unread (read_at is None)")
+
+        # Verify unread count incremented
+        updated_agent = self.client.get("/v1/notifications", headers={"Authorization": f"Bearer {self.agent_a_key}"})
+        self.assertGreaterEqual(updated_agent.json()["unread_count"], agent_unread_before + 1)
+
+        # 4. Requester does NOT get self-notification
+        requester_notifs_after = len([
+            n for n in self._get_notifications(self.requester_a_key)
+            if n["link"] == f"/itsm/requests/{request_id}" and n["type"] == "itsm.request.comment"
+        ])
+        self.assertEqual(requester_notifs_after, 0, "Requester must not receive self-notification")
+
+    def test_27_requester_public_comment_duplicate_prevention(self):
+        """27. Duplicate prevention on rapid Requester comments:
+        Rapid retries or repeated posts within 5s produce only 1 notification for responsible agent.
+        """
+        req_res = self.client.post(
+            "/v1/itsm/requests",
+            headers={"Authorization": f"Bearer {self.requester_a_key}"},
+            json={
+                "catalog_item_id": str(self.catalog_item_a_id),
+                "title": "PC requirement",
+                "description": "Dedup test",
+                "quantity": 1,
+            },
+        )
+        self.assertEqual(req_res.status_code, 201)
+        request_id = req_res.json()["id"]
+
+        # First comment
+        self.client.post(
+            f"/v1/itsm/requests/{request_id}/activities",
+            headers={"Authorization": f"Bearer {self.requester_a_key}"},
+            json={
+                "activity_type": "COMMENT",
+                "content": "Rapid comment 1",
+                "is_internal": False,
+            },
+        )
+
+        # Rapid second comment (retry within 5 seconds)
+        self.client.post(
+            f"/v1/itsm/requests/{request_id}/activities",
+            headers={"Authorization": f"Bearer {self.requester_a_key}"},
+            json={
+                "activity_type": "COMMENT",
+                "content": "Rapid comment 1",
+                "is_internal": False,
+            },
+        )
+
+        agent_notifs = [
+            n for n in self._get_notifications(self.agent_a_key)
+            if n["link"] == f"/itsm/requests/{request_id}" and n["type"] == "itsm.request.comment"
+        ]
+        self.assertEqual(len(agent_notifs), 1, "Duplicate comment notification must be suppressed")
+
+    def test_28_requester_public_comment_unrelated_agent_isolation(self):
+        """28. Unrelated agents do NOT receive notification for requester comment."""
+        # Create an unrelated agent in a different team
+        unrelated_agent_id = uuid4()
+        unrelated_team_id = uuid4()
+        unrelated_key = f"ak_live_unrel_cmt_{uuid4().hex[:12]}"
+
+        with self.engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO public.users (id, tenant_id, email, role, platform_role, is_active, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, :email, 'admin', 'NONE', true, now(), now())"
+                ),
+                {"id": unrelated_agent_id, "tenant_id": self.tenant_a_id, "email": f"unrel_cmt_{uuid4().hex[:6]}@example.com"},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_user_access (id, tenant_id, user_id, itsm_role, has_itsm_access, created_at, updated_at) "
+                    "VALUES (gen_random_uuid(), :tenant_id, :user_id, 'SERVICE_AGENT', true, now(), now())"
+                ),
+                {"tenant_id": self.tenant_a_id, "user_id": unrelated_agent_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO public.api_keys (id, tenant_id, key_hash, name, scopes, is_active, created_by, created_at, updated_at) "
+                    "VALUES (gen_random_uuid(), :tenant_id, :key_hash, 'unrel-cmt-key', ARRAY['read', 'write', 'admin'], true, :user_id, now(), now())"
+                ),
+                {"tenant_id": self.tenant_a_id, "user_id": unrelated_agent_id, "key_hash": hash_key(unrelated_key)},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_teams (id, tenant_id, name, is_active, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, 'Accounting Software Team', true, now(), now())"
+                ),
+                {"id": unrelated_team_id, "tenant_id": self.tenant_a_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_team_members (id, tenant_id, team_id, user_id, created_at) "
+                    "VALUES (gen_random_uuid(), :tenant_id, :team_id, :user_id, now())"
+                ),
+                {"tenant_id": self.tenant_a_id, "team_id": unrelated_team_id, "user_id": unrelated_agent_id},
+            )
+
+        # Create request for PC requirement
+        create_res = self.client.post(
+            "/v1/itsm/requests",
+            headers={"Authorization": f"Bearer {self.requester_a_key}"},
+            json={
+                "catalog_item_id": str(self.catalog_item_a_id),
+                "title": "PC requirement",
+                "description": "Hardware request",
+                "quantity": 1,
+            },
+        )
+        self.assertEqual(create_res.status_code, 201)
+        req_id = create_res.json()["id"]
+
+        # Requester comments
+        self.client.post(
+            f"/v1/itsm/requests/{req_id}/activities",
+            headers={"Authorization": f"Bearer {self.requester_a_key}"},
+            json={
+                "activity_type": "COMMENT",
+                "content": "Checking on hardware order status",
+                "is_internal": False,
+            },
+        )
+
+        # Unrelated agent must receive 0 notifications
+        unrel_notifs = [n for n in self._get_notifications(unrelated_key) if n["link"] == f"/itsm/requests/{req_id}"]
+        self.assertEqual(len(unrel_notifs), 0, "Unrelated agent must receive 0 notifications")
+
+    def test_29_requester_public_comment_cross_tenant_isolation(self):
+        """29. Cross-Tenant Isolation:
+        Requester in Tenant A comments on a Service Request.
+        Agent in Tenant B receives ZERO notifications.
+        """
+        create_res = self.client.post(
+            "/v1/itsm/requests",
+            headers={"Authorization": f"Bearer {self.requester_a_key}"},
+            json={
+                "catalog_item_id": str(self.catalog_item_a_id),
+                "title": "PC requirement",
+                "description": "Tenant A Order",
+                "quantity": 1,
+            },
+        )
+        self.assertEqual(create_res.status_code, 201)
+        req_id = create_res.json()["id"]
+
+        # Requester in Tenant A comments
+        self.client.post(
+            f"/v1/itsm/requests/{req_id}/activities",
+            headers={"Authorization": f"Bearer {self.requester_a_key}"},
+            json={
+                "activity_type": "COMMENT",
+                "content": "Secret note for Tenant A team",
+                "is_internal": False,
+            },
+        )
+
+        # Tenant B Agent checks notifications
+        tb_notifs = [n for n in self._get_notifications(self.agent_b_key) if n["link"] == f"/itsm/requests/{req_id}"]
+        self.assertEqual(len(tb_notifs), 0, "Tenant B Agent must receive ZERO notifications for Tenant A comment")
+
+    def test_30_requester_comment_direct_assignee_notified_and_not_other_team_peers(self):
+        """30. When an individual agent is assigned to the request,
+        ONLY that assigned agent is notified of the requester comment (not other team peers).
+        """
+        req_res = self.client.post(
+            "/v1/itsm/requests",
+            headers={"Authorization": f"Bearer {self.requester_a_key}"},
+            json={
+                "catalog_item_id": str(self.catalog_item_a_id),
+                "title": "PC requirement",
+                "description": "Assigned to individual test",
+                "quantity": 1,
+            },
+        )
+        self.assertEqual(req_res.status_code, 201)
+        request_id = req_res.json()["id"]
+
+        # Assign directly to Agent A
+        with self.engine.begin() as conn:
+            conn.execute(
+                text("UPDATE public.itsm_tickets SET assignee_id = :agent_id, status = 'ASSIGNED' WHERE id = :id"),
+                {"agent_id": self.agent_a_id, "id": request_id},
+            )
+
+        agent_a_before = len([
+            n for n in self._get_notifications(self.agent_a_key)
+            if n["link"] == f"/itsm/requests/{request_id}" and n["type"] == "itsm.request.comment"
+        ])
+        other_agent_before = len([
+            n for n in self._get_notifications(self.other_agent_a_key)
+            if n["link"] == f"/itsm/requests/{request_id}" and n["type"] == "itsm.request.comment"
+        ])
+
+        # Requester comments
+        self.client.post(
+            f"/v1/itsm/requests/{request_id}/activities",
+            headers={"Authorization": f"Bearer {self.requester_a_key}"},
+            json={
+                "activity_type": "COMMENT",
+                "content": "Direct question for assigned agent",
+                "is_internal": False,
+            },
+        )
+
+        agent_a_after = len([
+            n for n in self._get_notifications(self.agent_a_key)
+            if n["link"] == f"/itsm/requests/{request_id}" and n["type"] == "itsm.request.comment"
+        ])
+        other_agent_after = len([
+            n for n in self._get_notifications(self.other_agent_a_key)
+            if n["link"] == f"/itsm/requests/{request_id}" and n["type"] == "itsm.request.comment"
+        ])
+
+        self.assertEqual(agent_a_after, agent_a_before + 1, "Assigned agent must receive the comment notification")
+        self.assertEqual(other_agent_after, other_agent_before, "Other team peers must NOT receive notification when individual agent is assigned")
 
 
 if __name__ == "__main__":

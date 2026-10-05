@@ -22,6 +22,7 @@ import { formatDateTime, itsmSlaConfig } from "@/lib/itsm-format";
 import { IncidentActivity, ServiceRequest } from "@/lib/itsm-types";
 import IncidentPriorityBadge from "@/components/itsm/incident-priority-badge";
 import IncidentStatusBadge from "@/components/itsm/incident-status-badge";
+import { SlaCountdownPanel } from "@/components/itsm/sla-countdown";
 import ActivityTimeline from "@/components/itsm/activity-timeline";
 import StatusModal from "@/components/itsm/status-modal";
 import AttachmentSection, { AttachmentItem } from "@/components/itsm/attachment-section";
@@ -371,6 +372,7 @@ export default function ServiceRequestDetailPage() {
             </h2>
             <ActivityTimeline
               incidentId={request.id}
+              ticketType="SERVICE_REQUEST"
               activities={activities}
               onActivityAdded={() => fetchRequestData()}
               apiEndpoint={`/api/itsm/requests/${request.id}/activities`}
@@ -444,41 +446,8 @@ export default function ServiceRequestDetailPage() {
             </div>
           </div>
 
-          {/* SLA Status & Target Milestones */}
-          <div className="bg-white rounded-2xl border border-[#E6E9F0] p-5 shadow-xs space-y-3.5">
-            <h3 className="text-[11px] font-bold text-[#8C95A8] uppercase tracking-wider">
-              SLA Milestones
-            </h3>
-            <div className="space-y-2.5 text-xs">
-              <div className="flex items-center justify-between">
-                <span className="text-[#6B7488]">SLA Status:</span>
-                {slaConfig ? (
-                  <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${slaConfig.badge}`}>
-                    <span className={`w-1.5 h-1.5 rounded-full ${slaConfig.dot}`} />
-                    {slaConfig.label}
-                  </span>
-                ) : (
-                  <span className="text-[#8C95A8]">None</span>
-                )}
-              </div>
-              {request.sla_resolution_due_at && (
-                <div className="flex items-center justify-between text-[#6B7488]">
-                  <span>Resolution Due:</span>
-                  <span className="font-medium text-[#0E1726]">
-                    {formatDateTime(request.sla_resolution_due_at)}
-                  </span>
-                </div>
-              )}
-              {request.resolved_at && (
-                <div className="flex items-center justify-between text-[#6B7488]">
-                  <span>Resolved At:</span>
-                  <span className="font-medium text-emerald-600">
-                    {formatDateTime(request.resolved_at)}
-                  </span>
-                </div>
-              )}
-            </div>
-          </div>
+          {/* Real-Time SLA Countdown & Risk Warning Panel */}
+          <SlaCountdownPanel ticket={request} />
         </div>
       </div>
 

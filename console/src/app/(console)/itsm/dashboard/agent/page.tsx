@@ -19,6 +19,8 @@ import {
 import { Incident } from "@/lib/itsm-types";
 import IncidentPriorityBadge from "@/components/itsm/incident-priority-badge";
 import IncidentStatusBadge from "@/components/itsm/incident-status-badge";
+import { SlaCountdownBadge } from "@/components/itsm/sla-countdown";
+import { calculateSlaStatus } from "@/lib/itsm-sla";
 import { formatDateTime, itsmSlaConfig } from "@/lib/itsm-format";
 
 type FilterMode = "all" | "assigned_to_me" | "team_queue" | "high_priority" | "sla_risk";
@@ -108,9 +110,15 @@ export default function ServiceAgentWorkspacePage() {
       i.priority === "P2"
   ).length;
 
-  const slaAtRiskCount = incidents.filter(
-    (i) => i.sla_status === "AT_RISK" || i.sla_status === "BREACHED"
-  ).length;
+  const slaAtRiskCount = incidents.filter((i) => {
+    const calc = calculateSlaStatus(i);
+    return (
+      calc.state === "AMBER" ||
+      calc.state === "RED" ||
+      i.sla_status === "AT_RISK" ||
+      i.sla_status === "BREACHED"
+    );
+  }).length;
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto px-4 sm:px-6 py-6">
@@ -416,14 +424,9 @@ export default function ServiceAgentWorkspacePage() {
                         {formatDateTime(incident.updated_at)}
                       </td>
 
-                      {/* SLA Status / Risk */}
+                      {/* SLA Status / Risk Countdown */}
                       <td className="px-4 py-3 whitespace-nowrap">
-                        <span
-                          className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold border ${slaConfig.badge}`}
-                        >
-                          <span className={`w-1.5 h-1.5 rounded-full ${slaConfig.dot}`} />
-                          {slaConfig.label}
-                        </span>
+                        <SlaCountdownBadge ticket={incident} />
                       </td>
 
                       {/* Open Action */}

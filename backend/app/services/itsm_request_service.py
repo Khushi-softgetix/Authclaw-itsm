@@ -54,15 +54,11 @@ class RequestService:
     def _build_response(
         ticket: ITSMTicket,
         detail: Optional[ITSMServiceRequestDetail] = None,
-        approval: Optional[PendingApproval] = None,
     ) -> ServiceRequestResponse:
         """Convert an ITSMTicket and its detail snapshot into ServiceRequestResponse."""
         detail_data = None
-        is_approval_required = False
         if detail:
             cat_name = detail.catalog_item.name if detail.catalog_item else None
-            if detail.catalog_item:
-                is_approval_required = bool(detail.catalog_item.approval_required)
             detail_data = ServiceRequestDetailData(
                 catalog_item_id=detail.catalog_item_id,
                 catalog_item_name=cat_name,
@@ -70,32 +66,6 @@ class RequestService:
                 intake_schema_snapshot=detail.intake_schema_snapshot or {},
                 submitted_form_data=detail.submitted_form_data or {},
             )
-
-        if approval:
-            is_approval_required = True
-
-        approval_status = None
-        rejection_reason = None
-        if approval:
-            approval_status = approval.status
-            if approval.status == "REJECTED":
-                rejection_reason = approval.resolution_reason or ticket.status_reason
-        elif is_approval_required:
-            if ticket.status == "PENDING":
-                approval_status = "PENDING"
-            elif ticket.status in ("IN_PROGRESS", "RESOLVED", "CLOSED"):
-                approval_status = "APPROVED"
-            elif ticket.status == "CANCELLED":
-                approval_status = "REJECTED"
-                rejection_reason = ticket.status_reason
-            else:
-                approval_status = "PENDING"
-        elif ticket.ticket_type == "SERVICE_REQUEST":
-            approval_status = "NOT_REQUIRED"
-
-        if not rejection_reason and ticket.status == "CANCELLED" and ticket.status_reason:
-            if "reject" in ticket.status_reason.lower():
-                rejection_reason = ticket.status_reason
 
         requester_email = ticket.requester.email if ticket.requester else None
         assignee_email = ticket.assignee.email if ticket.assignee else None
@@ -127,6 +97,11 @@ class RequestService:
             sla_response_met_at=ticket.sla_response_met_at,
             sla_resolution_due_at=ticket.sla_resolution_due_at,
             sla_resolution_met_at=ticket.sla_resolution_met_at,
+            sla_paused_at=ticket.sla_paused_at,
+            sla_accumulated_pause_seconds=ticket.sla_accumulated_pause_seconds or 0,
+            sla_due_at=ticket.sla_due_at,
+            sla_started_at=ticket.sla_started_at,
+            sla_remaining_seconds=ticket.sla_remaining_seconds,
             resolution_code=ticket.resolution_code,
             resolution_summary=ticket.resolution_summary,
             resolved_at=ticket.resolved_at,
@@ -134,9 +109,6 @@ class RequestService:
             created_at=ticket.created_at,
             updated_at=ticket.updated_at,
             request_detail=detail_data,
-            approval_required=is_approval_required,
-            approval_status=approval_status,
-            rejection_reason=rejection_reason,
         )
 
     @staticmethod
@@ -402,7 +374,7 @@ class RequestService:
             quantity=payload.quantity,
         )
 
-        return cls._build_response(ticket, detail, approval if (catalog_item and catalog_item.approval_required) else None)
+        return cls._build_response(ticket, detail)
 
     @classmethod
     def list_requests(
@@ -472,10 +444,9 @@ class RequestService:
 
         tickets = query.order_by(ITSMTicket.created_at.desc()).offset(offset).limit(limit).all()
 
-        # Batch load request details and approvals for returned tickets
+        # Batch load request details for returned tickets
         ticket_ids = [t.id for t in tickets]
         details_map = {}
-        approvals_map = {}
         if ticket_ids:
             details = (
                 db.query(ITSMServiceRequestDetail)
@@ -489,20 +460,7 @@ class RequestService:
             for d in details:
                 details_map[d.ticket_id] = d
 
-            ticket_id_strs = [str(tid) for tid in ticket_ids]
-            approvals = (
-                db.query(PendingApproval)
-                .filter(
-                    PendingApproval.tenant_id == tenant_id,
-                    PendingApproval.action_type.in_(["service_request_approval", "itsm_service_request"]),
-                    PendingApproval.action_id.in_(ticket_id_strs),
-                )
-                .all()
-            )
-            for a in approvals:
-                approvals_map[a.action_id] = a
-
-        return [cls._build_response(t, details_map.get(t.id), approvals_map.get(str(t.id))) for t in tickets]
+        return [cls._build_response(t, details_map.get(t.id)) for t in tickets]
 
     @classmethod
     def get_request(
@@ -542,18 +500,7 @@ class RequestService:
             .first()
         )
 
-        approval = (
-            db.query(PendingApproval)
-            .filter(
-                PendingApproval.tenant_id == tenant_id,
-                PendingApproval.action_type.in_(["service_request_approval", "itsm_service_request"]),
-                PendingApproval.action_id == str(ticket.id),
-            )
-            .order_by(PendingApproval.created_at.desc())
-            .first()
-        )
-
-        return cls._build_response(ticket, detail, approval)
+        return cls._build_response(ticket, detail)
 
     @classmethod
     def change_request_status(
@@ -593,23 +540,6 @@ class RequestService:
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Cannot transition service request in terminal status '{current_status}'",
             )
-
-        if target_status in {"IN_PROGRESS", "RESOLVED"}:
-            pending_approval = (
-                db.query(PendingApproval)
-                .filter(
-                    PendingApproval.tenant_id == tenant_id,
-                    PendingApproval.action_type == "service_request_approval",
-                    PendingApproval.action_id == str(ticket.id),
-                    PendingApproval.status == "PENDING",
-                )
-                .first()
-            )
-            if pending_approval:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="Cannot transition service request to IN_PROGRESS or RESOLVED while approval is pending",
-                )
 
         allowed = ALLOWED_REQUEST_TRANSITIONS.get(current_status, set())
         if target_status not in allowed:
@@ -689,17 +619,7 @@ class RequestService:
             )
             .first()
         )
-        approval = (
-            db.query(PendingApproval)
-            .filter(
-                PendingApproval.tenant_id == tenant_id,
-                PendingApproval.action_type.in_(["service_request_approval", "itsm_service_request"]),
-                PendingApproval.action_id == str(ticket.id),
-            )
-            .order_by(PendingApproval.created_at.desc())
-            .first()
-        )
-        return cls._build_response(ticket, detail, approval)
+        return cls._build_response(ticket, detail)
 
     @classmethod
     def assign_request(
@@ -800,17 +720,7 @@ class RequestService:
             )
             .first()
         )
-        approval = (
-            db.query(PendingApproval)
-            .filter(
-                PendingApproval.tenant_id == tenant_id,
-                PendingApproval.action_type.in_(["service_request_approval", "itsm_service_request"]),
-                PendingApproval.action_id == str(ticket.id),
-            )
-            .order_by(PendingApproval.created_at.desc())
-            .first()
-        )
-        return cls._build_response(ticket, detail, approval)
+        return cls._build_response(ticket, detail)
 
     @classmethod
     def list_activities(
@@ -922,77 +832,91 @@ class RequestService:
         activity: ITSMTicketActivity,
         actor_id: Optional[UUID] = None,
         is_internal: bool = False,
-    ) -> Optional[Notification]:
-        """Dispatches an in-app notification to the assigned service agent when a requester posts a public comment."""
+    ) -> list[Notification]:
+        """Dispatches an in-app notification to the assigned service agent(s) when a requester posts a public comment."""
         try:
-            # 1. Ticket must have an assigned individual agent
-            if not ticket.assignee_id:
-                return None
-
-            # 2. Must have actor_id and ticket requester_id
-            if not actor_id or not ticket.requester_id:
-                return None
-
-            # 3. Only notify when the requester posts the comment
-            if str(actor_id) != str(ticket.requester_id):
-                return None
-
-            # 4. Prevent self-notification if actor is the assignee
-            if str(actor_id) == str(ticket.assignee_id):
-                return None
-
-            # 5. Check internal notes and non-public comments
+            # 1. Check internal notes and non-public comments
             act_type = (activity.activity_type or "").strip().upper()
             is_internal_flag = is_internal or bool((activity.activity_metadata or {}).get("is_internal"))
             if is_internal_flag or act_type in ("NOTE", "INTERNAL_NOTE", "WORK_NOTE"):
-                return None
+                return []
 
             if act_type not in ("COMMENT", "PUBLIC_COMMENT", "REPLY"):
-                return None
+                return []
 
             if activity.content and activity.content.startswith("Attached file:"):
-                return None
+                return []
 
-            ticket_num = ticket.ticket_number or "REQ"
-            title = f"New reply on {ticket_num}"
-            body = "Requester has replied to your service request."
-            link = f"/itsm/requests/{ticket.id}"
+            # 2. Must have actor_id and ticket requester_id
+            if not actor_id or not ticket.requester_id:
+                return []
 
-            # Ensure tenant context is set for RLS before querying/inserting notifications
+            # 3. Only notify when the requester posts the comment
+            if str(actor_id) != str(ticket.requester_id):
+                return []
+
+            # 4. Ensure tenant context is set for RLS before querying/inserting notifications
             db.execute(
                 text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
                 {"tenant_id": str(tenant_id)},
             )
 
-            # Deduplication: suppress duplicate notification within 5 seconds for the same request comment
-            recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=5)
-            existing = (
-                db.query(Notification)
-                .filter(
-                    Notification.tenant_id == tenant_id,
-                    Notification.user_id == ticket.assignee_id,
-                    Notification.link == link,
-                    Notification.body == body,
-                    Notification.created_at >= recent_cutoff,
-                )
-                .first()
-            )
-            if existing:
-                return existing
-
-            return create_notification(
+            # 5. Resolve responsible recipients using the same reliable logic as request creation
+            _, _, recipient_ids = cls.resolve_responsible_recipients(
                 db=db,
                 tenant_id=tenant_id,
-                user_id=ticket.assignee_id,
-                type="itsm.request.comment",
-                severity="info",
-                title=title,
-                body=body,
-                link=link,
+                ticket=ticket,
+                actor_id=actor_id,
             )
+
+            # Extra guard: exclude actor_id (the requester who posted the message)
+            recipient_ids = [uid for uid in recipient_ids if str(uid) != str(actor_id)]
+
+            if not recipient_ids:
+                return []
+
+            ticket_num = ticket.ticket_number or "REQ"
+            title = f"New message on request: {ticket_num}"
+            body = "Requester has sent a new message on your service request."
+            link = f"/itsm/requests/{ticket.id}"
+
+            created_notifications: list[Notification] = []
+            recent_cutoff = datetime.now(timezone.utc) - timedelta(seconds=5)
+
+            for recipient_id in recipient_ids:
+                # Deduplication: suppress duplicate notification within 5 seconds for the same request comment
+                existing = (
+                    db.query(Notification)
+                    .filter(
+                        Notification.tenant_id == tenant_id,
+                        Notification.user_id == recipient_id,
+                        Notification.link == link,
+                        Notification.type == "itsm.request.comment",
+                        Notification.created_at >= recent_cutoff,
+                    )
+                    .first()
+                )
+                if existing:
+                    created_notifications.append(existing)
+                    continue
+
+                notif = create_notification(
+                    db=db,
+                    tenant_id=tenant_id,
+                    user_id=recipient_id,
+                    type="itsm.request.comment",
+                    severity="info",
+                    title=title,
+                    body=body,
+                    link=link,
+                )
+                if notif:
+                    created_notifications.append(notif)
+
+            return created_notifications
         except Exception as exc:
             logger.warning("Failed to dispatch assignee comment notification for request %s: %s", getattr(ticket, "ticket_number", ticket.id), exc)
-            return None
+            return []
 
     @classmethod
     def notify_requester_public_comment(
@@ -1092,6 +1016,27 @@ class RequestService:
                 text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
                 {"tenant_id": str(tenant_id)},
             )
+
+            # Auto-populate service and catalog_item from ticket if not explicitly passed
+            if ticket:
+                if not service and ticket.service_id:
+                    service = (
+                        db.query(ITSMService)
+                        .filter(ITSMService.id == ticket.service_id, ITSMService.tenant_id == tenant_id)
+                        .first()
+                    )
+                if not catalog_item:
+                    detail = (
+                        db.query(ITSMServiceRequestDetail)
+                        .options(joinedload(ITSMServiceRequestDetail.catalog_item))
+                        .filter(
+                            ITSMServiceRequestDetail.tenant_id == tenant_id,
+                            ITSMServiceRequestDetail.ticket_id == ticket.id,
+                        )
+                        .first()
+                    )
+                    if detail and detail.catalog_item:
+                        catalog_item = detail.catalog_item
 
             # 1. Identify candidate individual agent
             candidate_agent_id: Optional[UUID] = None

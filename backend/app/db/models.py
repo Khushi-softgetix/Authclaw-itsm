@@ -1138,6 +1138,29 @@ class ITSMService(Base):
     )
 
 
+class ITSMServiceSubscription(Base):
+    """Mapping of end-users to the specific services they consume for outage/status audiences."""
+    __tablename__ = "itsm_service_subscriptions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    service = relationship("ITSMService")
+    user = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "service_id", "user_id", name="uq_itsm_service_subscription"),
+        Index("idx_itsm_service_sub_user", "tenant_id", "user_id", "is_active"),
+        Index("idx_itsm_service_sub_service", "tenant_id", "service_id", "is_active"),
+    )
+
+
 class ITSMTicketCategory(Base):
     """Hierarchical category taxonomy for ITSM tickets."""
     __tablename__ = "itsm_ticket_categories"

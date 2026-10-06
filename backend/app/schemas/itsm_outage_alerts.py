@@ -138,6 +138,18 @@ class OutageAlertSummaryResponse(BaseModel):
     updated_at: datetime
 
 
+class OutageAlertRequesterResponse(OutageAlertSummaryResponse):
+    publications: list[OutageAlertPublicationResponse] = Field(default_factory=list)
+
+
+class OutageAlertServiceAgentResponse(OutageAlertRequesterResponse):
+    links: list[OutageAlertLinkResponse] = Field(default_factory=list)
+
+
+class OutageAlertProblemChangeManagerResponse(OutageAlertServiceAgentResponse):
+    state_history: list[OutageAlertStateHistoryResponse] = Field(default_factory=list)
+
+
 class OutageAlertManagerResponse(OutageAlertSummaryResponse):
     draft_message: str
     audience_policy_ref: str | None = None
@@ -156,7 +168,14 @@ class OutageAlertAuditorResponse(OutageAlertManagerResponse):
 class OutageAlertListResponse(BaseModel):
     # Keep the richer projection first. Pydantic otherwise accepts the summary
     # shape first and silently drops manager/auditor evidence fields.
-    items: list[OutageAlertManagerResponse | OutageAlertAuditorResponse | OutageAlertSummaryResponse]
+    items: list[
+        OutageAlertManagerResponse
+        | OutageAlertAuditorResponse
+        | OutageAlertProblemChangeManagerResponse
+        | OutageAlertServiceAgentResponse
+        | OutageAlertRequesterResponse
+        | OutageAlertSummaryResponse
+    ]
     visibility_note: str | None = None
 
 

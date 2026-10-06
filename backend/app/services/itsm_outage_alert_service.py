@@ -25,6 +25,7 @@ from app.db.models import (
     ITSMOutageAlertService,
     ITSMOutageAlertStateHistory,
     ITSMService,
+    ITSMServiceSubscription,
     ITSMTicket,
 )
 from app.schemas.itsm_outage_alerts import (
@@ -529,6 +530,19 @@ class OutageAlertService:
         return attempt
 
     @classmethod
+    def _is_audience(cls, db: Session, tenant_id: UUID, user_id: UUID, alert_id: UUID) -> bool:
+        return db.query(ITSMServiceSubscription).join(
+            ITSMOutageAlertService,
+            (ITSMOutageAlertService.service_id == ITSMServiceSubscription.service_id)
+            & (ITSMOutageAlertService.tenant_id == ITSMServiceSubscription.tenant_id),
+        ).filter(
+            ITSMServiceSubscription.tenant_id == tenant_id,
+            ITSMServiceSubscription.user_id == user_id,
+            ITSMServiceSubscription.is_active.is_(True),
+            ITSMOutageAlertService.alert_id == alert_id,
+        ).first() is not None
+
+    @classmethod
     def list_alerts(cls, db: Session, tenant_id: UUID, actor: AlertActor, state: str | None = None) -> tuple[list[dict[str, Any]], str | None]:
         query = db.query(ITSMOutageAlert).filter(ITSMOutageAlert.tenant_id == tenant_id)
         if state:
@@ -536,19 +550,35 @@ class OutageAlertService:
             if normalized not in {"DRAFT", "ACTIVE", "RECOVERED"}:
                 raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Unsupported Alert state")
             query = query.filter(ITSMOutageAlert.status == normalized)
+        
+        if actor.role not in {"INCIDENT_MANAGER", "AUDITOR"}:
+            query = query.filter(ITSMOutageAlert.status != "DRAFT")
+            query = query.join(
+                ITSMOutageAlertService,
+                (ITSMOutageAlertService.alert_id == ITSMOutageAlert.id)
+                & (ITSMOutageAlertService.tenant_id == ITSMOutageAlert.tenant_id),
+            ).join(
+                ITSMServiceSubscription,
+                (ITSMServiceSubscription.service_id == ITSMOutageAlertService.service_id)
+                & (ITSMServiceSubscription.tenant_id == ITSMOutageAlertService.tenant_id),
+            ).filter(
+                ITSMServiceSubscription.user_id == actor.user_id,
+                ITSMServiceSubscription.is_active.is_(True),
+            ).distinct()
+
         alerts = query.order_by(ITSMOutageAlert.created_at.desc(), ITSMOutageAlert.id.desc()).all()
-        if actor.role in {"INCIDENT_MANAGER", "AUDITOR"}:
-            return [cls.project(db, tenant_id, alert, actor.role) for alert in alerts], None
-        # Audience service resolution is unresolved. Fail closed: no requester,
-        # Service Agent, or Problem/Change content is exposed without it.
-        return [], "Alert visibility is pending the approved audience-resolution policy."
+        return [cls.project(db, tenant_id, alert, actor.role) for alert in alerts], None
 
     @classmethod
     def get_alert(cls, db: Session, tenant_id: UUID, alert_id: UUID, actor: AlertActor) -> dict[str, Any]:
         alert = cls._alert(db, tenant_id, alert_id)
         if actor.role in {"INCIDENT_MANAGER", "AUDITOR"}:
             return cls.project(db, tenant_id, alert, actor.role)
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outage Alert not available in this audience")
+        
+        if alert.status == "DRAFT" or not cls._is_audience(db, tenant_id, actor.user_id, alert.id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outage Alert not available in this audience")
+            
+        return cls.project(db, tenant_id, alert, actor.role)
 
     @classmethod
     def project(cls, db: Session, tenant_id: UUID, alert: ITSMOutageAlert, role: str) -> dict[str, Any]:
@@ -577,17 +607,36 @@ class OutageAlertService:
             "created_at": alert.created_at,
             "updated_at": alert.updated_at,
         }
-        if role not in {"INCIDENT_MANAGER", "AUDITOR"}:
+
+        if role == "REQUESTER":
+            base["publications"] = [cls._publication_dict(publication) for publication in publications]
             return base
 
         links = db.query(ITSMOutageAlertLink).filter(
             ITSMOutageAlertLink.tenant_id == tenant_id,
             ITSMOutageAlertLink.alert_id == alert.id,
         ).order_by(ITSMOutageAlertLink.created_at.asc()).all()
+
+        if role == "SERVICE_AGENT":
+            base.update({
+                "publications": [cls._publication_dict(publication) for publication in publications],
+                "links": [cls._link_dict(link) for link in links],
+            })
+            return base
+
         history = db.query(ITSMOutageAlertStateHistory).filter(
             ITSMOutageAlertStateHistory.tenant_id == tenant_id,
             ITSMOutageAlertStateHistory.alert_id == alert.id,
         ).order_by(ITSMOutageAlertStateHistory.occurred_at.asc()).all()
+
+        if role == "PROBLEM_CHANGE_MANAGER":
+            base.update({
+                "publications": [cls._publication_dict(publication) for publication in publications],
+                "links": [cls._link_dict(link) for link in links],
+                "state_history": [cls._history_dict(item) for item in history],
+            })
+            return base
+
         deliveries = db.query(ITSMOutageAlertDelivery).join(
             ITSMOutageAlertPublication,
             (ITSMOutageAlertPublication.id == ITSMOutageAlertDelivery.publication_id)
@@ -596,6 +645,7 @@ class OutageAlertService:
             ITSMOutageAlertDelivery.tenant_id == tenant_id,
             ITSMOutageAlertPublication.alert_id == alert.id,
         ).order_by(ITSMOutageAlertDelivery.created_at.asc()).all()
+
         base.update(
             {
                 "draft_message": alert.draft_message,

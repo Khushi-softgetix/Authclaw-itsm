@@ -16,6 +16,9 @@ from app.schemas.itsm_outage_alerts import (
     OutageAlertLinkResponse,
     OutageAlertLinkableRecordsResponse,
     OutageAlertListResponse,
+    OutageAlertRequesterResponse,
+    OutageAlertServiceAgentResponse,
+    OutageAlertProblemChangeManagerResponse,
     OutageAlertManagerResponse,
     OutageAlertSummaryResponse,
     OutageAlertPublicationRequest,
@@ -75,7 +78,16 @@ def related_major_incident_alerts(
     return {"items": OutageAlertService.related_major_incident_alerts(db, UUID(tenant_id), major_incident_id)}
 
 
-@router.get("/{alert_id}", response_model=OutageAlertManagerResponse | OutageAlertAuditorResponse | OutageAlertSummaryResponse, summary="Read a role-safe Outage Alert")
+@router.get(
+    "/{alert_id}",
+    response_model=OutageAlertManagerResponse
+    | OutageAlertAuditorResponse
+    | OutageAlertProblemChangeManagerResponse
+    | OutageAlertServiceAgentResponse
+    | OutageAlertRequesterResponse
+    | OutageAlertSummaryResponse,
+    summary="Read a role-safe Outage Alert",
+)
 def get_outage_alert(
     alert_id: UUID,
     request: Request,

@@ -262,7 +262,7 @@ services:
       APP_DATABASE_URL: postgresql+psycopg://${POSTGRES_APP_USER:-authclaw_app}:${POSTGRES_APP_PASSWORD:-authclaw_app}@postgres:5432/${POSTGRES_DB:-authclaw}
       DATABASE_URL: postgresql+psycopg://${POSTGRES_APP_USER:-authclaw_app}:${POSTGRES_APP_PASSWORD:-authclaw_app}@postgres:5432/${POSTGRES_DB:-authclaw}
       AUTHCLAW_RUNTIME_DB_ROLE: ${POSTGRES_APP_USER:-authclaw_app}
-      AUTHCLAW_EXPECTED_DB_REVISION: ${AUTHCLAW_EXPECTED_DB_REVISION:-060}
+      AUTHCLAW_EXPECTED_DB_REVISION: ${AUTHCLAW_EXPECTED_DB_REVISION:-061}
       REDIS_URL: redis://redis:6379
       OPA_URL: http://opa:8181
       PRESIDIO_URL: http://presidio:3000

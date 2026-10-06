@@ -7,6 +7,7 @@ import {
   BarChart3,
   AlertTriangle,
   Bell,
+  BellRing,
   BookOpen,
   Building,
   Cable,
@@ -85,7 +86,17 @@ const navigation: NavItem[] = [
 
 const itsmNavigation: NavItem[] = [
   { name: "Dashboard", href: "/itsm/dashboard", icon: LayoutDashboard, roles: readRoles },
-  { name: "Incidents", href: "/itsm/incidents", icon: Ticket, roles: readRoles },
+  { 
+    name: "Incident Management", 
+    href: "/itsm/incidents-group", 
+    icon: Ticket, 
+    roles: readRoles,
+    children: [
+      { name: "Incidents", href: "/itsm/incidents" },
+      { name: "Major Incidents", href: "/itsm/incident-manager/major-incidents" },
+      { name: "Outage & Alerts", href: "/itsm/outage-alerts" },
+    ]
+  },
   { name: "Requests", href: "/itsm/requests", icon: ClipboardCheck, roles: readRoles },
   { name: "Knowledge", href: "/itsm/knowledge", icon: BookOpen, roles: readRoles },
   { name: "Services", href: "/itsm/services", icon: Layers, roles: readRoles },
@@ -96,7 +107,15 @@ const itsmNavigation: NavItem[] = [
 
 const serviceAgentNavigation: NavItem[] = [
   { name: "My Work", href: "/itsm/dashboard/agent", icon: LayoutDashboard, roles: readRoles },
-  { name: "Incidents", href: "/itsm/incidents", icon: Ticket, roles: readRoles },
+  { 
+    name: "Incident Management", 
+    href: "/itsm/incidents-group", 
+    icon: Ticket, 
+    roles: readRoles,
+    children: [
+      { name: "Incidents", href: "/itsm/incidents" },
+    ]
+  },
   { name: "Requests", href: "/itsm/requests", icon: ClipboardCheck, roles: readRoles },
   { name: "Knowledge", href: "/itsm/knowledge", icon: BookOpen, roles: readRoles },
   { name: "Services", href: "/itsm/services", icon: Layers, roles: readRoles },
@@ -138,9 +157,17 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
     ? effectiveItsmRole === "REQUESTER"
       ? [
           { name: "Dashboard", href: "/itsm/dashboard", icon: LayoutDashboard, roles: readRoles },
-          { name: "My Tickets", href: "/itsm/incidents", icon: Ticket, roles: readRoles },
+          { 
+            name: "Incident Management", 
+            href: "/itsm/incidents-group", 
+            icon: Ticket, 
+            roles: readRoles,
+            children: [
+              { name: "My Tickets", href: "/itsm/incidents" },
+              { name: "Report an Issue", href: "/itsm/incidents/new" },
+            ]
+          },
           { name: "Approvals", href: "/itsm/approvals", icon: FileCheck, roles: readRoles },
-          { name: "Report an Issue", href: "/itsm/incidents/new", icon: ClipboardCheck, roles: readRoles },
           { name: "Service Catalog", href: "/itsm/services", icon: Layers, roles: readRoles },
           { name: "Knowledge Base", href: "/itsm/knowledge", icon: BookOpen, roles: readRoles },
           { name: "Notifications", href: "/itsm/notifications", icon: Bell, roles: readRoles },
@@ -190,11 +217,41 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
   const navLinks = (onClick?: () => void) => (
     <div className="space-y-1">
       {allowedNavigation.map((item) => {
+        if (item.children) {
+          const isGroupActive = pathname.startsWith("/itsm/incidents") || pathname.startsWith("/itsm/incident-manager") || pathname.startsWith("/itsm/incident-manager/outage-alerts");
+          return (
+            <div key={item.name} className="flex flex-col mb-2">
+              <div className="flex items-center gap-3 px-3 py-2 text-xs font-bold uppercase tracking-wider text-[#8A93A5]">
+                <item.icon className="w-4 h-4" />
+                <span>{item.name}</span>
+              </div>
+              <div className="flex flex-col border-l-2 border-[#F1ECFE] ml-[21px] mt-1 pl-2 space-y-1">
+                {item.children.map(child => {
+                  const childActive = pathname === child.href || (child.href !== "/itsm/incidents" && child.href !== "/itsm/incidents/new" && pathname.startsWith(child.href + "/")) || (child.href === "/itsm/incidents" && pathname.startsWith("/itsm/incidents") && pathname !== "/itsm/incidents/new");
+                  return (
+                    <Link
+                      key={child.name}
+                      href={child.href}
+                      onClick={onClick}
+                      className={`block px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 ${
+                        childActive
+                          ? "bg-[#F8F5FF] text-[#6D28D9] font-bold"
+                          : "text-[#475069] hover:text-[#0E1726] hover:bg-[#F5F7FA]"
+                      }`}
+                    >
+                      {child.name}
+                    </Link>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        }
+
         const itemSection = item.href.includes("section=") ? item.href.split("section=")[1] : null;
         const itemPath = item.href.split("?")[0];
         const isExact = pathname === item.href;
         const isDashboard = item.href === "/itsm/dashboard" && pathname.startsWith("/itsm/dashboard");
-        const isTickets = item.href === "/itsm/incidents" && pathname.startsWith("/itsm/incidents") && pathname !== "/itsm/incidents/new";
         const isGenericPrefix =
           item.href !== "/overview" &&
           item.href !== "/itsm/dashboard" &&
@@ -203,7 +260,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
 
         const active = effectiveItsmRole === "AUDITOR" && itemSection
           ? pathname === itemPath && auditorSection === itemSection
-          : isExact || isDashboard || isTickets || isGenericPrefix;
+          : isExact || isDashboard || isGenericPrefix;
         return (
           <Link
             key={item.name}

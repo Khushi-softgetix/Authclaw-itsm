@@ -186,3 +186,70 @@ class OutageAlertIntegrationTest(unittest.TestCase):
             actions = conn.execute(text("SELECT action FROM audit_log_metadata WHERE tenant_id=:tenant AND action LIKE 'outage_alert_%' ORDER BY created_at"), {"tenant": tenant_id}).scalars().all()
         self.assertIn("outage_alert_draft_created", actions)
         self.assertIn("outage_alert_published", actions)
+
+    def test_audience_resolution_by_service_subscription(self):
+        tenant_id, manager_id, manager_key = self.create_fixture_tenant("audience")
+        
+        # 1. Create two services
+        service_a_id = uuid4()
+        service_b_id = uuid4()
+        with self.engine.begin() as conn:
+            conn.execute(
+                text("INSERT INTO public.itsm_services (id, tenant_id, name, slug, tier, status) VALUES (:id, :tenant, 'Service A', 'service-a', 'TIER_1', 'OPERATIONAL')"),
+                {"id": service_a_id, "tenant": tenant_id},
+            )
+            conn.execute(
+                text("INSERT INTO public.itsm_services (id, tenant_id, name, slug, tier, status) VALUES (:id, :tenant, 'Service B', 'service-b', 'TIER_1', 'OPERATIONAL')"),
+                {"id": service_b_id, "tenant": tenant_id},
+            )
+            
+        # 2. Create users and subscribe them
+        req_a_id, req_a_key = self.add_tenant_principal(tenant_id, "req-a", "REQUESTER")
+        req_b_id, req_b_key = self.add_tenant_principal(tenant_id, "req-b", "REQUESTER")
+        agent_id, agent_key = self.add_tenant_principal(tenant_id, "agent", "SERVICE_AGENT")
+        pcm_id, pcm_key = self.add_tenant_principal(tenant_id, "pcm", "PROBLEM_CHANGE_MANAGER")
+        
+        with self.engine.begin() as conn:
+            # req_a -> service_a
+            conn.execute(text("INSERT INTO public.itsm_service_subscriptions (id, tenant_id, service_id, user_id) VALUES (:id, :tenant, :service, :user)"), {"id": uuid4(), "tenant": tenant_id, "service": service_a_id, "user": req_a_id})
+            # req_b -> service_b
+            conn.execute(text("INSERT INTO public.itsm_service_subscriptions (id, tenant_id, service_id, user_id) VALUES (:id, :tenant, :service, :user)"), {"id": uuid4(), "tenant": tenant_id, "service": service_b_id, "user": req_b_id})
+            # agent -> service_a
+            conn.execute(text("INSERT INTO public.itsm_service_subscriptions (id, tenant_id, service_id, user_id) VALUES (:id, :tenant, :service, :user)"), {"id": uuid4(), "tenant": tenant_id, "service": service_a_id, "user": agent_id})
+            # pcm -> service_a
+            conn.execute(text("INSERT INTO public.itsm_service_subscriptions (id, tenant_id, service_id, user_id) VALUES (:id, :tenant, :service, :user)"), {"id": uuid4(), "tenant": tenant_id, "service": service_a_id, "user": pcm_id})
+
+        # 3. Create an alert for Service A and publish it
+        draft = self.client.post("/v1/itsm/alerts", json={"title": "Service A Outage", "draft_message": "Draft notes", "affected_service_ids": [str(service_a_id)]}, headers=self.headers(manager_key)).json()
+        
+        # Test: non-managers cannot see DRAFT
+        self.assertEqual(self.client.get(f"/v1/itsm/alerts/{draft['id']}", headers=self.headers(req_a_key)).status_code, 404)
+        
+        # Publish it
+        active = self.publish_with_verified_policy(tenant_id, manager_id, manager_key, draft["id"], "INITIAL", "We are down.")
+        
+        # 4. Verify Requester A (subscribed to Service A)
+        res_a = self.client.get(f"/v1/itsm/alerts/{draft['id']}", headers=self.headers(req_a_key))
+        self.assertEqual(res_a.status_code, 200, res_a.text)
+        data_a = res_a.json()
+        self.assertIn("publications", data_a)
+        self.assertNotIn("links", data_a)
+        self.assertNotIn("draft_message", data_a)
+        
+        # 5. Verify Requester B (not subscribed to Service A)
+        res_b = self.client.get(f"/v1/itsm/alerts/{draft['id']}", headers=self.headers(req_b_key))
+        self.assertEqual(res_b.status_code, 404, res_b.text)
+        
+        # 6. Verify Service Agent (subscribed to Service A)
+        res_agent = self.client.get(f"/v1/itsm/alerts/{draft['id']}", headers=self.headers(agent_key))
+        self.assertEqual(res_agent.status_code, 200, res_agent.text)
+        data_agent = res_agent.json()
+        self.assertIn("links", data_agent)
+        self.assertNotIn("state_history", data_agent)
+        
+        # 7. Verify Problem & Change Manager (subscribed to Service A)
+        res_pcm = self.client.get(f"/v1/itsm/alerts/{draft['id']}", headers=self.headers(pcm_key))
+        self.assertEqual(res_pcm.status_code, 200, res_pcm.text)
+        data_pcm = res_pcm.json()
+        self.assertIn("state_history", data_pcm)
+        self.assertNotIn("draft_message", data_pcm)

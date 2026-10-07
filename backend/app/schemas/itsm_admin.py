@@ -16,6 +16,7 @@ VALID_ITSM_ROLES = (
     "PROCESS_CHANGE_MANAGER",
     "PLATFORM_ADMINISTRATOR",
     "AUDITOR",
+    "CATALOG_MANAGER",
 )
 
 
@@ -249,6 +250,7 @@ class ITSMServiceCatalogItemResponse(BaseModel):
     fulfillment_group: Optional[str] = None
     estimated_delivery_hours: int = 24
     is_active: bool = True
+    intake_schema: Optional[dict] = Field(default_factory=dict)
     created_at: datetime
     updated_at: datetime
 
@@ -265,6 +267,7 @@ class ITSMServiceCatalogItemCreateRequest(BaseModel):
     fulfillment_group: Optional[str] = Field(default=None, max_length=100)
     estimated_delivery_hours: int = Field(default=24, ge=1)
     is_active: bool = Field(default=True)
+    intake_schema: Optional[dict] = Field(default_factory=dict)
 
 
 class ITSMServiceCatalogItemUpdateRequest(BaseModel):
@@ -275,6 +278,7 @@ class ITSMServiceCatalogItemUpdateRequest(BaseModel):
     fulfillment_group: Optional[str] = Field(default=None, max_length=100)
     estimated_delivery_hours: Optional[int] = Field(default=None, ge=1)
     is_active: Optional[bool] = Field(default=None)
+    intake_schema: Optional[dict] = Field(default=None)
 
 
 # --- Business Calendar Schemas ---

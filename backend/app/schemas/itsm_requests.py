@@ -85,7 +85,7 @@ class ServiceRequestCreateRequest(BaseModel):
     catalog_item_id: Optional[UUID] = Field(default=None, description="Selected service catalog item ID")
     service_id: Optional[UUID] = Field(default=None, description="Associated service ID")
     title: Optional[str] = Field(default=None, max_length=512, description="Request title (defaults to catalog item name)")
-    description: str = Field(..., min_length=1, description="Reason / business justification for request")
+    description: Optional[str] = Field(default="Standard service request", description="Reason / business justification for request")
     quantity: int = Field(default=1, ge=1, le=100, description="Quantity of requested items")
     urgency: str = Field(default="MEDIUM", description="Urgency: LOW, MEDIUM, HIGH, CRITICAL")
     impact: str = Field(default="MEDIUM", description="Impact: LOW, MEDIUM, HIGH, CRITICAL")

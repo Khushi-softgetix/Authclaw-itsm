@@ -7,15 +7,19 @@ from typing import List, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import text
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_tenant, get_tenant_db
-from app.db.models import ITSMService, ITSMServiceCatalogItem
+from app.db.models import ITSMService, ITSMServiceCatalogItem, ITSMTeam, ITSMTeamMember
 from app.schemas.itsm_services import (
     ITSMServiceDetailResponse,
     ITSMServiceSummaryResponse,
     RequesterServiceCatalogItemResponse,
+    SupportScopeCatalogItem,
+    SupportScopeResponse,
+    SupportScopeService,
+    SupportScopeTeam,
 )
 from app.services.itsm_service_service import ITSMServiceManager
 
@@ -31,6 +35,7 @@ ALLOWED_ITSM_ROLES = {
     "SERVICE_LEAD",
     "PROCESS_CHANGE_MANAGER",
     "REQUESTER",
+    "CATALOG_MANAGER",
     "ADMIN",
     "OWNER",
 }
@@ -56,7 +61,7 @@ def _verify_itsm_user(db: Session, tenant_id: UUID, user_id: UUID) -> str:
     if role not in ALLOWED_ITSM_ROLES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Unauthorized role for ITSM services access",
+            detail="Access forbidden: role not permitted for ITSM services",
         )
     return role
 
@@ -441,6 +446,7 @@ def list_requester_service_catalog(
                 approval_required=item.approval_required,
                 fulfillment_type=ful_type,
                 fulfillment_group=item.fulfillment_group,
+                intake_schema=item.intake_schema or {},
                 is_active=item.is_active,
                 created_at=item.created_at,
                 updated_at=item.updated_at,
@@ -448,6 +454,225 @@ def list_requester_service_catalog(
         )
 
     return items
+
+
+@catalog_router.get(
+    "/{item_id}",
+    response_model=RequesterServiceCatalogItemResponse,
+    summary="Get single active service catalog item for requesters",
+    description="Retrieve single database-backed service catalog item with intake schema for requesters.",
+)
+def get_requester_service_catalog_item(
+    item_id: str,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    try:
+        item_uuid = UUID(item_id)
+        query_filter = (ITSMServiceCatalogItem.id == item_uuid)
+    except ValueError:
+        normalized = item_id.replace("-", " ").strip()
+        slugified = item_id.replace(" ", "-").strip()
+        query_filter = (
+            (ITSMServiceCatalogItem.slug.ilike(item_id))
+            | (ITSMServiceCatalogItem.slug.ilike(slugified))
+            | (ITSMServiceCatalogItem.name.ilike(item_id))
+            | (ITSMServiceCatalogItem.name.ilike(normalized))
+        )
+
+    record = (
+        db.query(ITSMServiceCatalogItem, ITSMService.name.label("service_name"))
+        .join(
+            ITSMService,
+            (ITSMServiceCatalogItem.service_id == ITSMService.id)
+            & (ITSMService.tenant_id == tenant_id),
+        )
+        .filter(
+            ITSMServiceCatalogItem.tenant_id == tenant_id,
+            ITSMServiceCatalogItem.is_active == True,
+            query_filter,
+        )
+        .first()
+    )
+
+    if not record:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Service catalog item '{item_id}' not found or inactive",
+        )
+
+    item, service_name = record
+    cat_label = _derive_category_label(service_name, item.name)
+    ful_type = _derive_fulfillment_type(item.approval_required, item.fulfillment_group)
+    time_label = _derive_time_label(item.estimated_delivery_hours)
+
+    return RequesterServiceCatalogItemResponse(
+        id=item.id,
+        tenant_id=item.tenant_id,
+        service_id=item.service_id,
+        service_name=service_name,
+        category_label=cat_label,
+        name=item.name,
+        slug=item.slug,
+        description=item.description,
+        estimated_delivery_hours=item.estimated_delivery_hours,
+        estimated_time_label=time_label,
+        approval_required=item.approval_required,
+        fulfillment_type=ful_type,
+        fulfillment_group=item.fulfillment_group,
+        intake_schema=item.intake_schema or {},
+        is_active=item.is_active,
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
+
+
+@router.get(
+    "/my-scope",
+    response_model=SupportScopeResponse,
+    summary="Get authenticated service agent support scope",
+    description="Retrieve assigned teams, supported services, and service catalog fulfillment responsibilities for the current user.",
+)
+def get_my_support_scope(
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    user_id_val = getattr(request.state, "user_id", None)
+    if not user_id_val:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        )
+
+    tenant_id = UUID(tenant_id_str)
+    user_id = UUID(str(user_id_val))
+    _verify_itsm_user(db, tenant_id, user_id)
+
+    # 1. Assigned Teams
+    teams_records = (
+        db.query(ITSMTeam)
+        .join(
+            ITSMTeamMember,
+            (ITSMTeamMember.team_id == ITSMTeam.id)
+            & (ITSMTeamMember.tenant_id == tenant_id),
+        )
+        .filter(
+            ITSMTeam.tenant_id == tenant_id,
+            ITSMTeamMember.user_id == user_id,
+            ITSMTeam.is_active == True,
+        )
+        .order_by(ITSMTeam.name.asc())
+        .all()
+    )
+
+    scope_teams = [
+        SupportScopeTeam(
+            id=t.id,
+            name=t.name,
+            description=t.description,
+        )
+        for t in teams_records
+    ]
+
+    team_variants: set[str] = set()
+    for t in teams_records:
+        if not t.name:
+            continue
+        clean_name = t.name.strip().lower()
+        team_variants.add(clean_name)
+        for suffix in (" team", " group", " dept", " department"):
+            if clean_name.endswith(suffix):
+                team_variants.add(clean_name[:-len(suffix)].strip())
+            else:
+                team_variants.add(f"{clean_name}{suffix}")
+
+    # 2. Supported Services (linked via escalation_team or owned by user)
+    service_filters = [ITSMService.owner_user_id == user_id]
+    if team_variants:
+        service_filters.append(
+            func.lower(func.trim(ITSMService.escalation_team)).in_(list(team_variants))
+        )
+
+    services_records = (
+        db.query(ITSMService)
+        .filter(
+            ITSMService.tenant_id == tenant_id,
+            or_(*service_filters),
+        )
+        .order_by(ITSMService.name.asc())
+        .all()
+    )
+
+    scope_services = [
+        SupportScopeService(
+            id=s.id,
+            name=s.name,
+            slug=s.slug,
+            description=s.description,
+            tier=s.tier,
+            status=s.status,
+            escalation_team=s.escalation_team,
+        )
+        for s in services_records
+    ]
+
+    supported_service_ids = [s.id for s in services_records]
+
+    # 3. Service Catalog Responsibilities (linked via fulfillment_group or supported service)
+    catalog_filters = []
+    if team_variants:
+        catalog_filters.append(
+            func.lower(func.trim(ITSMServiceCatalogItem.fulfillment_group)).in_(list(team_variants))
+        )
+    if supported_service_ids:
+        catalog_filters.append(
+            ITSMServiceCatalogItem.service_id.in_(supported_service_ids)
+        )
+
+    scope_catalog_items: List[SupportScopeCatalogItem] = []
+    if catalog_filters:
+        catalog_records = (
+            db.query(ITSMServiceCatalogItem, ITSMService.name.label("service_name"))
+            .outerjoin(
+                ITSMService,
+                (ITSMService.id == ITSMServiceCatalogItem.service_id)
+                & (ITSMService.tenant_id == tenant_id),
+            )
+            .filter(
+                ITSMServiceCatalogItem.tenant_id == tenant_id,
+                ITSMServiceCatalogItem.is_active == True,
+                or_(*catalog_filters),
+            )
+            .order_by(ITSMServiceCatalogItem.name.asc())
+            .all()
+        )
+
+        seen_catalog_ids = set()
+        for item, s_name in catalog_records:
+            if item.id in seen_catalog_ids:
+                continue
+            seen_catalog_ids.add(item.id)
+            scope_catalog_items.append(
+                SupportScopeCatalogItem(
+                    id=item.id,
+                    name=item.name,
+                    slug=item.slug,
+                    description=item.description,
+                    service_id=item.service_id,
+                    service_name=s_name,
+                    fulfillment_group=item.fulfillment_group,
+                    estimated_delivery_hours=item.estimated_delivery_hours,
+                )
+            )
+
+    return SupportScopeResponse(
+        teams=scope_teams,
+        services=scope_services,
+        catalog_items=scope_catalog_items,
+    )
 
 
 @router.get(

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import List, Optional
+from typing import Any, List, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -68,6 +68,7 @@ class RequesterServiceCatalogItemResponse(BaseModel):
     approval_required: bool
     fulfillment_type: str
     fulfillment_group: Optional[str] = None
+    intake_schema: Optional[dict[str, Any]] = Field(default_factory=dict)
     is_active: bool
     created_at: datetime
     updated_at: datetime
@@ -91,5 +92,50 @@ class ITSMServiceDetailResponse(BaseModel):
     configuration_items: List[ITSMServiceCIData] = Field(default_factory=list)
     recent_incidents: List[ITSMServiceTicketSummary] = Field(default_factory=list)
     recent_requests: List[ITSMServiceTicketSummary] = Field(default_factory=list)
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SupportScopeTeam(BaseModel):
+    """Assigned ITSM operational team representation."""
+    id: UUID
+    name: str
+    description: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SupportScopeService(BaseModel):
+    """Supported business/technical service representation."""
+    id: UUID
+    name: str
+    slug: str
+    description: Optional[str] = None
+    tier: str
+    status: str
+    escalation_team: Optional[str] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SupportScopeCatalogItem(BaseModel):
+    """Service catalog item responsibility representation."""
+    id: UUID
+    name: str
+    slug: str
+    description: Optional[str] = None
+    service_id: UUID
+    service_name: Optional[str] = None
+    fulfillment_group: Optional[str] = None
+    estimated_delivery_hours: Optional[int] = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SupportScopeResponse(BaseModel):
+    """Aggregated support scope for the authenticated Service Agent."""
+    teams: List[SupportScopeTeam] = Field(default_factory=list)
+    services: List[SupportScopeService] = Field(default_factory=list)
+    catalog_items: List[SupportScopeCatalogItem] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)

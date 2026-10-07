@@ -213,6 +213,10 @@ export default function ServicesPage() {
 
   useEffect(() => {
     if (!sessionLoading) {
+      if (userRole === "CATALOG_MANAGER") {
+        window.location.replace("/itsm/catalog-manager/studio");
+        return;
+      }
       if (userRole === "REQUESTER") {
         fetchCatalogItems();
       } else {

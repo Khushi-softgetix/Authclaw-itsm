@@ -163,6 +163,95 @@ class RequestService:
             logger.warning("Audit event savepoint failed: %s", exc)
 
     @classmethod
+    def _validate_dynamic_form_data(
+        cls,
+        intake_schema: dict[str, Any],
+        form_data: dict[str, Any],
+    ) -> None:
+        """Validate submitted requester form data against catalog item intake_schema (PLT-006)."""
+        if not intake_schema or not isinstance(intake_schema, dict):
+            return
+
+        questions = intake_schema.get("questions")
+        if not questions or not isinstance(questions, list):
+            return
+
+        for q in questions:
+            if not isinstance(q, dict):
+                continue
+
+            q_id = q.get("id") or q.get("field_key") or q.get("key")
+            if not q_id:
+                continue
+
+            label = q.get("label") or q_id
+            q_type = (q.get("type") or "text").lower()
+            is_required = bool(q.get("required"))
+            raw_options = q.get("options") or []
+            options = [str(o).strip() for o in raw_options if isinstance(o, str) and o.strip()]
+
+            val = form_data.get(q_id)
+
+            # Check required
+            is_empty = (
+                val is None
+                or (isinstance(val, str) and not val.strip())
+                or (isinstance(val, list) and len(val) == 0)
+            )
+            if is_empty:
+                if is_required:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"{label} is required.",
+                    )
+                continue
+
+            # Validate type-specific constraints
+            if q_type == "number":
+                try:
+                    float(val)
+                except (ValueError, TypeError):
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"{label} must be a valid number.",
+                    )
+
+            elif q_type in ("dropdown", "radio"):
+                val_str = str(val).strip()
+                matched = any(val_str.lower() == opt.lower() for opt in options) if options else True
+                if options and not matched:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Invalid option '{val}' for {label}. Supported options: {', '.join(options)}",
+                    )
+
+            elif q_type == "multiselect":
+                if isinstance(val, str):
+                    val_items = [val.strip()]
+                elif isinstance(val, list):
+                    val_items = [str(x).strip() for x in val]
+                else:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"{label} must be a list of options.",
+                    )
+
+                if is_required and len(val_items) == 0:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"{label} is required.",
+                    )
+
+                if options:
+                    for item in val_items:
+                        matched = any(item.lower() == opt.lower() for opt in options)
+                        if not matched:
+                            raise HTTPException(
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"Invalid option '{item}' for {label}. Supported options: {', '.join(options)}",
+                            )
+
+    @classmethod
     def create_request(
         cls,
         db: Session,
@@ -200,6 +289,26 @@ class RequestService:
                 )
             service_id = catalog_item.service_id
             fulfillment_group = catalog_item.fulfillment_group
+
+            # PLT-006: Server-side validation of form_data against catalog intake_schema
+            if catalog_item.intake_schema:
+                cls._validate_dynamic_form_data(catalog_item.intake_schema, payload.form_data or {})
+
+            # Sync dynamic values if submitted via form_data
+            if payload.form_data:
+                if "quantity" in payload.form_data:
+                    try:
+                        q_val = int(payload.form_data["quantity"])
+                        if q_val > 0:
+                            payload.quantity = q_val
+                    except (ValueError, TypeError):
+                        pass
+                for j_key in ("business_justification", "justification", "reason"):
+                    if j_key in payload.form_data and payload.form_data[j_key]:
+                        j_txt = str(payload.form_data[j_key]).strip()
+                        if j_txt:
+                            payload.description = j_txt
+                            break
 
         service = catalog_item.service if (catalog_item and catalog_item.service) else (
             db.query(ITSMService).filter(ITSMService.id == service_id, ITSMService.tenant_id == tenant_id).first() if service_id else None

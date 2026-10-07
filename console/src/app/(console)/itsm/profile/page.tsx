@@ -7,11 +7,15 @@ import {
   CheckCircle2,
   Clock,
   Key,
+  Layers,
   LogOut,
+  Server,
   ShieldCheck,
   User,
+  Users,
 } from "lucide-react";
 import { formatDateTime } from "@/lib/itsm-format";
+import type { SupportScopeResponse } from "@/lib/itsm-types";
 
 interface SessionInfo {
   userId?: string;
@@ -39,6 +43,8 @@ function getRoleProfileTitle(role?: string): string {
     case "AUDITOR":
     case "ITSM_AUDITOR":
       return "Auditor Profile";
+    case "CATALOG_MANAGER":
+      return "Catalog Manager Profile";
     default:
       return "ITSM Profile";
   }
@@ -59,6 +65,8 @@ function getRoleSubtitle(role?: string): string {
     case "AUDITOR":
     case "ITSM_AUDITOR":
       return "Your authenticated compliance auditor session and audit trail inspection scope.";
+    case "CATALOG_MANAGER":
+      return "Your authenticated catalog management session for managing Service Catalog offerings and request intake forms.";
     default:
       return "Your authenticated AuthClaw user session and workspace entitlement details.";
   }
@@ -71,10 +79,29 @@ function getProductEntitlement(role?: string): string {
   return "AuthClaw ITSM";
 }
 
-function getAvatarInitials(email?: string, role?: string): string {
-  if (email && email.length >= 2) {
-    return email.slice(0, 2).toUpperCase();
+function getRoleBadgeLabel(role?: string): string {
+  switch (role?.toUpperCase()) {
+    case "REQUESTER":
+      return "Requester";
+    case "SERVICE_AGENT":
+      return "Service Agent";
+    case "INCIDENT_MANAGER":
+      return "Incident Manager";
+    case "PROCESS_CHANGE_MANAGER":
+      return "Problem and Change Manager";
+    case "PLATFORM_ADMINISTRATOR":
+      return "Platform Administrator";
+    case "AUDITOR":
+    case "ITSM_AUDITOR":
+      return "Auditor";
+    case "CATALOG_MANAGER":
+      return "Catalog Manager";
+    default:
+      return role || "REQUESTER";
   }
+}
+
+function getAvatarInitials(email?: string, role?: string): string {
   switch (role?.toUpperCase()) {
     case "SERVICE_AGENT":
       return "AG";
@@ -87,10 +114,15 @@ function getAvatarInitials(email?: string, role?: string): string {
     case "AUDITOR":
     case "ITSM_AUDITOR":
       return "AU";
+    case "CATALOG_MANAGER":
+      return "CM";
     case "REQUESTER":
-    default:
       return "RQ";
   }
+  if (email && email.length >= 2) {
+    return email.slice(0, 2).toUpperCase();
+  }
+  return "RQ";
 }
 
 export default function ITSMProfilePage() {
@@ -98,6 +130,8 @@ export default function ITSMProfilePage() {
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [loggingOut, setLoggingOut] = useState<boolean>(false);
+  const [supportScope, setSupportScope] = useState<SupportScopeResponse | null>(null);
+  const [scopeLoading, setScopeLoading] = useState<boolean>(false);
 
   useEffect(() => {
     async function loadSession() {
@@ -125,6 +159,27 @@ export default function ITSMProfilePage() {
     }
     loadSession();
   }, []);
+
+  useEffect(() => {
+    if (session?.itsmRole?.toUpperCase() === "SERVICE_AGENT") {
+      setScopeLoading(true);
+      fetch("/api/itsm/services/my-scope")
+        .then((res) => {
+          if (!res.ok) throw new Error("Failed to load support scope");
+          return res.json();
+        })
+        .then((data: SupportScopeResponse) => {
+          setSupportScope(data);
+        })
+        .catch((err) => {
+          console.error("Support scope fetch error:", err);
+          setSupportScope({ teams: [], services: [], catalog_items: [] });
+        })
+        .finally(() => {
+          setScopeLoading(false);
+        });
+    }
+  }, [session?.itsmRole]);
 
   const handleLogout = async () => {
     try {
@@ -194,7 +249,7 @@ export default function ITSMProfilePage() {
               </span>
               <div className="mt-1 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#F1ECFE] text-[#6D28D9] text-[11px] font-bold border border-[#A78BFA]">
                 <ShieldCheck className="w-3.5 h-3.5" />
-                <span>{session?.itsmRole || "REQUESTER"}</span>
+                <span id="profile-role-badge">{getRoleBadgeLabel(role)}</span>
               </div>
             </div>
 
@@ -246,6 +301,111 @@ export default function ITSMProfilePage() {
           </div>
         </div>
       </div>
+
+      {/* Role-Specific Support Scope (SERVICE_AGENT only) */}
+      {role?.toUpperCase() === "SERVICE_AGENT" && (
+        <div
+          id="my-support-scope-card"
+          className="bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm space-y-5"
+        >
+          <div className="flex items-center justify-between border-b border-[#E6E9F0] pb-3 text-[#0E1726]">
+            <div className="flex items-center gap-2">
+              <Layers className="w-4 h-4 text-[#6D28D9]" />
+              <h2 className="text-sm font-bold">My Support Scope</h2>
+            </div>
+            <span className="text-[10px] font-bold text-[#6D28D9] bg-[#F1ECFE] border border-[#A78BFA] px-2.5 py-0.5 rounded-full">
+              Read-Only
+            </span>
+          </div>
+
+          <div className="space-y-4">
+            {/* A. Assigned Team(s) */}
+            <div className="space-y-1.5">
+              <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
+                Assigned Team(s)
+              </span>
+              {scopeLoading ? (
+                <p className="text-xs text-[#6B7488]">Loading assigned teams...</p>
+              ) : !supportScope || supportScope.teams.length === 0 ? (
+                <p className="text-xs text-[#6B7488] italic">No team assigned</p>
+              ) : (
+                <div className="flex flex-wrap gap-2 pt-0.5">
+                  {supportScope.teams.map((team) => (
+                    <span
+                      key={team.id}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 text-[#0E1726] text-xs font-semibold border border-[#E6E9F0] shadow-sm"
+                      title={team.description || undefined}
+                    >
+                      <Users className="w-3.5 h-3.5 text-[#6D28D9]" />
+                      <span>{team.name}</span>
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* B. Supported Services */}
+            <div className="space-y-1.5">
+              <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
+                Supported Services
+              </span>
+              {scopeLoading ? (
+                <p className="text-xs text-[#6B7488]">Loading supported services...</p>
+              ) : !supportScope || supportScope.services.length === 0 ? (
+                <p className="text-xs text-[#6B7488] italic">No supported services assigned</p>
+              ) : (
+                <div className="flex flex-wrap gap-2 pt-0.5">
+                  {supportScope.services.map((svc) => (
+                    <span
+                      key={svc.id}
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-50/60 text-[#3B1261] text-xs font-medium border border-purple-100 shadow-sm"
+                      title={svc.description || undefined}
+                    >
+                      <Server className="w-3.5 h-3.5 text-[#6D28D9]" />
+                      <span className="font-semibold text-[#0E1726]">{svc.name}</span>
+                      {svc.tier && (
+                        <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-white text-[#6D28D9] border border-purple-200">
+                          {svc.tier.replace(/_/g, " ")}
+                        </span>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* C. Service Catalog Responsibilities */}
+            <div className="space-y-1.5">
+              <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
+                Service Catalog Responsibilities
+              </span>
+              {scopeLoading ? (
+                <p className="text-xs text-[#6B7488]">Loading service catalog responsibilities...</p>
+              ) : !supportScope || supportScope.catalog_items.length === 0 ? (
+                <p className="text-xs text-[#6B7488] italic">No service catalog responsibilities assigned</p>
+              ) : (
+                <div className="flex flex-wrap gap-2 pt-0.5">
+                  {supportScope.catalog_items.map((item) => (
+                    <span
+                      key={item.id}
+                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-50/60 text-emerald-950 text-xs font-medium border border-emerald-200/70 shadow-sm"
+                      title={item.description || undefined}
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                      <span className="font-semibold text-[#0E1726]">{item.name}</span>
+                      {item.service_name && (
+                        <span className="text-[10px] text-emerald-700 bg-white/80 px-1.5 py-0.5 rounded border border-emerald-200">
+                          {item.service_name}
+                        </span>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Security & Logout Banner */}
       <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-[20px] border border-purple-100 p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">

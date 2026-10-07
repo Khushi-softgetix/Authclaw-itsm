@@ -731,3 +731,36 @@ export interface MacroApplyResult {
   message: string;
 }
 
+export interface SupportScopeTeam {
+  id: string;
+  name: string;
+  description?: string | null;
+}
+
+export interface SupportScopeService {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string | null;
+  tier: string;
+  status: string;
+  escalation_team?: string | null;
+}
+
+export interface SupportScopeCatalogItem {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string | null;
+  service_id: string;
+  service_name?: string | null;
+  fulfillment_group?: string | null;
+  estimated_delivery_hours?: number | null;
+}
+
+export interface SupportScopeResponse {
+  teams: SupportScopeTeam[];
+  services: SupportScopeService[];
+  catalog_items: SupportScopeCatalogItem[];
+}
+

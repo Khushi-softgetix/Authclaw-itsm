@@ -61,6 +61,11 @@ const ITSM_ROLES = [
     label: "Auditor",
     desc: "Read-only governance and audit review.",
   },
+  {
+    value: "CATALOG_MANAGER",
+    label: "Catalog Manager",
+    desc: "Manage Service Catalog offerings and intake forms.",
+  },
 ];
 
 export default function UserAccessDetailPage() {

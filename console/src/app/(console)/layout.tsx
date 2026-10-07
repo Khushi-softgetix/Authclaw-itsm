@@ -36,7 +36,7 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
   const tenantName = "Current Tenant";
   const userRole = principal.role;
   const platformRole = principal.platform_role || "NONE";
-  const itsmRole = principal.itsm_role || null;
+  const itsmRole = (principal.itsm_role || "").toUpperCase();
   const productAccess = principal.product_access || { governance: true, itsm: false };
 
   if (isItsmPath && !productAccess.itsm) {
@@ -58,6 +58,15 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
       !currentPath.startsWith("/itsm/profile/")
     ) {
       redirect("/itsm/dashboard/auditor");
+    }
+    if (
+      currentPath &&
+      currentPath.startsWith("/itsm/catalog-manager") &&
+      itsmRole !== "CATALOG_MANAGER" &&
+      itsmRole !== "PLATFORM_ADMINISTRATOR" &&
+      platformRole !== "SUPER_ADMIN"
+    ) {
+      redirect("/itsm/dashboard");
     }
   }
 

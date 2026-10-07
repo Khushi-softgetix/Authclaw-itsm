@@ -10,6 +10,7 @@ RUN npm ci
 FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
+ARG CACHE_TAG=prompt5
 COPY . .
 ARG NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
 ARG NEXT_PUBLIC_GATEWAY_URL=http://localhost:8080

@@ -36,6 +36,7 @@ ALLOWED_ITSM_ROLES = {
     "ADMIN",
     "OWNER",
     "PROCESS_CHANGE_MANAGER",
+    "CATALOG_MANAGER",
 }
 
 GOVERNANCE_ALLOWED_ROLES = {
@@ -66,7 +67,7 @@ def _verify_itsm_user(db: Session, tenant_id: UUID, user_id: UUID) -> str:
     if role not in ALLOWED_ITSM_ROLES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Unauthorized role for knowledge base access",
+            detail="Access forbidden: role not permitted for knowledge base",
         )
     return role
 

@@ -37,6 +37,7 @@ function formatFieldLabel(key: string): string {
 function formatFieldValue(val: unknown): string {
   if (val === null || val === undefined) return "—";
   if (typeof val === "boolean") return val ? "Yes" : "No";
+  if (Array.isArray(val)) return val.length > 0 ? val.join(", ") : "—";
   if (typeof val === "object") return JSON.stringify(val);
   return String(val);
 }
@@ -199,8 +200,36 @@ export default function ServiceRequestDetailPage() {
 
   const slaConfig = request.sla_status ? itsmSlaConfig(request.sla_status) : null;
   const isTerminal = request.status === "CLOSED" || request.status === "CANCELLED";
-  const formData = request.request_detail?.submitted_form_data || {};
-  const formEntries = Object.entries(formData);
+  const formData = (request.request_detail?.submitted_form_data || {}) as Record<string, unknown>;
+  const rawQuestions = (request.request_detail?.intake_schema_snapshot as { questions?: Array<{ id?: string; key?: string; label?: string }> } | undefined)?.questions;
+  const snapshotQuestions = Array.isArray(rawQuestions) ? rawQuestions : [];
+
+  const displayEntries: Array<{ key: string; label: string; value: unknown }> = [];
+  const renderedKeys = new Set<string>();
+
+  if (snapshotQuestions.length > 0) {
+    for (const q of snapshotQuestions) {
+      const qKey = q?.id || (q as any)?.key;
+      if (q && qKey && qKey in formData) {
+        displayEntries.push({
+          key: qKey,
+          label: q.label || formatFieldLabel(qKey),
+          value: formData[qKey],
+        });
+        renderedKeys.add(qKey);
+      }
+    }
+  }
+
+  for (const [key, val] of Object.entries(formData)) {
+    if (!renderedKeys.has(key)) {
+      displayEntries.push({
+        key,
+        label: formatFieldLabel(key),
+        value: val,
+      });
+    }
+  }
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto" id="service-agent-request-detail">
@@ -208,13 +237,23 @@ export default function ServiceRequestDetailPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div className="space-y-1.5">
           <div>
-            <Link
-              href={userRole === "REQUESTER" ? "/itsm/incidents" : "/itsm/requests"}
-              id="back-to-requests-link"
-              className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#6D28D9] hover:text-[#5B21B6] transition"
-            >
-              <ArrowLeft className="w-3.5 h-3.5" /> {userRole === "REQUESTER" ? "Back to My Tickets" : "Back to Requests"}
-            </Link>
+            {userRole === "REQUESTER" ? (
+              <Link
+                href="/itsm/incidents"
+                id="back-to-requests-link"
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#6D28D9] hover:text-[#5B21B6] transition"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" /> Back to My Tickets
+              </Link>
+            ) : (
+              <Link
+                href="/itsm/requests"
+                id="back-to-requests-link"
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#6D28D9] hover:text-[#5B21B6] transition"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" /> Back to Requests
+              </Link>
+            )}
           </div>
           <div className="flex items-center gap-2.5 flex-wrap pt-0.5">
             <span className="font-mono text-xs font-bold px-2.5 py-0.5 rounded bg-purple-50 text-[#6D28D9] border border-purple-200">
@@ -336,15 +375,15 @@ export default function ServiceRequestDetailPage() {
               )}
             </div>
 
-            {formEntries.length > 0 ? (
+            {displayEntries.length > 0 ? (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
-                {formEntries.map(([key, val]) => (
-                  <div key={key} className="bg-[#F9FAFB] rounded-xl p-3 border border-[#E6E9F0]/60 space-y-1">
+                {displayEntries.map((item) => (
+                  <div key={item.key} id={`request-field-${item.key}`} className="bg-[#F9FAFB] rounded-xl p-3 border border-[#E6E9F0]/60 space-y-1">
                     <span className="text-[10px] font-bold text-[#8C95A8] uppercase tracking-wider">
-                      {formatFieldLabel(key)}
+                      {item.label}
                     </span>
                     <p className="text-xs font-semibold text-[#0E1726] break-words">
-                      {formatFieldValue(val)}
+                      {formatFieldValue(item.value)}
                     </p>
                   </div>
                 ))}

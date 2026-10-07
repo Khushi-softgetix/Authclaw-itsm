@@ -64,6 +64,7 @@ const ITSM_ROLE_LABELS: Record<string, string> = {
   PROCESS_CHANGE_MANAGER: "Problem and Change Manager",
   PLATFORM_ADMINISTRATOR: "Platform Administrator",
   AUDITOR: "Auditor",
+  CATALOG_MANAGER: "Catalog Manager",
 };
 
 const readRoles = ["owner", "admin", "developer", "operator", "viewer"];
@@ -117,6 +118,12 @@ const problemChangeNavigation: NavItem[] = [
   { name: "Knowledge", href: "/itsm/knowledge", icon: BookOpen, roles: readRoles },
 ];
 
+const catalogManagerNavigation: NavItem[] = [
+  { name: "Dashboard", href: "/itsm/dashboard", icon: LayoutDashboard, roles: readRoles },
+  { name: "Catalog Items", href: "/itsm/catalog-manager/studio", icon: Layers, roles: readRoles },
+  { name: "Form Builder", href: "/itsm/catalog-manager/form-builder", icon: FileCheck, roles: readRoles },
+];
+
 export default function ConsoleShell({ children, userEmail, tenantId, tenantName, userRole, platformRole = "NONE", itsmRole }: ConsoleShellProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -151,6 +158,8 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
       ? auditorNavigation
       : effectiveItsmRole === "PROCESS_CHANGE_MANAGER"
       ? problemChangeNavigation
+      : effectiveItsmRole === "CATALOG_MANAGER"
+      ? catalogManagerNavigation
       : itsmNavigation
     : navigation;
   const allowedNavigation = activeNavigationList.filter((item) => item.roles.includes(normalizedRole));
@@ -184,6 +193,12 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
       ? "Notifications"
       : pathname === "/itsm/profile"
       ? "Profile"
+      : pathname === "/itsm/catalog-manager/form-builder"
+      ? "Form Builder"
+      : pathname.startsWith("/itsm/catalog-manager/studio")
+      ? "Catalog Studio"
+      : (effectiveItsmRole === "CATALOG_MANAGER" && (pathname === "/itsm/services" || pathname.startsWith("/itsm/services/")))
+      ? "Catalog Items"
       : itsmNavigation.find((item) => pathname === item.href || pathname.startsWith(item.href))?.name || "ITSM"
     : navigation.find((item) => pathname === item.href)?.name || "Overview";
 

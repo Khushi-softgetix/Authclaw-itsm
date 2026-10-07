@@ -88,6 +88,9 @@ export default function ItsmLoginPage() {
         case "AUDITOR":
           defaultRoute = "/itsm/dashboard/auditor";
           break;
+        case "CATALOG_MANAGER":
+          defaultRoute = "/itsm/dashboard/catalog-manager";
+          break;
       }
       const returnTo = explicitReturnTo || defaultRoute;
       const safeRedirect = returnTo.startsWith("/itsm") && !returnTo.startsWith("//") ? returnTo : defaultRoute;

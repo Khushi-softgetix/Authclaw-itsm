@@ -490,6 +490,7 @@ export default function AdminPortalUsersPage() {
               <option value="PROCESS_CHANGE_MANAGER">Process & Change Manager</option>
               <option value="PLATFORM_ADMINISTRATOR">Platform Administrator</option>
               <option value="AUDITOR">Auditor</option>
+              <option value="CATALOG_MANAGER">Catalog Manager</option>
             </select>
           </div>
         </div>
@@ -934,6 +935,7 @@ export default function AdminPortalUsersPage() {
                     <option value="PROCESS_CHANGE_MANAGER">Process & Change Manager (Change enablement & CAB)</option>
                     <option value="PLATFORM_ADMINISTRATOR">Platform Administrator (Full ITSM administration)</option>
                     <option value="AUDITOR">Auditor (Read-only compliance & audit logging)</option>
+                    <option value="CATALOG_MANAGER">Catalog Manager (Service catalog & intake forms)</option>
                   </select>
                 </div>
 
@@ -1062,6 +1064,7 @@ export default function AdminPortalUsersPage() {
                     <option value="PROCESS_CHANGE_MANAGER">Process & Change Manager (Change enablement & CAB)</option>
                     <option value="PLATFORM_ADMINISTRATOR">Platform Administrator (Full ITSM administration)</option>
                     <option value="AUDITOR">Auditor (Read-only compliance & audit logging)</option>
+                    <option value="CATALOG_MANAGER">Catalog Manager (Service catalog & intake forms)</option>
                   </select>
                   <p className="text-[11px] text-[#6B7488]">
                     Defines permissions and initial workspace experience.

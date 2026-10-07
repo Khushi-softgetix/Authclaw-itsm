@@ -25,6 +25,7 @@ test("ITSM Profile page is role-aware with dynamic titles and entitlement labels
   assert.ok(source.includes('"Problem and Change Manager Profile"'), "Must support 'Problem and Change Manager Profile'");
   assert.ok(source.includes('"Platform Administrator Profile"'), "Must support 'Platform Administrator Profile'");
   assert.ok(source.includes('"Auditor Profile"'), "Must support 'Auditor Profile'");
+  assert.ok(source.includes('"Catalog Manager Profile"'), "Must support 'Catalog Manager Profile'");
 
   // Verify role key checks
   assert.ok(source.includes('"REQUESTER"'), "Must handle REQUESTER role");
@@ -34,6 +35,7 @@ test("ITSM Profile page is role-aware with dynamic titles and entitlement labels
   assert.ok(source.includes('"PLATFORM_ADMINISTRATOR"'), "Must handle PLATFORM_ADMINISTRATOR role");
   assert.ok(source.includes('"AUDITOR"'), "Must handle AUDITOR role");
   assert.ok(source.includes('"ITSM_AUDITOR"'), "Must handle ITSM_AUDITOR role");
+  assert.ok(source.includes('"CATALOG_MANAGER"'), "Must handle CATALOG_MANAGER role");
 
   // Verify Product Entitlement is neutral for non-requesters
   assert.ok(source.includes('"AuthClaw ITSM"'), "Must display neutral 'AuthClaw ITSM' for non-requesters");

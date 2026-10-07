@@ -32,6 +32,7 @@ ALLOWED_ITSM_ROLES = {
     "OWNER",
     "PROCESS_CHANGE_MANAGER",
     "AUDITOR",
+    "CATALOG_MANAGER",
 }
 
 
@@ -55,7 +56,7 @@ def _verify_itsm_user(db: Session, tenant_id: UUID, user_id: UUID) -> str:
     if role not in ALLOWED_ITSM_ROLES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Unauthorized role for ITSM attachments operations",
+            detail="Access forbidden: role not permitted for ITSM attachments operations",
         )
     return role
 

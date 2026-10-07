@@ -284,10 +284,10 @@ export async function proxyBackendWithSessionCheck(path: string, options: Reques
 
 export function handleApiError(error: unknown) {
   const message = getErrorMessage(error);
-  const isUnauthorized = message.includes("Unauthorized");
-  const status = getErrorStatus(error, isUnauthorized ? 401 : 500);
+  const isAuthSessionError = message.startsWith("Unauthorized:") || (error instanceof BackendRequestError && error.status === 401);
+  const status = getErrorStatus(error, isAuthSessionError ? 401 : 500);
   const response = NextResponse.json({ error: status >= 500 ? "Request failed" : message }, { status });
-  if (isUnauthorized) {
+  if (status === 401 && isAuthSessionError) {
     response.cookies.delete("authclaw_session");
   }
   return response;

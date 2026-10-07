@@ -26,6 +26,24 @@ import {
   Zap,
 } from "lucide-react";
 
+interface CatalogQuestion {
+  id: string;
+  label: string;
+  type: "text" | "textarea" | "number" | "dropdown" | "radio" | "multiselect" | string;
+  required?: boolean;
+  description?: string;
+  placeholder?: string;
+  options?: string[];
+  default_value?: any;
+}
+
+interface CatalogIntakeSchema {
+  version?: number;
+  questions?: CatalogQuestion[];
+  properties?: Record<string, { type?: string; title?: string; description?: string; required?: boolean }>;
+  required?: string[];
+}
+
 interface CatalogItem {
   id: string;
   service_id: string;
@@ -39,10 +57,7 @@ interface CatalogItem {
   approval_required?: boolean;
   fulfillment_type?: string;
   fulfillment_group?: string;
-  intake_schema?: {
-    properties?: Record<string, { type?: string; title?: string; description?: string; required?: boolean }>;
-    required?: string[];
-  };
+  intake_schema?: CatalogIntakeSchema;
 }
 
 interface CreatedRequestResult {
@@ -102,16 +117,37 @@ function RequestServiceContent() {
 
       // Pre-select item from query param if available, otherwise first item
       if (preselectedItemId) {
+        const normalizedPre = preselectedItemId.trim().toLowerCase();
         const match = items.find(
           (it) =>
             it.id === preselectedItemId ||
-            it.slug === preselectedItemId ||
-            it.name.toLowerCase() === preselectedItemId.toLowerCase()
+            it.slug?.toLowerCase() === normalizedPre ||
+            it.name.toLowerCase() === normalizedPre ||
+            it.name.toLowerCase().replace(/\s+/g, "-") === normalizedPre
         );
         if (match) {
           setSelectedItemId(match.id);
-        } else if (items.length > 0) {
-          setSelectedItemId(items[0].id);
+        } else {
+          // If not in the list, attempt direct fetch by ID or slug
+          try {
+            const singleRes = await fetch(`/api/itsm/service-catalog/${encodeURIComponent(preselectedItemId)}`, { cache: "no-store" });
+            if (singleRes.ok) {
+              const singleItem = await singleRes.json();
+              if (singleItem && singleItem.id) {
+                setCatalogItems((prev) => {
+                  const exists = prev.some((p) => p.id === singleItem.id);
+                  return exists ? prev : [singleItem, ...prev];
+                });
+                setSelectedItemId(singleItem.id);
+                return;
+              }
+            }
+          } catch {
+            // Ignore and fall back to first item
+          }
+          if (items.length > 0) {
+            setSelectedItemId(items[0].id);
+          }
         }
       } else if (items.length > 0) {
         setSelectedItemId(items[0].id);
@@ -127,7 +163,75 @@ function RequestServiceContent() {
     loadCatalog();
   }, [loadCatalog]);
 
+  // Fetch fresh catalog item detail whenever selected item changes to guarantee up-to-date intake_schema
+  useEffect(() => {
+    if (!selectedItemId) return;
+    let isCancelled = false;
+    fetch(`/api/itsm/service-catalog/${encodeURIComponent(selectedItemId)}`, { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((detail) => {
+        if (detail && !isCancelled) {
+          setCatalogItems((prev) =>
+            prev.map((it) => (it.id === detail.id ? { ...it, ...detail } : it))
+          );
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedItemId]);
+
   const selectedItem = catalogItems.find((it) => it.id === selectedItemId);
+
+  const rawSchema = selectedItem?.intake_schema;
+  const parsedSchema: CatalogIntakeSchema =
+    typeof rawSchema === "string"
+      ? (() => {
+          try {
+            return JSON.parse(rawSchema);
+          } catch {
+            return {};
+          }
+        })()
+      : (rawSchema || {});
+  const rawQuestions = parsedSchema?.questions;
+  const dynamicQuestions: CatalogQuestion[] | undefined = Array.isArray(rawQuestions)
+    ? rawQuestions.map((q: any) => ({
+        ...q,
+        id: q.id || q.key || (q.label ? q.label.toLowerCase().replace(/\s+/g, "_") : "field"),
+        options: Array.isArray(q.options) ? (q.options as string[]) : undefined,
+      }))
+    : undefined;
+  const hasDynamicQuestions = Array.isArray(dynamicQuestions) && dynamicQuestions.length > 0;
+  const hasQuantityQuestion = hasDynamicQuestions && dynamicQuestions.some((q) => q.id === "quantity");
+  const hasDescriptionQuestion =
+    hasDynamicQuestions &&
+    dynamicQuestions.some((q) =>
+      ["business_justification", "justification", "reason", "description"].includes(q.id)
+    );
+
+  // Initialize form data when selected catalog item changes
+  useEffect(() => {
+    if (!selectedItem) {
+      setFormData({});
+      return;
+    }
+    const questions = dynamicQuestions;
+    const initial: Record<string, any> = {};
+    if (Array.isArray(questions)) {
+      questions.forEach((q) => {
+        if (q.default_value !== undefined && q.default_value !== "") {
+          initial[q.id] = q.default_value;
+        } else if (q.type === "multiselect") {
+          initial[q.id] = [];
+        } else {
+          initial[q.id] = "";
+        }
+      });
+    }
+    setFormData(initial);
+  }, [selectedItemId, selectedItem, hasDynamicQuestions]);
 
   const handleCustomFieldChange = (fieldKey: string, value: any) => {
     setFormData((prev) => ({
@@ -138,13 +242,63 @@ function RequestServiceContent() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!description.trim()) {
-      setError("Please provide a reason / business justification for this request.");
-      return;
+    setError(null);
+
+    // 1. Validate Dynamic Questions if present
+    if (hasDynamicQuestions && dynamicQuestions) {
+      for (const q of dynamicQuestions) {
+        const val = formData[q.id];
+        const isRequired = Boolean(q.required);
+        const isEmpty =
+          val === undefined ||
+          val === null ||
+          (typeof val === "string" && !val.trim()) ||
+          (Array.isArray(val) && val.length === 0);
+
+        if (isRequired && isEmpty) {
+          setError(`${q.label} is required.`);
+          return;
+        }
+
+        if (q.type === "number" && val !== undefined && val !== null && val !== "") {
+          if (isNaN(Number(val))) {
+            setError(`${q.label} must be a valid number.`);
+            return;
+          }
+        }
+      }
+    } else {
+      // Basic validation when no dynamic questions
+      if (!description.trim()) {
+        setError("Please provide a reason / business justification for this request.");
+        return;
+      }
+      if (quantity < 1) {
+        setError("Quantity must be at least 1.");
+        return;
+      }
     }
-    if (quantity < 1) {
-      setError("Quantity must be at least 1.");
-      return;
+
+    // 2. Resolve effective description and quantity
+    let effectiveDescription = description.trim();
+    if (hasDynamicQuestions && dynamicQuestions) {
+      for (const k of ["business_justification", "justification", "reason", "description"]) {
+        if (formData[k] && String(formData[k]).trim()) {
+          effectiveDescription = String(formData[k]).trim();
+          break;
+        }
+      }
+    }
+    if (!effectiveDescription) {
+      effectiveDescription = selectedItem ? `Request for ${selectedItem.name}` : "Service Request";
+    }
+
+    let effectiveQuantity = Number(quantity) || 1;
+    if (hasDynamicQuestions && formData["quantity"] !== undefined && formData["quantity"] !== "") {
+      const parsedQ = Number(formData["quantity"]);
+      if (!isNaN(parsedQ) && parsedQ > 0) {
+        effectiveQuantity = parsedQ;
+      }
     }
 
     try {
@@ -155,15 +309,15 @@ function RequestServiceContent() {
         catalog_item_id: selectedItem?.id || undefined,
         service_id: selectedItem?.service_id || undefined,
         title: selectedItem ? `Request: ${selectedItem.name}` : "Service Request",
-        description: description.trim(),
-        quantity: Number(quantity) || 1,
+        description: effectiveDescription,
+        quantity: effectiveQuantity,
         urgency,
         impact: urgency === "CRITICAL" ? "HIGH" : "MEDIUM",
         priority: urgency === "CRITICAL" ? "P1" : urgency === "HIGH" ? "P2" : urgency === "LOW" ? "P4" : "P3",
         form_data: {
           ...formData,
-          quantity: Number(quantity) || 1,
-          reason: description.trim(),
+          quantity: effectiveQuantity,
+          reason: effectiveDescription,
           catalog_item_name: selectedItem?.name,
           category: selectedItem?.category_label,
         },
@@ -420,44 +574,46 @@ function RequestServiceContent() {
               )}
             </div>
 
-            {/* Quantity Stepper */}
-            <div className="space-y-2">
-              <label htmlFor="request-quantity-input" className="block text-xs font-bold text-[#0E1726] uppercase tracking-wider">
-                Quantity <span className="text-red-500">*</span>
-              </label>
-              <div className="flex items-center gap-3">
-                <div className="flex items-center border border-[#E6E9F0] rounded-xl bg-[#FBFAF9] overflow-hidden">
-                  <button
-                    type="button"
-                    onClick={() => setQuantity((q) => Math.max(1, q - 1))}
-                    disabled={quantity <= 1}
-                    className="px-3.5 py-2 text-sm font-bold text-[#475069] hover:bg-[#F0F2F6] disabled:opacity-40 transition"
-                  >
-                    -
-                  </button>
-                  <input
-                    id="request-quantity-input"
-                    type="number"
-                    min={1}
-                    max={100}
-                    value={quantity}
-                    onChange={(e) => setQuantity(Math.max(1, Math.min(100, parseInt(e.target.value) || 1)))}
-                    className="w-16 text-center bg-transparent text-xs font-bold text-[#0E1726] py-2 focus:outline-none"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setQuantity((q) => Math.min(100, q + 1))}
-                    disabled={quantity >= 100}
-                    className="px-3.5 py-2 text-sm font-bold text-[#475069] hover:bg-[#F0F2F6] disabled:opacity-40 transition"
-                  >
-                    +
-                  </button>
+            {/* Quantity Stepper (Rendered if not part of dynamic questions) */}
+            {!hasQuantityQuestion && (
+              <div className="space-y-2">
+                <label htmlFor="request-quantity-input" className="block text-xs font-bold text-[#0E1726] uppercase tracking-wider">
+                  Quantity <span className="text-red-500">*</span>
+                </label>
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center border border-[#E6E9F0] rounded-xl bg-[#FBFAF9] overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setQuantity((q) => Math.max(1, q - 1))}
+                      disabled={quantity <= 1}
+                      className="px-3.5 py-2 text-sm font-bold text-[#475069] hover:bg-[#F0F2F6] disabled:opacity-40 transition"
+                    >
+                      -
+                    </button>
+                    <input
+                      id="request-quantity-input"
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={quantity}
+                      onChange={(e) => setQuantity(Math.max(1, Math.min(100, parseInt(e.target.value) || 1)))}
+                      className="w-16 text-center bg-transparent text-xs font-bold text-[#0E1726] py-2 focus:outline-none font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setQuantity((q) => Math.min(100, q + 1))}
+                      disabled={quantity >= 100}
+                      className="px-3.5 py-2 text-sm font-bold text-[#475069] hover:bg-[#F0F2F6] disabled:opacity-40 transition"
+                    >
+                      +
+                    </button>
+                  </div>
+                  <span className="text-[11px] text-[#8C95A8]">
+                    Number of units or licenses needed (max 100)
+                  </span>
                 </div>
-                <span className="text-[11px] text-[#8C95A8]">
-                  Number of units or licenses needed (max 100)
-                </span>
               </div>
-            </div>
+            )}
 
             {/* Urgency Selection */}
             <div className="space-y-2">
@@ -486,27 +642,191 @@ function RequestServiceContent() {
               </div>
             </div>
 
-            {/* Reason / Business Justification */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <label htmlFor="request-description" className="block text-xs font-bold text-[#0E1726] uppercase tracking-wider">
-                  Reason / Business Justification <span className="text-red-500">*</span>
-                </label>
-                <span className="text-[11px] text-[#8C95A8]">Required for approval</span>
+            {/* Reason / Business Justification (Rendered if not part of dynamic questions) */}
+            {!hasDescriptionQuestion && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <label htmlFor="request-description" className="block text-xs font-bold text-[#0E1726] uppercase tracking-wider">
+                    Reason / Business Justification <span className="text-red-500">*</span>
+                  </label>
+                  <span className="text-[11px] text-[#8C95A8]">Required for approval</span>
+                </div>
+                <textarea
+                  id="request-description"
+                  rows={4}
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  placeholder="Explain why this service is required (e.g. new team hire onboarding, developer access for Project Phoenix, replacement of damaged hardware)..."
+                  className="w-full bg-[#FBFAF9] border border-[#E6E9F0] rounded-xl p-3 text-xs text-[#0E1726] leading-relaxed placeholder:text-[#8C95A8] focus:bg-white focus:ring-1 focus:ring-[#6D28D9] focus:outline-none transition shadow-2xs"
+                  required={!hasDynamicQuestions}
+                />
               </div>
-              <textarea
-                id="request-description"
-                rows={4}
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Explain why this service is required (e.g. new team hire onboarding, developer access for Project Phoenix, replacement of damaged hardware)..."
-                className="w-full bg-[#FBFAF9] border border-[#E6E9F0] rounded-xl p-3 text-xs text-[#0E1726] leading-relaxed placeholder:text-[#8C95A8] focus:bg-white focus:ring-1 focus:ring-[#6D28D9] focus:outline-none transition shadow-2xs"
-                required
-              />
-            </div>
+            )}
 
-            {/* Dynamic Intake Schema Fields (if defined on catalog item) */}
-            {selectedItem?.intake_schema?.properties && Object.keys(selectedItem.intake_schema.properties).length > 0 && (
+            {/* Dynamic Intake Schema Questions (Metadata-Driven Form Engine - PLT-006) */}
+            {hasDynamicQuestions && dynamicQuestions ? (
+              <div className="border-t border-[#F0F2F6] pt-5 space-y-4" id="dynamic-questions-section">
+                <div className="flex items-center justify-between border-b border-[#F0F2F6] pb-2.5">
+                  <div>
+                    <h3 className="text-xs font-bold text-[#0E1726] uppercase tracking-wider flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-[#6D28D9]" />
+                      <span>Request Details</span>
+                    </h3>
+                    <p className="text-[11px] text-[#6B7488]">
+                      Please answer the following specifications configured for this service.
+                    </p>
+                  </div>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-50 text-[#6D28D9] border border-purple-200">
+                    {dynamicQuestions.length} {dynamicQuestions.length === 1 ? "question" : "questions"}
+                  </span>
+                </div>
+
+                <div className="space-y-4">
+                  {dynamicQuestions.map((q, qIdx) => {
+                    const fieldId = `dynamic-field-${q.id}`;
+                    const isRequired = Boolean(q.required);
+                    return (
+                      <div key={q.id || qIdx} className="space-y-1.5" id={`dynamic-question-${q.id}`}>
+                        <div className="flex items-center justify-between">
+                          <label htmlFor={fieldId} className="block text-xs font-bold text-[#0E1726]">
+                            {q.label} {isRequired && <span className="text-red-500">*</span>}
+                          </label>
+                        </div>
+
+                        {q.description && (
+                          <p className="text-[11px] text-[#6B7488] leading-tight mb-1">
+                            {q.description}
+                          </p>
+                        )}
+
+                        {/* Short Text */}
+                        {q.type === "text" && (
+                          <input
+                            type="text"
+                            id={fieldId}
+                            value={formData[q.id] || ""}
+                            onChange={(e) => handleCustomFieldChange(q.id, e.target.value)}
+                            placeholder={q.placeholder || `Enter ${q.label}...`}
+                            className="w-full bg-[#FBFAF9] border border-[#E6E9F0] rounded-xl px-3.5 py-2.5 text-xs text-[#0E1726] focus:bg-white focus:ring-1 focus:ring-[#6D28D9] focus:outline-none transition shadow-2xs font-medium"
+                          />
+                        )}
+
+                        {/* Long Text */}
+                        {q.type === "textarea" && (
+                          <textarea
+                            id={fieldId}
+                            rows={3}
+                            value={formData[q.id] || ""}
+                            onChange={(e) => handleCustomFieldChange(q.id, e.target.value)}
+                            placeholder={q.placeholder || `Provide details for ${q.label}...`}
+                            className="w-full bg-[#FBFAF9] border border-[#E6E9F0] rounded-xl p-3 text-xs text-[#0E1726] leading-relaxed placeholder:text-[#8C95A8] focus:bg-white focus:ring-1 focus:ring-[#6D28D9] focus:outline-none transition shadow-2xs"
+                          />
+                        )}
+
+                        {/* Number */}
+                        {q.type === "number" && (
+                          <input
+                            type="number"
+                            id={fieldId}
+                            value={formData[q.id] !== undefined ? formData[q.id] : ""}
+                            onChange={(e) => handleCustomFieldChange(q.id, e.target.value === "" ? "" : Number(e.target.value))}
+                            placeholder={q.placeholder || "0"}
+                            className="w-full sm:w-48 bg-[#FBFAF9] border border-[#E6E9F0] rounded-xl px-3.5 py-2.5 text-xs text-[#0E1726] focus:bg-white focus:ring-1 focus:ring-[#6D28D9] focus:outline-none transition shadow-2xs font-mono font-medium"
+                          />
+                        )}
+
+                        {/* Dropdown */}
+                        {q.type === "dropdown" && (
+                          <select
+                            id={fieldId}
+                            value={formData[q.id] || ""}
+                            onChange={(e) => handleCustomFieldChange(q.id, e.target.value)}
+                            className="w-full bg-[#FBFAF9] border border-[#E6E9F0] rounded-xl px-3.5 py-2.5 text-xs text-[#0E1726] font-medium focus:bg-white focus:ring-1 focus:ring-[#6D28D9] focus:outline-none transition shadow-2xs"
+                          >
+                            <option value="" disabled>
+                              {q.placeholder || "Select an option..."}
+                            </option>
+                            {q.options && q.options.length > 0 ? (
+                              q.options.map((opt, optIdx) => (
+                                <option key={optIdx} value={opt}>
+                                  {opt}
+                                </option>
+                              ))
+                            ) : (
+                              <option disabled value="">
+                                No options configured.
+                              </option>
+                            )}
+                          </select>
+                        )}
+
+                        {/* Radio */}
+                        {q.type === "radio" && (
+                          <div className="space-y-2 pt-1" id={`radio-group-${q.id}`}>
+                            {q.options && q.options.length > 0 ? (
+                              q.options.map((opt, optIdx) => (
+                                <label
+                                  key={optIdx}
+                                  className="flex items-center gap-2.5 text-xs text-[#0E1726] cursor-pointer"
+                                >
+                                  <input
+                                    type="radio"
+                                    id={`${fieldId}-${optIdx}`}
+                                    name={`radio-${q.id}`}
+                                    value={opt}
+                                    checked={formData[q.id] === opt}
+                                    onChange={(e) => handleCustomFieldChange(q.id, e.target.value)}
+                                    className="w-4 h-4 text-[#6D28D9] focus:ring-[#6D28D9]"
+                                  />
+                                  <span>{opt}</span>
+                                </label>
+                              ))
+                            ) : (
+                              <p className="text-xs text-[#8C95A8] italic">No options configured.</p>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Multi-Select */}
+                        {q.type === "multiselect" && (
+                          <div className="space-y-2 pt-1" id={`multiselect-group-${q.id}`}>
+                            {q.options && q.options.length > 0 ? (
+                              q.options.map((opt, optIdx) => {
+                                const sel: string[] = Array.isArray(formData[q.id]) ? formData[q.id] : [];
+                                const isChecked = sel.includes(opt);
+                                return (
+                                  <label
+                                    key={optIdx}
+                                    className="flex items-center gap-2.5 text-xs text-[#0E1726] cursor-pointer"
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      id={`${fieldId}-${optIdx}`}
+                                      checked={isChecked}
+                                      onChange={(e) => {
+                                        const next = e.target.checked
+                                          ? [...sel, opt]
+                                          : sel.filter((item) => item !== opt);
+                                        handleCustomFieldChange(q.id, next);
+                                      }}
+                                      className="w-4 h-4 rounded text-[#6D28D9] focus:ring-[#6D28D9]"
+                                    />
+                                    <span>{opt}</span>
+                                  </label>
+                                );
+                              })
+                            ) : (
+                              <p className="text-xs text-[#8C95A8] italic">No options configured.</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : selectedItem?.intake_schema?.properties && Object.keys(selectedItem.intake_schema.properties).length > 0 ? (
+              // Legacy properties fallback
               <div className="border-t border-[#F0F2F6] pt-4 space-y-4">
                 <h3 className="text-xs font-bold text-[#0E1726] uppercase tracking-wider">
                   Additional Item Specifications
@@ -529,7 +849,13 @@ function RequestServiceContent() {
                   ))}
                 </div>
               </div>
-            )}
+            ) : selectedItem ? (
+              <div className="border-t border-[#F0F2F6] pt-4" id="no-dynamic-questions-notice">
+                <p className="text-xs text-[#6B7488] bg-[#FBFAF9] p-3 rounded-xl border border-[#E6E9F0]">
+                  This catalog item has no additional questions.
+                </p>
+              </div>
+            ) : null}
 
             {/* Submit Action Button */}
             <div className="pt-2 flex items-center justify-end gap-3 border-t border-[#F0F2F6]">

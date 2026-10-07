@@ -174,7 +174,8 @@ def verify_cross_tenant(bootstrap_url: str, backend_url: str, agent_url: str) ->
     marker = uuid.uuid4().hex
     backend_tenant_a, backend_tenant_b = uuid.uuid4(), uuid.uuid4()
     backend_user_a, backend_user_b = uuid.uuid4(), uuid.uuid4()
-    backend_hash_a, backend_hash_b = "a" * 64, "b" * 64
+    backend_hash_a = hashlib.sha256(f"sess-a-{marker}".encode()).hexdigest()
+    backend_hash_b = hashlib.sha256(f"sess-b-{marker}".encode()).hexdigest()
     reset_otp = "123456"
     reset_secret = f"security-reset-{marker}"
     reset_email = f"security-{marker}-a@example.invalid"

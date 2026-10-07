@@ -91,6 +91,175 @@ def _slugify(text_val: str) -> str:
     return slug[:100] or "service"
 
 
+SUPPORTED_QUESTION_TYPES = {
+    "text",
+    "textarea",
+    "number",
+    "dropdown",
+    "radio",
+    "multiselect",
+}
+
+FIELD_KEY_REGEX = re.compile(r"^[a-z][a-z0-9_]*$")
+
+
+def _validate_intake_schema(schema: Optional[dict]) -> None:
+    """Validate intake_schema questions structure for No-Code Catalog Item Form Builder."""
+    if not schema:
+        return
+    if not isinstance(schema, dict):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="intake_schema must be a JSON object",
+        )
+
+    questions = schema.get("questions")
+    if questions is None:
+        return
+
+    if not isinstance(questions, list):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="intake_schema.questions must be an array of questions",
+        )
+
+    seen_keys: set[str] = set()
+    for idx, q in enumerate(questions):
+        if not isinstance(q, dict):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Question at index {idx} must be a JSON object",
+            )
+
+        q_id = q.get("id") or q.get("field_key") or q.get("key")
+        if not q_id or not isinstance(q_id, str) or not q_id.strip():
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Question at index {idx} requires a non-empty field key",
+            )
+
+        q_id = q_id.strip()
+        if not FIELD_KEY_REGEX.match(q_id):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Question field key '{q_id}' must start with a lowercase letter "
+                    "and contain only lowercase letters, numbers, and underscores"
+                ),
+            )
+
+        if q_id in seen_keys:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Duplicate field key '{q_id}' found in questions list",
+            )
+        seen_keys.add(q_id)
+
+        label = q.get("label")
+        if label is not None and not isinstance(label, str):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Question '{q_id}' label must be a string",
+            )
+
+        q_type = q.get("type")
+        if not q_type or not isinstance(q_type, str) or q_type.lower() not in SUPPORTED_QUESTION_TYPES:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=(
+                    f"Question '{q_id}' has unsupported question type '{q_type}'. "
+                    f"Supported types: {', '.join(sorted(SUPPORTED_QUESTION_TYPES))}"
+                ),
+            )
+        q_type = q_type.lower()
+
+        required = q.get("required")
+        if required is not None and not isinstance(required, bool):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Question '{q_id}' 'required' must be a boolean",
+            )
+
+        if q_type in ("dropdown", "radio", "multiselect"):
+            options = q.get("options")
+            if not isinstance(options, list) or len(options) == 0:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Question '{q_id}' of type '{q_type}' requires a non-empty list of options",
+                )
+            clean_opts = []
+            for opt_idx, opt in enumerate(options):
+                if not isinstance(opt, str) or not opt.strip():
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail=f"Option at index {opt_idx} for question '{q_id}' cannot be empty",
+                    )
+                clean_opts.append(opt.strip())
+            if len(clean_opts) != len({o.lower() for o in clean_opts}):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Duplicate options are not allowed for question '{q_id}'",
+                )
+
+
+
+def _validate_fulfillment_group(db: Session, tenant_id: UUID, group_name: Optional[str]) -> Optional[str]:
+    """Validate fulfillment team selection according to tenant isolation and active status."""
+    if not group_name:
+        return None
+    trimmed = group_name.strip()
+    if not trimmed:
+        return None
+
+    # Check if a team with this name exists in this tenant
+    team_in_tenant = (
+        db.query(ITSMTeam)
+        .filter(
+            ITSMTeam.tenant_id == tenant_id,
+            func.lower(ITSMTeam.name) == trimmed.lower(),
+        )
+        .first()
+    )
+
+    if team_in_tenant:
+        if not team_in_tenant.is_active:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Fulfillment team '{trimmed}' is inactive in this tenant",
+            )
+        return team_in_tenant.name
+
+    # Check if a team exists in another tenant (cross-tenant violation)
+    cross_tenant_team = (
+        db.query(ITSMTeam)
+        .filter(
+            ITSMTeam.tenant_id != tenant_id,
+            func.lower(ITSMTeam.name) == trimmed.lower(),
+        )
+        .first()
+    )
+    if cross_tenant_team:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Fulfillment team '{trimmed}' belongs to another tenant",
+        )
+
+    # If this tenant has teams configured in itsm_teams, the group must match one of them
+    tenant_has_teams = (
+        db.query(ITSMTeam.id)
+        .filter(ITSMTeam.tenant_id == tenant_id)
+        .first()
+    ) is not None
+
+    if tenant_has_teams:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Fulfillment team '{trimmed}' does not exist in this tenant",
+        )
+
+    return trimmed
+
+
 def require_itsm_platform_admin(request: Request, db: Session = Depends(get_tenant_db)):
     """Enforce that the requesting principal possesses the PLATFORM_ADMINISTRATOR ITSM role."""
     tenant_id = request.state.tenant_id
@@ -116,6 +285,36 @@ def require_itsm_platform_admin(request: Request, db: Session = Depends(get_tena
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Platform Administrator access required",
+        )
+
+    return row.itsm_role
+
+
+def require_itsm_catalog_manager_or_admin(request: Request, db: Session = Depends(get_tenant_db)):
+    """Enforce that the requesting principal possesses either CATALOG_MANAGER or PLATFORM_ADMINISTRATOR ITSM role."""
+    tenant_id = request.state.tenant_id
+    user_id = request.state.user_id
+
+    row = db.execute(
+        text(
+            """
+            SELECT itsm_role, has_itsm_access
+              FROM authn.lookup_itsm_user_access(:tenant_id, :user_id)
+            """
+        ),
+        {"tenant_id": str(tenant_id), "user_id": str(user_id)},
+    ).first()
+
+    if not row or not row.has_itsm_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="ITSM access denied",
+        )
+
+    if row.itsm_role not in ("PLATFORM_ADMINISTRATOR", "CATALOG_MANAGER"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Catalog Manager or Platform Administrator access required",
         )
 
     return row.itsm_role
@@ -868,12 +1067,23 @@ def create_manual_itsm_employee(
     summary="List all ITSM operational teams for the tenant",
 )
 def list_itsm_teams(
+    status: Optional[str] = None,
+    is_active: Optional[bool] = None,
     db: Session = Depends(get_tenant_db),
     tenant_id_str: str = Depends(get_current_tenant),
 ):
     tenant_id = UUID(tenant_id_str)
 
-    teams = db.query(ITSMTeam).filter(ITSMTeam.tenant_id == tenant_id).order_by(ITSMTeam.created_at.asc()).all()
+    query = db.query(ITSMTeam).filter(ITSMTeam.tenant_id == tenant_id)
+    if is_active is not None:
+        query = query.filter(ITSMTeam.is_active.is_(is_active))
+    elif status is not None:
+        if status.strip().upper() == "ACTIVE":
+            query = query.filter(ITSMTeam.is_active.is_(True))
+        elif status.strip().upper() == "INACTIVE":
+            query = query.filter(ITSMTeam.is_active.is_(False))
+
+    teams = query.order_by(ITSMTeam.name.asc()).all()
 
     # Compute member counts per team
     counts_query = (
@@ -1572,10 +1782,15 @@ def bulk_import_ci_commit(
 @router.get(
     "/service-catalog",
     response_model=List[ITSMServiceCatalogItemResponse],
-    dependencies=[Depends(require_itsm_platform_admin)],
+    dependencies=[Depends(require_itsm_catalog_manager_or_admin)],
     summary="List all service catalog items for the tenant",
 )
 def list_itsm_service_catalog_items(
+    search: Optional[str] = None,
+    service_id: Optional[UUID] = None,
+    is_active: Optional[bool] = None,
+    fulfillment_group: Optional[str] = None,
+    approval_required: Optional[bool] = None,
     db: Session = Depends(get_tenant_db),
     tenant_id_str: str = Depends(get_current_tenant),
 ):
@@ -1587,9 +1802,30 @@ def list_itsm_service_catalog_items(
             (ITSMServiceCatalogItem.service_id == ITSMService.id) & (ITSMService.tenant_id == tenant_id),
         )
         .filter(ITSMServiceCatalogItem.tenant_id == tenant_id)
-        .order_by(ITSMServiceCatalogItem.name.asc())
-        .all()
     )
+
+    if search and search.strip():
+        term = f"%{search.strip()}%"
+        query = query.filter(
+            ITSMServiceCatalogItem.name.ilike(term)
+            | ITSMServiceCatalogItem.description.ilike(term)
+            | ITSMService.name.ilike(term)
+            | ITSMServiceCatalogItem.fulfillment_group.ilike(term)
+        )
+
+    if service_id is not None:
+        query = query.filter(ITSMServiceCatalogItem.service_id == service_id)
+
+    if is_active is not None:
+        query = query.filter(ITSMServiceCatalogItem.is_active == is_active)
+
+    if fulfillment_group and fulfillment_group.strip():
+        query = query.filter(ITSMServiceCatalogItem.fulfillment_group.ilike(fulfillment_group.strip()))
+
+    if approval_required is not None:
+        query = query.filter(ITSMServiceCatalogItem.approval_required == approval_required)
+
+    results = query.order_by(ITSMServiceCatalogItem.name.asc()).all()
 
     return [
         ITSMServiceCatalogItemResponse(
@@ -1604,10 +1840,11 @@ def list_itsm_service_catalog_items(
             fulfillment_group=item.fulfillment_group,
             estimated_delivery_hours=item.estimated_delivery_hours,
             is_active=item.is_active,
+            intake_schema=item.intake_schema or {},
             created_at=item.created_at,
             updated_at=item.updated_at,
         )
-        for item, service_name in query
+        for item, service_name in results
     ]
 
 
@@ -1615,7 +1852,7 @@ def list_itsm_service_catalog_items(
     "/service-catalog",
     response_model=ITSMServiceCatalogItemResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_itsm_platform_admin)],
+    dependencies=[Depends(require_itsm_catalog_manager_or_admin)],
     summary="Create a new service catalog item",
 )
 def create_itsm_service_catalog_item(
@@ -1641,6 +1878,10 @@ def create_itsm_service_catalog_item(
         slug = f"{base_slug[:90]}-{idx}"
         idx += 1
 
+    if payload.intake_schema:
+        _validate_intake_schema(payload.intake_schema)
+
+    fulfillment_group_val = _validate_fulfillment_group(db, tenant_id, payload.fulfillment_group)
     now = datetime.now(timezone.utc)
     item = ITSMServiceCatalogItem(
         tenant_id=tenant_id,
@@ -1649,9 +1890,9 @@ def create_itsm_service_catalog_item(
         slug=slug,
         description=payload.description.strip() if payload.description else None,
         version=1,
-        intake_schema={},
+        intake_schema=payload.intake_schema or {},
         approval_required=payload.approval_required,
-        fulfillment_group=payload.fulfillment_group.strip() if payload.fulfillment_group else None,
+        fulfillment_group=fulfillment_group_val,
         estimated_delivery_hours=payload.estimated_delivery_hours,
         is_active=payload.is_active,
         created_at=now,
@@ -1662,7 +1903,7 @@ def create_itsm_service_catalog_item(
     db.refresh(item)
 
     logger.info(
-        "[ITSM_ADMIN_AUDIT] action=catalog_item_created tenant_id=%s admin_user_id=%s item_id=%s name=%s",
+        "[ITSM_ADMIN_AUDIT] action=catalog_item_created tenant_id=%s user_id=%s item_id=%s name=%s",
         tenant_id,
         request.state.user_id,
         item.id,
@@ -1681,15 +1922,57 @@ def create_itsm_service_catalog_item(
         fulfillment_group=item.fulfillment_group,
         estimated_delivery_hours=item.estimated_delivery_hours,
         is_active=item.is_active,
+        intake_schema=item.intake_schema or {},
         created_at=item.created_at,
         updated_at=item.updated_at,
     )
 
 
 @router.get(
+    "/service-catalog/fulfillment-teams",
+    response_model=List[ITSMTeamResponse],
+    dependencies=[Depends(require_itsm_catalog_manager_or_admin)],
+    summary="List active operational teams eligible for catalog fulfillment",
+)
+def list_catalog_fulfillment_teams(
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+
+    teams = (
+        db.query(ITSMTeam)
+        .filter(ITSMTeam.tenant_id == tenant_id, ITSMTeam.is_active.is_(True))
+        .order_by(ITSMTeam.name.asc())
+        .all()
+    )
+
+    counts_query = (
+        db.query(ITSMTeamMember.team_id, func.count(ITSMTeamMember.id))
+        .filter(ITSMTeamMember.tenant_id == tenant_id)
+        .group_by(ITSMTeamMember.team_id)
+        .all()
+    )
+    counts_map = {row[0]: row[1] for row in counts_query}
+
+    return [
+        ITSMTeamResponse(
+            id=t.id,
+            name=t.name,
+            description=t.description,
+            is_active=t.is_active,
+            member_count=counts_map.get(t.id, 0),
+            created_at=t.created_at,
+            updated_at=t.updated_at,
+        )
+        for t in teams
+    ]
+
+
+@router.get(
     "/service-catalog/{item_id}",
     response_model=ITSMServiceCatalogItemResponse,
-    dependencies=[Depends(require_itsm_platform_admin)],
+    dependencies=[Depends(require_itsm_catalog_manager_or_admin)],
     summary="Get single service catalog item detail",
 )
 def get_itsm_service_catalog_item(
@@ -1722,6 +2005,7 @@ def get_itsm_service_catalog_item(
         fulfillment_group=item.fulfillment_group,
         estimated_delivery_hours=item.estimated_delivery_hours,
         is_active=item.is_active,
+        intake_schema=item.intake_schema or {},
         created_at=item.created_at,
         updated_at=item.updated_at,
     )
@@ -1730,7 +2014,7 @@ def get_itsm_service_catalog_item(
 @router.patch(
     "/service-catalog/{item_id}",
     response_model=ITSMServiceCatalogItemResponse,
-    dependencies=[Depends(require_itsm_platform_admin)],
+    dependencies=[Depends(require_itsm_catalog_manager_or_admin)],
     summary="Update a service catalog item",
 )
 def update_itsm_service_catalog_item(
@@ -1768,7 +2052,7 @@ def update_itsm_service_catalog_item(
         item.approval_required = payload.approval_required
 
     if payload.fulfillment_group is not None:
-        item.fulfillment_group = payload.fulfillment_group.strip() if payload.fulfillment_group else None
+        item.fulfillment_group = _validate_fulfillment_group(db, tenant_id, payload.fulfillment_group)
 
     if payload.estimated_delivery_hours is not None:
         item.estimated_delivery_hours = payload.estimated_delivery_hours
@@ -1776,12 +2060,16 @@ def update_itsm_service_catalog_item(
     if payload.is_active is not None:
         item.is_active = payload.is_active
         logger.info(
-            "[ITSM_ADMIN_AUDIT] action=catalog_item_status_toggled tenant_id=%s admin_user_id=%s item_id=%s is_active=%s",
+            "[ITSM_ADMIN_AUDIT] action=catalog_item_status_toggled tenant_id=%s user_id=%s item_id=%s is_active=%s",
             tenant_id,
             request.state.user_id,
             item.id,
             item.is_active,
         )
+
+    if payload.intake_schema is not None:
+        _validate_intake_schema(payload.intake_schema)
+        item.intake_schema = payload.intake_schema
 
     item.updated_at = datetime.now(timezone.utc)
     db.commit()
@@ -1793,10 +2081,13 @@ def update_itsm_service_catalog_item(
         service_name = srv[0]
 
     logger.info(
-        "[ITSM_ADMIN_AUDIT] action=catalog_item_updated tenant_id=%s admin_user_id=%s item_id=%s",
+        "[ITSM_ADMIN_AUDIT] action=catalog_item_updated tenant_id=%s user_id=%s item_id=%s approval_required=%s fulfillment_group=%s estimated_delivery_hours=%s",
         tenant_id,
         request.state.user_id,
         item.id,
+        item.approval_required,
+        item.fulfillment_group,
+        item.estimated_delivery_hours,
     )
 
     return ITSMServiceCatalogItemResponse(
@@ -1811,6 +2102,7 @@ def update_itsm_service_catalog_item(
         fulfillment_group=item.fulfillment_group,
         estimated_delivery_hours=item.estimated_delivery_hours,
         is_active=item.is_active,
+        intake_schema=item.intake_schema or {},
         created_at=item.created_at,
         updated_at=item.updated_at,
     )

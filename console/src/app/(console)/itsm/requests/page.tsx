@@ -16,6 +16,7 @@ import {
   Sparkles,
   CheckCircle2,
   X,
+  XCircle,
   Filter,
 } from "lucide-react";
 import { formatDateTime, itsmSlaConfig } from "@/lib/itsm-format";
@@ -299,6 +300,22 @@ function ServiceRequestsContent() {
                       </span>
                       <IncidentPriorityBadge priority={req.priority} />
                       <IncidentStatusBadge status={req.status} />
+                      {/* Approval Status Badge */}
+                      {req.approval_required || req.approval_status ? (
+                        req.approval_status === "PENDING" || (!req.approval_status && req.status === "PENDING") ? (
+                          <span id={`approval-badge-${req.id}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-semibold">
+                            <Clock className="w-3 h-3 text-amber-600" /> Awaiting Approval
+                          </span>
+                        ) : req.approval_status === "APPROVED" ? (
+                          <span id={`approval-badge-${req.id}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-semibold">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Approved
+                          </span>
+                        ) : req.approval_status === "REJECTED" ? (
+                          <span id={`approval-badge-${req.id}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-semibold">
+                            <XCircle className="w-3 h-3 text-rose-600" /> Rejected
+                          </span>
+                        ) : null
+                      ) : null}
                       {slaConfig && (
                         <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${slaConfig.badge}`}>
                           <span className={`w-1.5 h-1.5 rounded-full ${slaConfig.dot}`} />
@@ -315,6 +332,13 @@ function ServiceRequestsContent() {
                       <p className="text-xs text-[#6B7488] line-clamp-2 max-w-2xl leading-relaxed">
                         {req.description}
                       </p>
+                    )}
+
+                    {req.rejection_reason && (
+                      <div id={`rejection-reason-${req.id}`} className="text-[11px] text-rose-700 bg-rose-50/90 border border-rose-200 rounded-xl px-3 py-1.5 font-medium max-w-2xl flex items-center gap-1.5">
+                        <XCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
+                        <span><strong>Rejection Reason:</strong> {req.rejection_reason}</span>
+                      </div>
                     )}
                   </div>
 

@@ -108,11 +108,34 @@ def business_seconds_between(start: datetime, end: datetime, calendar: ITSMBusin
     return total
 
 
-def apply_sla_policy(ticket: ITSMTicket, policy: ITSMSLAPolicy | None, started_at: datetime) -> None:
+def apply_sla_policy(
+    ticket: ITSMTicket,
+    policy: ITSMSLAPolicy | None,
+    started_at: datetime,
+    *,
+    custom_resolution_target_minutes: int | None = None,
+    calendar: ITSMBusinessCalendar | None = None,
+) -> None:
     ticket.sla_policy_id = policy.id if policy else None
-    ticket.sla_response_due_at = add_business_minutes(started_at, policy.response_target_minutes, policy.calendar) if policy else None
-    ticket.sla_resolution_due_at = add_business_minutes(started_at, policy.resolution_target_minutes, policy.calendar) if policy else None
-    ticket.sla_status = "WITHIN_SLA" if policy else "NO_SLA"
+    cal = (policy.calendar if policy else None) or calendar
+    ticket.sla_response_due_at = (
+        add_business_minutes(started_at, policy.response_target_minutes, cal)
+        if policy and getattr(policy, "response_target_minutes", None) is not None
+        else None
+    )
+    resolution_minutes = (
+        custom_resolution_target_minutes
+        if custom_resolution_target_minutes is not None and custom_resolution_target_minutes > 0
+        else (policy.resolution_target_minutes if policy else None)
+    )
+    ticket.sla_resolution_due_at = (
+        add_business_minutes(started_at, resolution_minutes, cal)
+        if resolution_minutes is not None
+        else None
+    )
+    has_active_sla = bool(ticket.sla_response_due_at or ticket.sla_resolution_due_at)
+    ticket.sla_status = "WITHIN_SLA" if has_active_sla else "NO_SLA"
+
 
 
 def pause_sla(ticket: ITSMTicket, at: datetime) -> None:
@@ -174,6 +197,7 @@ def compute_sla_details(ticket: Any, now: datetime | None = None) -> dict[str, A
     if not due:
         return {
             "status": "NO_SLA",
+            "stage": "RESPONSE" if response_active else "RESOLUTION",
             "sla_due_at": None,
             "sla_started_at": started_at,
             "remaining_seconds": None,
@@ -203,12 +227,26 @@ def compute_sla_details(ticket: Any, now: datetime | None = None) -> dict[str, A
         if policy
         else None
     )
-    if target_minutes and target_minutes > 0:
+
+    accum_pause = float(getattr(ticket, "sla_accumulated_pause_seconds", 0) or 0)
+    if started_at and due and due > started_at:
+        nominal_seconds = max(1.0, business_seconds_between(started_at, due, calendar) - accum_pause)
+        if target_minutes and target_minutes > 0:
+            policy_seconds = float(target_minutes * 60)
+            # If the actual deadline duration differs significantly from the policy target
+            # (e.g. customized fulfillment SLA from service catalog estimated delivery),
+            # prioritize the actual allocated nominal target.
+            if abs(policy_seconds - nominal_seconds) / max(nominal_seconds, 1.0) > 0.1:
+                total_target_seconds = nominal_seconds
+            else:
+                total_target_seconds = policy_seconds
+        else:
+            total_target_seconds = nominal_seconds
+    elif target_minutes and target_minutes > 0:
         total_target_seconds = float(target_minutes * 60)
-    elif started_at and due > started_at:
-        total_target_seconds = (due - started_at).total_seconds()
     else:
         total_target_seconds = max(remaining, 1.0)
+
 
     # Calculate elapsed duration and 75% rule
     if effective_now > due or remaining < 0:
@@ -231,6 +269,7 @@ def compute_sla_details(ticket: Any, now: datetime | None = None) -> dict[str, A
 
     return {
         "status": status,
+        "stage": "RESPONSE" if response_active else "RESOLUTION",
         "sla_due_at": due,
         "sla_started_at": started_at,
         "remaining_seconds": remaining,
@@ -240,3 +279,235 @@ def compute_sla_details(ticket: Any, now: datetime | None = None) -> dict[str, A
         "is_paused": is_paused,
     }
 
+
+INELIGIBLE_ESCALATION_STATUSES = frozenset({"RESOLVED", "CLOSED", "CANCELLED"})
+
+
+class SLAEscalationEvaluation:
+    """Structured evaluation of a ticket's eligibility for warning and breach escalations."""
+
+    def __init__(
+        self,
+        ticket_id: Any,
+        tenant_id: Any,
+        is_eligible_for_evaluation: bool,
+        sla_status: str,
+        warning_eligible: bool,
+        warning_already_escalated: bool,
+        breach_eligible: bool,
+        breach_already_escalated: bool,
+        reason: str | None = None,
+        sla_details: dict[str, Any] | None = None,
+    ):
+        self.ticket_id = ticket_id
+        self.tenant_id = tenant_id
+        self.is_eligible_for_evaluation = is_eligible_for_evaluation
+        self.sla_status = sla_status
+        self.warning_eligible = warning_eligible
+        self.warning_already_escalated = warning_already_escalated
+        self.breach_eligible = breach_eligible
+        self.breach_already_escalated = breach_already_escalated
+        self.reason = reason
+        self.sla_details = sla_details or {}
+
+    @property
+    def stage(self) -> str:
+        return str(self.sla_details.get("stage") or "RESOLUTION")
+
+    @property
+    def remaining_seconds(self) -> float | None:
+        return self.sla_details.get("remaining_seconds")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "ticket_id": self.ticket_id,
+            "tenant_id": self.tenant_id,
+            "is_eligible_for_evaluation": self.is_eligible_for_evaluation,
+            "sla_status": self.sla_status,
+            "warning_eligible": self.warning_eligible,
+            "warning_already_escalated": self.warning_already_escalated,
+            "breach_eligible": self.breach_eligible,
+            "breach_already_escalated": self.breach_already_escalated,
+            "reason": self.reason,
+            "sla_details": self.sla_details,
+        }
+
+    def __getitem__(self, item: str) -> Any:
+        return self.to_dict()[item]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.to_dict().get(key, default)
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.to_dict()
+
+    def __repr__(self) -> str:
+        return (
+            f"<SLAEscalationEvaluation ticket_id={self.ticket_id} "
+            f"eligible={self.is_eligible_for_evaluation} "
+            f"sla_status={self.sla_status} "
+            f"warning_eligible={self.warning_eligible} "
+            f"breach_eligible={self.breach_eligible}>"
+        )
+
+
+def evaluate_ticket_escalation(
+    ticket: Any,
+    now: datetime | None = None,
+    tenant_id: Any | None = None,
+) -> SLAEscalationEvaluation:
+    """Evaluate whether an active ITSM ticket is eligible for warning or breach escalation.
+
+    Reuses authoritative compute_sla_details() without re-calculating SLA timer arithmetic.
+    Strictly enforces:
+    - Exclusion of terminal/cancelled/closed tickets (RESOLVED, CLOSED, CANCELLED)
+    - Exclusion of tickets without active SLA policy/deadline
+    - Tenant boundary match when tenant_id is provided
+    - Warning eligibility only when ticket is AT_RISK and sla_warning_escalated_at is NULL
+    - Breach eligibility only when ticket is BREACHED and sla_breach_escalated_at is NULL
+    - Non-firing if already escalated
+    """
+    ticket_id = getattr(ticket, "id", None)
+    ticket_tenant_id = getattr(ticket, "tenant_id", None)
+    warning_escalated = getattr(ticket, "sla_warning_escalated_at", None) is not None
+    breach_escalated = getattr(ticket, "sla_breach_escalated_at", None) is not None
+
+    # 1. Tenant boundary validation
+    if tenant_id is not None and ticket_tenant_id is not None:
+        if str(ticket_tenant_id) != str(tenant_id):
+            return SLAEscalationEvaluation(
+                ticket_id=ticket_id,
+                tenant_id=ticket_tenant_id,
+                is_eligible_for_evaluation=False,
+                sla_status="INELIGIBLE",
+                warning_eligible=False,
+                warning_already_escalated=warning_escalated,
+                breach_eligible=False,
+                breach_already_escalated=breach_escalated,
+                reason="Ticket does not belong to specified tenant",
+            )
+
+    # 2. Check ticket lifecycle state (active vs terminal)
+    status_raw = getattr(ticket, "status", None)
+    status_str = str(status_raw).upper().strip() if status_raw else ""
+    if status_str in INELIGIBLE_ESCALATION_STATUSES:
+        return SLAEscalationEvaluation(
+            ticket_id=ticket_id,
+            tenant_id=ticket_tenant_id,
+            is_eligible_for_evaluation=False,
+            sla_status="INELIGIBLE",
+            warning_eligible=False,
+            warning_already_escalated=warning_escalated,
+            breach_eligible=False,
+            breach_already_escalated=breach_escalated,
+            reason=f"Ticket lifecycle status '{status_str}' is terminal/inactive",
+        )
+
+    # 3. Authoritative SLA details computation
+    sla_details = compute_sla_details(ticket, now)
+    sla_status = sla_details.get("status", "NO_SLA")
+
+    # 4. Check whether SLA policy applies
+    if sla_status == "NO_SLA":
+        return SLAEscalationEvaluation(
+            ticket_id=ticket_id,
+            tenant_id=ticket_tenant_id,
+            is_eligible_for_evaluation=False,
+            sla_status="NO_SLA",
+            warning_eligible=False,
+            warning_already_escalated=warning_escalated,
+            breach_eligible=False,
+            breach_already_escalated=breach_escalated,
+            reason="Ticket has no applicable SLA policy or deadline",
+            sla_details=sla_details,
+        )
+
+    # 5. Check paused state
+    if sla_details.get("is_paused") or sla_status == "PAUSED":
+        return SLAEscalationEvaluation(
+            ticket_id=ticket_id,
+            tenant_id=ticket_tenant_id,
+            is_eligible_for_evaluation=True,
+            sla_status="PAUSED",
+            warning_eligible=False,
+            warning_already_escalated=warning_escalated,
+            breach_eligible=False,
+            breach_already_escalated=breach_escalated,
+            reason="Ticket SLA is currently paused",
+            sla_details=sla_details,
+        )
+
+    # 6. Evaluate warning and breach rules
+    warning_eligible = False
+    breach_eligible = False
+    reason = None
+
+    if sla_status == "BREACHED":
+        if not breach_escalated:
+            breach_eligible = True
+            reason = "Ticket SLA is BREACHED and breach escalation has not fired"
+        else:
+            reason = "Ticket SLA is BREACHED but breach escalation was already recorded"
+    elif sla_status == "AT_RISK":
+        if not warning_escalated:
+            warning_eligible = True
+            reason = "Ticket is AT_RISK (>= 75% elapsed) and warning escalation has not fired"
+        else:
+            reason = "Ticket is AT_RISK (>= 75% elapsed) but warning escalation was already recorded"
+    elif sla_status == "WITHIN_SLA":
+        reason = "Ticket SLA is healthy (< 75% elapsed)"
+
+    return SLAEscalationEvaluation(
+        ticket_id=ticket_id,
+        tenant_id=ticket_tenant_id,
+        is_eligible_for_evaluation=True,
+        sla_status=sla_status,
+        warning_eligible=warning_eligible,
+        warning_already_escalated=warning_escalated,
+        breach_eligible=breach_eligible,
+        breach_already_escalated=breach_escalated,
+        reason=reason,
+        sla_details=sla_details,
+    )
+
+
+# Alias for flexible naming
+evaluate_sla_escalation = evaluate_ticket_escalation
+
+
+def record_warning_escalation(ticket: Any, now: datetime | None = None) -> bool:
+    """Record warning escalation timestamp on ticket if not already set.
+
+    Returns True if timestamp was recorded, False if already present (idempotent no-op).
+    Never overwrites an existing timestamp.
+    """
+    if getattr(ticket, "sla_warning_escalated_at", None) is not None:
+        return False
+    ticket.sla_warning_escalated_at = _utc(now or datetime.now(timezone.utc))
+    return True
+
+
+def record_breach_escalation(ticket: Any, now: datetime | None = None) -> bool:
+    """Record breach escalation timestamp on ticket if not already set.
+
+    Returns True if timestamp was recorded, False if already present (idempotent no-op).
+    Never overwrites an existing timestamp.
+    """
+    if getattr(ticket, "sla_breach_escalated_at", None) is not None:
+        return False
+    ticket.sla_breach_escalated_at = _utc(now or datetime.now(timezone.utc))
+    return True
+
+
+def record_escalation(ticket: Any, escalation_type: str, now: datetime | None = None) -> bool:
+    """Record an escalation timestamp (WARNING or BREACH) idempotently.
+
+    Raises ValueError for unknown escalation_type.
+    """
+    norm = escalation_type.upper().strip()
+    if norm in ("WARNING", "SLA_WARNING"):
+        return record_warning_escalation(ticket, now)
+    elif norm in ("BREACH", "SLA_BREACH"):
+        return record_breach_escalation(ticket, now)
+    else:
+        raise ValueError(f"Unknown escalation type '{escalation_type}', expected 'WARNING' or 'BREACH'")

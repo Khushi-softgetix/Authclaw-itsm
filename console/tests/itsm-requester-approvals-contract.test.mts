@@ -92,3 +92,40 @@ test("Backend ITSM Approvals router and service integration", () => {
   assert.ok(requestServiceSrc.includes("catalog_item.approval_required"), "itsm_request_service must check approval_required");
   assert.ok(requestServiceSrc.includes("PendingApproval"), "itsm_request_service must create PendingApproval for approval-required items");
 });
+
+test("Phase 1 Security: Requester Approvals page hides decision buttons on user's own requests (SoD)", () => {
+  const approvalsPageUrl = new URL("../src/app/(console)/itsm/approvals/page.tsx", import.meta.url);
+  const pageSrc = readFileSync(approvalsPageUrl, "utf8");
+
+  assert.ok(pageSrc.includes("isOwnRequest"), "Approvals page must calculate isOwnRequest to prevent self-action");
+  assert.ok(pageSrc.includes("self-approval-notice"), "Approvals page must render self-approval-notice when user is the requester");
+  assert.ok(pageSrc.includes("Segregation of Duties"), "Approvals page must explain Segregation of Duties");
+  assert.ok(pageSrc.includes("/api/auth/session"), "Approvals page must fetch current user session for identity comparison");
+});
+
+test("Phase 1 Security: Backend enforces SoD rejection and role-based authorization", () => {
+  const approvalsEndpointSrc = readFileSync(
+    new URL("../../backend/app/api/v1/endpoints/itsm_approvals.py", import.meta.url),
+    "utf8"
+  );
+
+  assert.ok(
+    approvalsEndpointSrc.includes("_validate_approval_decision_authority"),
+    "Endpoint must enforce decision authority validation"
+  );
+  assert.ok(
+    approvalsEndpointSrc.includes("Segregation of duties violation: Requesters cannot approve or reject their own requests."),
+    "Endpoint must reject self-approval and self-rejection with SoD detail"
+  );
+  assert.ok(
+    approvalsEndpointSrc.includes("deny_itsm_auditor_mutation"),
+    "Endpoint must block auditor mutations"
+  );
+  assert.ok(
+    approvalsEndpointSrc.includes("PLATFORM_ADMINISTRATOR") &&
+    approvalsEndpointSrc.includes("SERVICE_LEAD") &&
+    approvalsEndpointSrc.includes("INCIDENT_MANAGER"),
+    "Endpoint must enforce authorized roles"
+  );
+});
+

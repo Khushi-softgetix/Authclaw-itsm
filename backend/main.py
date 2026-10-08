@@ -114,6 +114,7 @@ from app.api.v1.endpoints.itsm_attachments import router as itsm_attachments_rou
 from app.api.v1.endpoints.itsm_audit import router as itsm_audit_router
 from app.api.v1.endpoints.itsm_approvals import router as itsm_approvals_router
 from app.api.v1.endpoints.itsm_macros import router as itsm_macros_router
+from app.api.v1.endpoints.itsm_analytics import router as itsm_analytics_router
 
 app.include_router(tenants_router, prefix="/v1/tenants", tags=["tenants"])
 app.include_router(gateways_router, prefix="/v1/gateways", tags=["gateways"])
@@ -167,6 +168,8 @@ app.include_router(itsm_approvals_router, prefix="/v1/itsm/approvals", tags=["it
 app.include_router(itsm_approvals_router, prefix="/api/itsm/approvals", tags=["itsm-approvals"], include_in_schema=False)
 app.include_router(itsm_macros_router, prefix="/v1/itsm/macros", tags=["itsm-macros"])
 app.include_router(itsm_macros_router, prefix="/api/itsm/macros", tags=["itsm-macros"], include_in_schema=False)
+app.include_router(itsm_analytics_router, prefix="/v1/itsm/analytics", tags=["itsm-analytics"])
+app.include_router(itsm_analytics_router, prefix="/api/itsm/analytics", tags=["itsm-analytics"], include_in_schema=False)
 
 # Ravi's imported console and existing client SDKs use `/api/v1`. Keep Kunal's
 # `/v1` routes canonical while exposing a compatibility alias during migration.
@@ -205,6 +208,7 @@ _compatibility_routers = [
     (itsm_changes_router, "/itsm/changes", "itsm-changes"),
     (itsm_approvals_router, "/itsm/approvals", "itsm-approvals"),
     (itsm_macros_router, "/itsm/macros", "itsm-macros"),
+    (itsm_analytics_router, "/itsm/analytics", "itsm-analytics"),
 ]
 for _router, _path, _tag in _compatibility_routers:
     app.include_router(_router, prefix=f"/api/v1{_path}", tags=[_tag], include_in_schema=False)
@@ -226,16 +230,18 @@ async def startup_event():
     with engine.connect() as connection:
         validate_database_security(connection)
     from app.core.worker_tokens import active_version, key_for
-    from app.services import worker_cleanup
+    from app.services import worker_cleanup, itsm_sla_worker
     if os.getenv("WORKER_TOKEN_ISSUANCE_PAUSED", "true").lower() == "false":
         key_for(active_version())
     await worker_cleanup.start(app, engine)
+    await itsm_sla_worker.start(app, engine)
     print("AuthClaw Backend Starting Up...")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown"""
-    from app.services import worker_cleanup
+    from app.services import worker_cleanup, itsm_sla_worker
+    await itsm_sla_worker.shutdown(app)
     await worker_cleanup.shutdown(app)
     print("AuthClaw Backend Shutting Down...")

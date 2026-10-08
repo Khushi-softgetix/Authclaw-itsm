@@ -37,6 +37,10 @@ export default async function ItsmLayout({ children }: { children: React.ReactNo
     const isAllowedRequesterPath =
       currentPath === "/itsm/incidents" ||
       currentPath.startsWith("/itsm/incidents/") ||
+      currentPath === "/itsm/requests" ||
+      currentPath.startsWith("/itsm/requests/") ||
+      currentPath === "/itsm/approvals" ||
+      currentPath.startsWith("/itsm/approvals/") ||
       currentPath === "/itsm/services" ||
       currentPath.startsWith("/itsm/services/") ||
       currentPath === "/itsm/knowledge" ||

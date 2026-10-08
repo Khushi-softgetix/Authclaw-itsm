@@ -40,11 +40,11 @@ const emptyAttentionCopy: Record<AttentionView, { title: string; description: st
 
 const metricStyles = {
   violet: { icon: "text-[#7C3AED]" },
-  indigo: { icon: "text-[#4F6BED]" },
-  rose: { icon: "text-[#8A4960]" },
-  amber: { icon: "text-[#B76E16]" },
-  slate: { icon: "text-[#526075]" },
-  sand: { icon: "text-[#8A5A44]" },
+  indigo: { icon: "text-[#2563EB]" },
+  rose: { icon: "text-[#E11D48]" },
+  amber: { icon: "text-[#D97706]" },
+  slate: { icon: "text-[#64748B]" },
+  sand: { icon: "text-[#D97706]" },
 } as const;
 
 function formatDuration(seconds?: number | null) {
@@ -83,19 +83,23 @@ function MetricCard({ label, value, help, icon: Icon, tone = "violet", active = 
   href?: string;
 }) {
   const styles = metricStyles[tone];
-  const className = `group relative flex min-h-[120px] min-w-0 flex-col justify-between rounded-xl border bg-white p-4 text-left shadow-[0_1px_3px_rgba(16,24,40,.08)] transition duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED] focus-visible:ring-offset-2 ${active ? "border-[#A78BFA] shadow-[0_3px_10px_rgba(109,40,217,.12)]" : "border-[#E4E7EC] hover:border-[#D6D0E7] hover:shadow-[0_4px_12px_rgba(16,24,40,.10)]"}`;
+  const className = `group relative flex min-h-[120px] min-w-0 flex-col justify-between rounded-xl border bg-white p-5 text-left shadow-sm transition duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED] focus-visible:ring-offset-2 ${
+    active
+      ? "border-[#7C3AED] ring-2 ring-[#7C3AED]/20"
+      : "border-[#E6E9F0] hover:border-[#CBD5E1]"
+  }`;
   const content = (
     <>
-      <div className="flex items-start justify-between gap-3">
-        <span className="text-[11px] font-extrabold uppercase tracking-[0.08em] text-[#344054]">{label}</span>
-        <span className={`flex h-6 w-6 shrink-0 items-center justify-center ${styles.icon}`}><Icon className="h-[18px] w-[18px]" strokeWidth={2} /></span>
+      <div className="flex items-center justify-between text-[#6B7488] mb-2">
+        <span className="text-xs font-semibold uppercase tracking-wider">{label}</span>
+        <Icon className={`w-4 h-4 shrink-0 ${styles.icon}`} />
       </div>
       <div>
-        <div className="flex items-end justify-between gap-3">
-          <strong className="text-[28px] font-black leading-none tracking-[-0.03em] text-[#101828]">{value}</strong>
-          {href ? <ArrowRight className="mb-1 h-4 w-4 text-[#8A78B8] transition group-hover:translate-x-0.5" /> : null}
+        <div className="flex items-center justify-between">
+          <div className="text-2xl font-bold text-[#0E1726]">{value}</div>
+          {href ? <ArrowRight className="w-4 h-4 text-[#8C95A8] transition group-hover:translate-x-0.5" /> : null}
         </div>
-        <p className="mt-2 text-[11px] font-medium leading-4 text-[#667085]">{help}</p>
+        <p className="text-xs text-[#6B7488] mt-1">{help}</p>
       </div>
     </>
   );
@@ -106,9 +110,9 @@ function MetricCard({ label, value, help, icon: Icon, tone = "violet", active = 
 function LoadingState() {
   return (
     <div className="space-y-5" aria-label="Loading Incident Manager operations">
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {Array.from({ length: 8 }).map((_, index) => (
-          <div key={index} className="min-h-[120px] animate-pulse rounded-xl border border-[#E4E7EC] bg-white shadow-[0_1px_3px_rgba(16,24,40,.08)]" />
+          <div key={index} className="min-h-[120px] animate-pulse rounded-xl border border-[#E6E9F0] bg-white p-5 shadow-sm" />
         ))}
       </div>
       <div className="h-80 animate-pulse rounded-2xl border border-[#E6E9F0] bg-white" />
@@ -213,19 +217,15 @@ export default function IncidentManagerPage() {
         </div>
       </div>
 
-      <section aria-labelledby="operations-summary-title">
-        <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <h2 id="operations-summary-title" className="text-sm font-bold text-[#344054]">Operational summary</h2>
-            <p className="mt-0.5 text-[11px] text-[#667085]">Eight live signals across the active incident population.</p>
-          </div>
+      <section aria-label="Operational summary">
+        <div className="mb-3 flex justify-end">
           <p className="text-[11px] text-[#667085]"><span className="font-semibold text-[#475467]">Focus attention:</span> select a signal to filter the worklist.</p>
         </div>
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
           <MetricCard label="Open incidents" value={summary.open_incidents} help="Active incident queue" icon={Gauge} tone="violet" href="/itsm/incident-manager/incidents" />
           <MetricCard label="Watch list" value={summary.escalation_watch} help="Requires operational review" icon={ShieldAlert} tone="indigo" active={view === "all"} onClick={() => setView("all")} />
           <MetricCard label="P1 / P2" value={summary.p1_p2} help="High-priority incidents" icon={Flame} tone="rose" active={view === "priority"} onClick={() => setView("priority")} />
-          <MetricCard label="SLA breached" value={summary.sla_breached} help="Past the SLA target" icon={TimerOff} tone="rose" active={view === "breached"} onClick={() => setView("breached")} />
+          <MetricCard label="SLA breached" value={summary.sla_breached} help="Past the SLA target" icon={TimerOff} tone="rose" href="/itsm/incident-manager/incidents?attention=SLA_BREACHED" />
           <MetricCard label="SLA at risk" value={summary.sla_at_risk} help="Approaching the SLA target" icon={Clock3} tone="amber" active={view === "risk"} onClick={() => setView("risk")} />
           <MetricCard label="Stuck / idle" value={summary.stuck} help="No recent meaningful activity" icon={AlertTriangle} tone="slate" active={view === "stuck"} onClick={() => setView("stuck")} />
           <MetricCard label="Unassigned" value={summary.unassigned} help="Needs team or owner" icon={UsersRound} tone="sand" href="/itsm/incident-manager/incidents?assignment_group=__UNASSIGNED__&unassigned=true" />

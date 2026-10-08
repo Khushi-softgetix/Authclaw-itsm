@@ -215,6 +215,9 @@ def create_incident(
     deny_itsm_auditor_mutation(request, db, role, "incident.create")
 
     if role == "REQUESTER":
+        if payload.priority and not payload.urgency:
+            norm_p = str(payload.priority).strip().upper()
+            payload.urgency = "HIGH" if norm_p in {"P1", "P2"} else ("MEDIUM" if norm_p == "P3" else "LOW")
         if not payload.urgency or str(payload.urgency).strip().upper() not in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -224,6 +227,13 @@ def create_incident(
         payload.assignee_id = None
         payload.assignment_group = None
         payload.is_major_incident = False
+        if payload.priority:
+            from app.services.itsm_incident_service import normalize_priority, calculate_priority_from_matrix
+            norm_prio = normalize_priority(payload.priority)
+            payload.priority = norm_prio
+            mat_prio = calculate_priority_from_matrix(payload.impact, payload.urgency)
+            if norm_prio != mat_prio and not (payload.priority_override_reason or "").strip():
+                payload.priority_override_reason = f"Requester designated priority {norm_prio}"
     elif payload.urgency:
         payload.urgency = str(payload.urgency).strip().upper()
     else:

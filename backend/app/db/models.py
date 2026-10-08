@@ -1241,6 +1241,23 @@ class ITSMTicket(Base):
     sla_status = Column(String(20), nullable=False, default="WITHIN_SLA")
     sla_paused_at = Column(DateTime(timezone=True), nullable=True)
     sla_accumulated_pause_seconds = Column(Integer, nullable=False, default=0)
+
+    @property
+    def sla_warning_escalated_at(self):
+        return getattr(self, "_sla_warning_escalated_at", None)
+
+    @sla_warning_escalated_at.setter
+    def sla_warning_escalated_at(self, value):
+        self._sla_warning_escalated_at = value
+
+    @property
+    def sla_breach_escalated_at(self):
+        return getattr(self, "_sla_breach_escalated_at", None)
+
+    @sla_breach_escalated_at.setter
+    def sla_breach_escalated_at(self, value):
+        self._sla_breach_escalated_at = value
+
     resolution_code = Column(String(50), nullable=True)
     resolution_summary = Column(Text, nullable=True)
     resolved_at = Column(DateTime(timezone=True), nullable=True)

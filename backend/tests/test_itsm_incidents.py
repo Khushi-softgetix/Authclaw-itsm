@@ -1114,7 +1114,7 @@ class ITSMIncidentTestCase(unittest.TestCase):
         self.assertEqual(incident["sla_policy_id"], str(policy_id))
         self.assertIsNotNone(incident["sla_response_due_at"])
         self.assertIsNotNone(incident["sla_resolution_due_at"])
-        self.assertIsNotNone(incident["sla_response_met_at"])
+        self.assertIsNone(incident["sla_response_met_at"])
 
         incident_id = incident["id"]
         recalculated = self.client.patch(f"/v1/itsm/incidents/{incident_id}", json={"impact": "LOW", "urgency": "LOW"}, headers=headers)
@@ -1125,7 +1125,9 @@ class ITSMIncidentTestCase(unittest.TestCase):
         approved_override = self.client.patch(f"/v1/itsm/incidents/{incident_id}", json={"priority": "P1", "priority_override_reason": "Confirmed organization-wide payment failure"}, headers=headers)
         self.assertEqual(approved_override.status_code, 200, approved_override.text)
 
-        self.assertEqual(self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "IN_PROGRESS"}, headers=headers).status_code, 200)
+        in_prog_res = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "IN_PROGRESS"}, headers=headers)
+        self.assertEqual(in_prog_res.status_code, 200, in_prog_res.text)
+        self.assertIsNotNone(in_prog_res.json()["sla_response_met_at"])
         paused = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "PENDING", "status_reason": "PENDING_VENDOR"}, headers=headers)
         self.assertEqual(paused.status_code, 200, paused.text)
         due_before = datetime.fromisoformat(paused.json()["sla_resolution_due_at"])

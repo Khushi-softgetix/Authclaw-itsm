@@ -10,13 +10,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import or_, text
 from sqlalchemy.orm import Session, joinedload
 
-from app.core.auth import get_current_tenant, get_tenant_db
+from app.core.auth import deny_itsm_auditor_mutation, get_current_tenant, get_tenant_db
 from app.db.models import (
     ApprovalAudit,
     ITSMServiceCatalogItem,
     ITSMServiceRequestDetail,
     ITSMTicket,
     ITSMTicketActivity,
+    Notification,
     PendingApproval,
     User,
 )
@@ -25,6 +26,7 @@ from app.schemas.itsm_approvals import (
     ITSMApprovalResponse,
 )
 from app.services.audit_store import append_audit_event
+from app.services.notifications import add_notification
 
 logger = logging.getLogger("authclaw.itsm.approvals")
 
@@ -51,6 +53,83 @@ def _get_user_role_and_validate(db: Session, tenant_id: UUID, user_id: UUID) -> 
     except Exception:
         pass
     return "REQUESTER"
+
+
+def _validate_approval_decision_authority(
+    *,
+    db: Session,
+    approval: PendingApproval,
+    ticket: Optional[ITSMTicket],
+    actor_id: UUID,
+    user_role: str,
+    platform_role: str,
+    request: Request,
+) -> None:
+    """Validate decision authority and enforce Segregation of Duties (SoD).
+
+    Rules:
+    1. Auditor access is strictly read-only (denied with audit log).
+    2. Segregation of Duties (SoD): Requesters can NEVER approve or reject their own requests.
+    3. Role authorization: Only authorized manager/administrator roles can decide requests.
+    4. Assigned approver: If an approver is explicitly designated, other users (except platform admin) cannot decide.
+    """
+    # 1. Auditor read-only enforcement
+    if user_role == "AUDITOR":
+        deny_itsm_auditor_mutation(request, db, user_role, "itsm.approval.decision")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Auditor access is read-only",
+        )
+
+    # 2. Segregation of Duties (SoD) check
+    payload = approval.action_payload or {}
+    payload_requester_str = payload.get("requester_id")
+    is_requester = False
+    if approval.requester_id and approval.requester_id == actor_id:
+        is_requester = True
+    elif ticket and ticket.requester_id == actor_id:
+        is_requester = True
+    elif payload_requester_str:
+        try:
+            if UUID(str(payload_requester_str)) == actor_id:
+                is_requester = True
+        except (ValueError, TypeError):
+            pass
+
+    if is_requester:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Segregation of duties violation: Requesters cannot approve or reject their own requests.",
+        )
+
+    # 3. Role-based authorization: fail closed if role cannot be established or unauthorized
+    # Authorized roles from existing role definitions:
+    # PLATFORM_ADMINISTRATOR, SERVICE_LEAD, INCIDENT_MANAGER, PROCESS_CHANGE_MANAGER
+    # Unauthorized roles: REQUESTER, SERVICE_AGENT, AUDITOR
+    authorized_roles = {
+        "PLATFORM_ADMINISTRATOR",
+        "SERVICE_LEAD",
+        "INCIDENT_MANAGER",
+        "PROCESS_CHANGE_MANAGER",
+    }
+    is_platform_admin = (
+        user_role == "PLATFORM_ADMINISTRATOR"
+        or platform_role in {"ADMIN", "SUPER_ADMIN"}
+        or str(getattr(request.state, "user_role", "")).lower() in {"owner", "admin"}
+    )
+
+    if not is_platform_admin and user_role not in authorized_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Forbidden: Role '{user_role}' is not authorized to approve or reject service requests. Manager or Administrator authorization required.",
+        )
+
+    # 4. Approver assignment check (if explicitly designated)
+    if approval.approver_id and approval.approver_id != actor_id and not is_platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: This request is assigned to a different approver.",
+        )
 
 
 def _build_approval_response(
@@ -120,6 +199,16 @@ def _build_approval_response(
                 if "quantity" in form_data and quantity == 1:
                     quantity = form_data.get("quantity", 1)
 
+    assignment_group = ticket.assignment_group if ticket else None
+    assignee_id = ticket.assignee_id if ticket else None
+    assignee_email = None
+    if ticket and hasattr(ticket, "assignee") and ticket.assignee:
+        assignee_email = ticket.assignee.email
+    elif assignee_id:
+        ass_u = db.query(User).filter(User.id == assignee_id).first()
+        if ass_u:
+            assignee_email = ass_u.email
+
     return ITSMApprovalResponse(
         id=approval.id,
         tenant_id=approval.tenant_id,
@@ -141,6 +230,9 @@ def _build_approval_response(
         requester_email=requester_email,
         approver_id=approval.approver_id,
         approver_email=approver_email,
+        assignment_group=assignment_group,
+        assignee_id=assignee_id,
+        assignee_email=assignee_email,
         form_data=form_data,
         resolution_reason=approval.resolution_reason,
         expires_at=approval.expires_at,
@@ -280,7 +372,8 @@ def approve_request(
 ):
     actor_id = UUID(str(request.state.user_id))
     t_id = UUID(tenant_id)
-    _get_user_role_and_validate(db, t_id, actor_id)
+    user_role = _get_user_role_and_validate(db, t_id, actor_id)
+    platform_role = str(getattr(request.state, "platform_role", "") or "").upper()
 
     # Lookup approval by ID or action_id (ticket_id)
     approval = None
@@ -308,14 +401,6 @@ def approve_request(
             detail=f"Approval already resolved: {approval.status}",
         )
 
-    now = datetime.now(timezone.utc)
-    approval.status = "APPROVED"
-    approval.approver_id = actor_id
-    approval.approved_at = now
-    approval.updated_at = now
-    if body and body.reason:
-        approval.resolution_reason = body.reason.strip()
-
     # Find underlying ticket
     ticket_id = approval.action_id or (approval.action_payload or {}).get("ticket_id")
     ticket = None
@@ -327,6 +412,25 @@ def approve_request(
             ).first()
         except ValueError:
             ticket = None
+
+    # Validate approval authority and enforce Segregation of Duties (SoD)
+    _validate_approval_decision_authority(
+        db=db,
+        approval=approval,
+        ticket=ticket,
+        actor_id=actor_id,
+        user_role=user_role,
+        platform_role=platform_role,
+        request=request,
+    )
+
+    now = datetime.now(timezone.utc)
+    approval.status = "APPROVED"
+    approval.approver_id = actor_id
+    approval.approved_at = now
+    approval.updated_at = now
+    if body and body.reason:
+        approval.resolution_reason = body.reason.strip()
 
     if ticket:
         prev_status = ticket.status
@@ -396,6 +500,38 @@ def approve_request(
     except Exception as e:
         logger.warning("Audit savepoint failed: %s", e)
 
+    # Dispatch in-app notification to requester
+    recipient_id = approval.requester_id or (ticket.requester_id if ticket else None)
+    if recipient_id:
+        try:
+            recent_cutoff = now - timedelta(seconds=10)
+            existing = (
+                db.query(Notification)
+                .filter(
+                    Notification.tenant_id == t_id,
+                    Notification.user_id == recipient_id,
+                    Notification.type == "itsm.request.approval",
+                    Notification.link == f"/itsm/requests/{ticket.id if ticket else approval.id}",
+                    Notification.created_at >= recent_cutoff,
+                )
+                .first()
+            )
+            if not existing:
+                ticket_ref = ticket.ticket_number if (ticket and ticket.ticket_number) else (f"Request {ticket.id}" if ticket else "Service Request")
+                ticket_title = ticket.title if (ticket and ticket.title) else ticket_ref
+                add_notification(
+                    db,
+                    tenant_id=t_id,
+                    user_id=recipient_id,
+                    type="itsm.request.approval",
+                    severity="info",
+                    title=f"Service Request Approved: {ticket_ref}",
+                    body=f"Your request '{ticket_title}' has been approved and moved to in-progress fulfillment.",
+                    link=f"/itsm/requests/{ticket.id if ticket else approval.id}",
+                )
+        except Exception as e:
+            logger.warning("Failed to dispatch approval notification: %s", e)
+
     db.commit()
     db.refresh(approval)
     if ticket:
@@ -419,7 +555,8 @@ def reject_request(
 ):
     actor_id = UUID(str(request.state.user_id))
     t_id = UUID(tenant_id)
-    _get_user_role_and_validate(db, t_id, actor_id)
+    user_role = _get_user_role_and_validate(db, t_id, actor_id)
+    platform_role = str(getattr(request.state, "platform_role", "") or "").upper()
 
     # Lookup approval by ID or action_id (ticket_id)
     approval = None
@@ -447,13 +584,6 @@ def reject_request(
             detail=f"Approval already resolved: {approval.status}",
         )
 
-    now = datetime.now(timezone.utc)
-    reason = body.reason.strip() if body and body.reason else "Request rejected by manager"
-    approval.status = "REJECTED"
-    approval.approver_id = actor_id
-    approval.resolution_reason = reason
-    approval.updated_at = now
-
     # Find underlying ticket
     ticket_id = approval.action_id or (approval.action_payload or {}).get("ticket_id")
     ticket = None
@@ -465,6 +595,24 @@ def reject_request(
             ).first()
         except ValueError:
             ticket = None
+
+    # Validate approval authority and enforce Segregation of Duties (SoD)
+    _validate_approval_decision_authority(
+        db=db,
+        approval=approval,
+        ticket=ticket,
+        actor_id=actor_id,
+        user_role=user_role,
+        platform_role=platform_role,
+        request=request,
+    )
+
+    now = datetime.now(timezone.utc)
+    reason = body.reason.strip() if body and body.reason else "Request rejected by manager"
+    approval.status = "REJECTED"
+    approval.approver_id = actor_id
+    approval.resolution_reason = reason
+    approval.updated_at = now
 
     if ticket:
         prev_status = ticket.status
@@ -533,6 +681,41 @@ def reject_request(
             logger.warning("Audit event emission failed for rejection: %s", e)
     except Exception as e:
         logger.warning("Audit savepoint failed: %s", e)
+
+    # Dispatch in-app notification to requester
+    recipient_id = approval.requester_id or (ticket.requester_id if ticket else None)
+    if recipient_id:
+        try:
+            recent_cutoff = now - timedelta(seconds=10)
+            existing = (
+                db.query(Notification)
+                .filter(
+                    Notification.tenant_id == t_id,
+                    Notification.user_id == recipient_id,
+                    Notification.type == "itsm.request.rejection",
+                    Notification.link == f"/itsm/requests/{ticket.id if ticket else approval.id}",
+                    Notification.created_at >= recent_cutoff,
+                )
+                .first()
+            )
+            if not existing:
+                ticket_ref = ticket.ticket_number if (ticket and ticket.ticket_number) else (f"Request {ticket.id}" if ticket else "Service Request")
+                ticket_title = ticket.title if (ticket and ticket.title) else ticket_ref
+                body_msg = f"Your request '{ticket_title}' was rejected."
+                if reason:
+                    body_msg += f" Reason: {reason}"
+                add_notification(
+                    db,
+                    tenant_id=t_id,
+                    user_id=recipient_id,
+                    type="itsm.request.rejection",
+                    severity="warning",
+                    title=f"Service Request Rejected: {ticket_ref}",
+                    body=body_msg,
+                    link=f"/itsm/requests/{ticket.id if ticket else approval.id}",
+                )
+        except Exception as e:
+            logger.warning("Failed to dispatch rejection notification: %s", e)
 
     db.commit()
     db.refresh(approval)

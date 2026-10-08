@@ -13,6 +13,7 @@ from sqlalchemy import func, inspect, or_, text
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import (
+    ITSMBusinessCalendar,
     ITSMService,
     ITSMServiceCatalogItem,
     ITSMServiceRequestDetail,
@@ -102,6 +103,8 @@ class RequestService:
             sla_due_at=ticket.sla_due_at,
             sla_started_at=ticket.sla_started_at,
             sla_remaining_seconds=ticket.sla_remaining_seconds,
+            sla_warning_escalated_at=getattr(ticket, "sla_warning_escalated_at", None),
+            sla_breach_escalated_at=getattr(ticket, "sla_breach_escalated_at", None),
             resolution_code=ticket.resolution_code,
             resolution_summary=ticket.resolution_summary,
             resolved_at=ticket.resolved_at,
@@ -366,9 +369,39 @@ class RequestService:
             updated_at=now,
         )
 
+        custom_res_minutes = None
+        if catalog_item and getattr(catalog_item, "estimated_delivery_hours", None):
+            try:
+                hours = int(catalog_item.estimated_delivery_hours)
+                if hours > 0:
+                    custom_res_minutes = hours * 60
+            except (ValueError, TypeError):
+                custom_res_minutes = None
+
         from app.services.itsm_sla_service import apply_sla_policy
-        sla_policy = IncidentService._find_sla_policy(db, tenant_id, priority, service_id)
-        apply_sla_policy(ticket, sla_policy, now)
+        sla_policy = IncidentService._find_sla_policy(db, tenant_id, priority, service_id, ticket_type="SERVICE_REQUEST")
+
+        default_calendar = None
+        if not sla_policy or not getattr(sla_policy, "calendar_id", None):
+            try:
+                default_calendar = (
+                    db.query(ITSMBusinessCalendar)
+                    .filter(
+                        ITSMBusinessCalendar.tenant_id == tenant_id,
+                        ITSMBusinessCalendar.is_default.is_(True),
+                    )
+                    .first()
+                )
+            except Exception:
+                default_calendar = None
+
+        apply_sla_policy(
+            ticket,
+            sla_policy,
+            now,
+            custom_resolution_target_minutes=custom_res_minutes,
+            calendar=default_calendar,
+        )
 
         db.add(ticket)
         db.flush()
@@ -391,6 +424,7 @@ class RequestService:
             )
             db.add(detail)
             db.flush()
+            ticket.request_detail = detail
 
             if catalog_item.approval_required:
                 approval = PendingApproval(
@@ -658,6 +692,8 @@ class RequestService:
             )
 
         transition_time = datetime.now(timezone.utc)
+        if target_status in {"IN_PROGRESS", "RESOLVED"} and ticket.sla_response_met_at is None:
+            ticket.sla_response_met_at = transition_time
         if target_status == "RESOLVED":
             ticket.resolved_at = transition_time
             ticket.sla_resolution_met_at = transition_time
@@ -895,6 +931,9 @@ class RequestService:
             actor_id=actor_id,
             is_internal=payload.is_internal,
         )
+
+        if ticket.sla_response_met_at is None and actor_id != ticket.requester_id:
+            ticket.sla_response_met_at = datetime.now(timezone.utc)
 
         ticket.updated_at = datetime.now(timezone.utc)
         cls._emit_audit_event(

@@ -123,7 +123,7 @@ export default function ServiceAgentWorkspacePage() {
   return (
     <div className="space-y-6 max-w-7xl mx-auto px-4 sm:px-6 py-6">
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-[#E6E9F0] pb-5">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 bg-white border border-[#E2E8F0] rounded-xl p-5 sm:p-6 shadow-sm">
         <div>
           <div className="inline-flex items-center gap-2 text-xs font-semibold text-[#6D28D9] uppercase tracking-wider mb-1">
             <span className="w-2 h-2 rounded-full bg-[#6D28D9]" />

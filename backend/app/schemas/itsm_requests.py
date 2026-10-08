@@ -51,6 +51,8 @@ class ServiceRequestResponse(BaseModel):
     sla_due_at: Optional[datetime] = None
     sla_started_at: Optional[datetime] = None
     sla_remaining_seconds: Optional[float] = None
+    sla_warning_escalated_at: Optional[datetime] = None
+    sla_breach_escalated_at: Optional[datetime] = None
     resolution_code: Optional[str] = None
     resolution_summary: Optional[str] = None
     resolved_at: Optional[datetime] = None
@@ -58,6 +60,9 @@ class ServiceRequestResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     request_detail: Optional[ServiceRequestDetailData] = None
+    approval_required: bool = False
+    approval_status: Optional[str] = None
+    rejection_reason: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 

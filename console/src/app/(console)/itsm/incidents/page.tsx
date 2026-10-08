@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import {
   AlertCircle,
+  CheckCircle2,
   Clock,
   Filter,
   LifeBuoy,
@@ -12,6 +13,7 @@ import {
   Search,
   Ticket as TicketIcon,
   ChevronRight,
+  XCircle,
 } from "lucide-react";
 import { formatDateTime } from "@/lib/itsm-format";
 import { Incident } from "@/lib/itsm-types";
@@ -236,6 +238,7 @@ export default function IncidentListPage() {
                   <th className="py-3.5 px-4">Ticket ID</th>
                   <th className="py-3.5 px-4">Title / Problem</th>
                   <th className="py-3.5 px-4">Type</th>
+                  <th className="py-3.5 px-4">Approval</th>
                   <th className="py-3.5 px-4">Status</th>
                   <th className="py-3.5 px-4">Priority</th>
                   <th className="py-3.5 px-4">Created</th>
@@ -251,15 +254,41 @@ export default function IncidentListPage() {
                         {incident.ticket_number}
                       </Link>
                     </td>
-                    <td className="py-3.5 px-4 font-medium text-[#0E1726] max-w-[240px] truncate">
-                      <Link href={getTicketHref(incident)} className="hover:text-[#6D28D9]">
+                    <td className="py-3.5 px-4 font-medium text-[#0E1726] max-w-[240px]">
+                      <Link href={getTicketHref(incident)} className="hover:text-[#6D28D9] block truncate">
                         {incident.title}
                       </Link>
+                      {incident.rejection_reason && (
+                        <p className="text-[11px] text-rose-600 font-medium truncate mt-0.5">
+                          Reason: {incident.rejection_reason}
+                        </p>
+                      )}
                     </td>
                     <td className="py-3.5 px-4 text-[#6B7488]">
                       <span className="inline-flex items-center px-2 py-0.5 rounded bg-slate-100 text-[#475069] text-[11px] font-semibold">
                         {incident.ticket_type || "Incident"}
                       </span>
+                    </td>
+                    <td className="py-3.5 px-4">
+                      {incident.approval_required || incident.approval_status ? (
+                        incident.approval_status === "PENDING" || (!incident.approval_status && incident.status === "PENDING") ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[11px] font-semibold">
+                            <Clock className="w-3 h-3 text-amber-600" /> Pending
+                          </span>
+                        ) : incident.approval_status === "APPROVED" ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[11px] font-semibold">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Approved
+                          </span>
+                        ) : incident.approval_status === "REJECTED" ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-[11px] font-semibold" title={incident.rejection_reason || undefined}>
+                            <XCircle className="w-3 h-3 text-rose-600" /> Rejected
+                          </span>
+                        ) : (
+                          <span className="text-[#8C95A8] text-[11px]">Not Required</span>
+                        )
+                      ) : (
+                        <span className="text-[#8C95A8] text-[11px]">—</span>
+                      )}
                     </td>
                     <td className="py-3.5 px-4">
                       <IncidentStatusBadge status={incident.status} />

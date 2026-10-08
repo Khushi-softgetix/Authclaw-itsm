@@ -137,7 +137,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
     itsmRole || (platformRole === "SUPER_ADMIN" ? "PLATFORM_ADMINISTRATOR" : "REQUESTER")
   ).toUpperCase();
   const displayedRole = isItsm
-    ? (itsmRole && ITSM_ROLE_LABELS[itsmRole.toUpperCase()]) || itsmRole?.replace(/_/g, " ") || "Requester"
+    ? (effectiveItsmRole && ITSM_ROLE_LABELS[effectiveItsmRole]) || (itsmRole && ITSM_ROLE_LABELS[itsmRole.toUpperCase()]) || itsmRole?.replace(/_/g, " ") || "Requester"
     : (hasPlatformAccess ? "platform admin" : normalizedRole);
   const auditorSection = searchParams.get("section") || "overview";
 
@@ -189,6 +189,8 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
       ? "Incident Details"
       : pathname === "/itsm/approvals" || pathname.startsWith("/itsm/approvals/")
       ? "Approvals"
+      : pathname === "/itsm/requests" || pathname.startsWith("/itsm/requests/")
+      ? "Requests"
       : pathname === "/itsm/notifications"
       ? "Notifications"
       : pathname === "/itsm/profile"
@@ -199,6 +201,12 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
       ? "Catalog Studio"
       : (effectiveItsmRole === "CATALOG_MANAGER" && (pathname === "/itsm/services" || pathname.startsWith("/itsm/services/")))
       ? "Catalog Items"
+      : pathname === "/itsm/problem-change-manager"
+      ? "Dashboard"
+      : pathname.startsWith("/itsm/problem-change-manager/problems")
+      ? "Problems"
+      : pathname.startsWith("/itsm/problem-change-manager/changes")
+      ? "Changes"
       : itsmNavigation.find((item) => pathname === item.href || pathname.startsWith(item.href))?.name || "ITSM"
     : navigation.find((item) => pathname === item.href)?.name || "Overview";
 
@@ -207,18 +215,44 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
       {allowedNavigation.map((item) => {
         const itemSection = item.href.includes("section=") ? item.href.split("section=")[1] : null;
         const itemPath = item.href.split("?")[0];
-        const isExact = pathname === item.href;
-        const isDashboard = item.href === "/itsm/dashboard" && pathname.startsWith("/itsm/dashboard");
-        const isTickets = item.href === "/itsm/incidents" && pathname.startsWith("/itsm/incidents") && pathname !== "/itsm/incidents/new";
-        const isGenericPrefix =
-          item.href !== "/overview" &&
-          item.href !== "/itsm/dashboard" &&
-          item.href !== "/itsm/incidents" &&
-          pathname.startsWith(item.href + "/");
 
-        const active = effectiveItsmRole === "AUDITOR" && itemSection
-          ? pathname === itemPath && auditorSection === itemSection
-          : isExact || isDashboard || isTickets || isGenericPrefix;
+        let active = false;
+        if (effectiveItsmRole === "AUDITOR" && itemSection) {
+          active = pathname === itemPath && auditorSection === itemSection;
+        } else if (effectiveItsmRole === "PROCESS_CHANGE_MANAGER") {
+          if (item.href === "/itsm/problem-change-manager") {
+            active = pathname === "/itsm/problem-change-manager";
+          } else if (item.href === "/itsm/problem-change-manager/problems") {
+            active =
+              pathname === "/itsm/problem-change-manager/problems" ||
+              pathname.startsWith("/itsm/problem-change-manager/problems/");
+          } else if (item.href === "/itsm/problem-change-manager/changes") {
+            active =
+              pathname === "/itsm/problem-change-manager/changes" ||
+              pathname.startsWith("/itsm/problem-change-manager/changes/");
+          } else if (item.href === "/itsm/knowledge") {
+            active =
+              pathname === "/itsm/knowledge" ||
+              pathname.startsWith("/itsm/knowledge/") ||
+              pathname === "/itsm/problem-change-manager/knowledge" ||
+              pathname.startsWith("/itsm/problem-change-manager/knowledge/");
+          } else {
+            active = pathname === item.href;
+          }
+        } else {
+          const isExact = pathname === item.href;
+          const isDashboard = item.href === "/itsm/dashboard" && pathname.startsWith("/itsm/dashboard");
+          const isTickets = item.href === "/itsm/incidents" && pathname.startsWith("/itsm/incidents") && pathname !== "/itsm/incidents/new";
+          const isGenericPrefix =
+            item.href !== "/overview" &&
+            item.href !== "/itsm/dashboard" &&
+            item.href !== "/itsm/incidents" &&
+            item.href !== "/itsm/problem-change-manager" &&
+            pathname.startsWith(item.href + "/");
+
+          active = isExact || isDashboard || isTickets || isGenericPrefix;
+        }
+
         return (
           <Link
             key={item.name}

@@ -130,7 +130,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
     itsmRole || (platformRole === "SUPER_ADMIN" ? "PLATFORM_ADMINISTRATOR" : "REQUESTER")
   ).toUpperCase();
   const displayedRole = isItsm
-    ? (itsmRole && ITSM_ROLE_LABELS[itsmRole.toUpperCase()]) || itsmRole?.replace(/_/g, " ") || "Requester"
+    ? (effectiveItsmRole && ITSM_ROLE_LABELS[effectiveItsmRole]) || (itsmRole && ITSM_ROLE_LABELS[itsmRole.toUpperCase()]) || itsmRole?.replace(/_/g, " ") || "Requester"
     : (hasPlatformAccess ? "platform admin" : normalizedRole);
   const auditorSection = searchParams.get("section") || "overview";
 
@@ -180,6 +180,8 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
       ? "Incident Details"
       : pathname === "/itsm/approvals" || pathname.startsWith("/itsm/approvals/")
       ? "Approvals"
+      : pathname === "/itsm/requests" || pathname.startsWith("/itsm/requests/")
+      ? "Requests"
       : pathname === "/itsm/notifications"
       ? "Notifications"
       : pathname === "/itsm/profile"

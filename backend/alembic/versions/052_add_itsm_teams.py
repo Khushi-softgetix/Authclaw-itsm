@@ -72,7 +72,19 @@ def upgrade() -> None:
     op.execute(f"GRANT SELECT, INSERT, UPDATE, DELETE ON public.{_MEMBERS_TABLE} TO authclaw_app;")
     op.execute(f"GRANT SELECT ON public.{_MEMBERS_TABLE} TO authclaw_agent_runtime;")
 
+    # 3. Add SLA escalation tracking columns to itsm_tickets
+    op.add_column(
+        "itsm_tickets",
+        sa.Column("sla_warning_escalated_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.add_column(
+        "itsm_tickets",
+        sa.Column("sla_breach_escalated_at", sa.DateTime(timezone=True), nullable=True),
+    )
+
 
 def downgrade() -> None:
+    op.drop_column("itsm_tickets", "sla_breach_escalated_at")
+    op.drop_column("itsm_tickets", "sla_warning_escalated_at")
     op.drop_table(_MEMBERS_TABLE)
     op.drop_table(_TEAMS_TABLE)

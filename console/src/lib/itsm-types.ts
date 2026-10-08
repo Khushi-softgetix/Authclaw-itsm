@@ -47,6 +47,8 @@ export interface Incident {
   sla_due_at?: string | null;
   sla_started_at?: string | null;
   sla_remaining_seconds?: number | null;
+  sla_warning_escalated_at?: string | null;
+  sla_breach_escalated_at?: string | null;
   resolution_code?: string | null;
   resolution_summary?: string | null;
   resolved_at?: string | null;

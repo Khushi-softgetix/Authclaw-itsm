@@ -21,6 +21,8 @@ export interface SlaTicketLike {
   sla_resolution_met_at?: string | null;
   sla_paused_at?: string | null;
   sla_accumulated_pause_seconds?: number;
+  sla_warning_escalated_at?: string | null;
+  sla_breach_escalated_at?: string | null;
   sla_started_at?: string | null;
   created_at?: string | null;
 }

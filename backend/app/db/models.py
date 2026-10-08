@@ -1241,6 +1241,8 @@ class ITSMTicket(Base):
     sla_status = Column(String(20), nullable=False, default="WITHIN_SLA")
     sla_paused_at = Column(DateTime(timezone=True), nullable=True)
     sla_accumulated_pause_seconds = Column(Integer, nullable=False, default=0)
+    sla_warning_escalated_at = Column(DateTime(timezone=True), nullable=True)
+    sla_breach_escalated_at = Column(DateTime(timezone=True), nullable=True)
     resolution_code = Column(String(50), nullable=True)
     resolution_summary = Column(Text, nullable=True)
     resolved_at = Column(DateTime(timezone=True), nullable=True)

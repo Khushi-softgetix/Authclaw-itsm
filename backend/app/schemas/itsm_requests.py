@@ -51,6 +51,8 @@ class ServiceRequestResponse(BaseModel):
     sla_due_at: Optional[datetime] = None
     sla_started_at: Optional[datetime] = None
     sla_remaining_seconds: Optional[float] = None
+    sla_warning_escalated_at: Optional[datetime] = None
+    sla_breach_escalated_at: Optional[datetime] = None
     resolution_code: Optional[str] = None
     resolution_summary: Optional[str] = None
     resolved_at: Optional[datetime] = None

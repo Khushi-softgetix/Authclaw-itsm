@@ -78,6 +78,22 @@ const URGENCY_OPTIONS = [
   { value: "LOW", label: "Low", desc: "Can work around it or minimal impact on current tasks" },
 ];
 
+const PRIORITY_OPTIONS = [
+  { value: "P1", label: "P1 · Critical", desc: "Critical business outage or total blocker" },
+  { value: "P2", label: "P2 · High", desc: "Major degradation or time-critical task blocked" },
+  { value: "P3", label: "P3 · Medium", desc: "Standard business issue, partial disruption" },
+  { value: "P4", label: "P4 · Low", desc: "Minor inconvenience or workaround available" },
+];
+
+function deriveMatrixPriority(imp: string, urg: string): string {
+  const i = (imp || "MEDIUM").toUpperCase();
+  const u = (urg || "MEDIUM").toUpperCase();
+  if (i === "CRITICAL" || (i === "HIGH" && (u === "HIGH" || u === "CRITICAL"))) return "P1";
+  if ((i === "HIGH" && u === "MEDIUM") || (i === "MEDIUM" && (u === "HIGH" || u === "CRITICAL"))) return "P2";
+  if ((i === "MEDIUM" && u === "MEDIUM") || (i === "HIGH" && u === "LOW") || (i === "LOW" && (u === "HIGH" || u === "CRITICAL"))) return "P3";
+  return "P4";
+}
+
 const CATEGORY_OPTIONS = [
   { value: "GENERAL", label: "General IT Support" },
   { value: "SOFTWARE", label: "Software & Applications" },
@@ -101,10 +117,38 @@ export default function CreateIncidentPage() {
   const [title, setTitle] = useState<string>("");
   const [description, setDescription] = useState<string>("");
   const [impact, setImpact] = useState<string>("MEDIUM");
-  const [urgency, setUrgency] = useState<string>("");
+  const [urgency, setUrgency] = useState<string>("MEDIUM");
+  const [priority, setPriority] = useState<string>("P3");
   const [category, setCategory] = useState<string>("GENERAL");
   const [attachments, setAttachments] = useState<File[]>([]);
   const [attachmentPreviews, setAttachmentPreviews] = useState<{ [name: string]: string }>({});
+
+  const handlePrioritySelect = (p: string) => {
+    setPriority(p);
+    if (p === "P1") {
+      setImpact("CRITICAL");
+      setUrgency("HIGH");
+    } else if (p === "P2") {
+      setImpact("HIGH");
+      setUrgency("MEDIUM");
+    } else if (p === "P3") {
+      setImpact("MEDIUM");
+      setUrgency("MEDIUM");
+    } else if (p === "P4") {
+      setImpact("LOW");
+      setUrgency("LOW");
+    }
+  };
+
+  const handleImpactSelect = (newImpact: string) => {
+    setImpact(newImpact);
+    setPriority(deriveMatrixPriority(newImpact, urgency));
+  };
+
+  const handleUrgencySelect = (newUrgency: string) => {
+    setUrgency(newUrgency);
+    setPriority(deriveMatrixPriority(impact, newUrgency));
+  };
 
   // Submission State
   const [submitting, setSubmitting] = useState<boolean>(false);
@@ -209,7 +253,8 @@ export default function CreateIncidentPage() {
         title: title.trim(),
         description: description.trim(),
         impact,
-        urgency,
+        urgency: urgency || "MEDIUM",
+        priority,
         category,
         source_channel: "PORTAL",
       };
@@ -444,6 +489,39 @@ export default function CreateIncidentPage() {
           </select>
         </div>
 
+        {/* Priority Selection */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="block text-xs font-bold text-[#0E1726]">
+              Priority *
+            </label>
+            <span className="text-[11px] font-semibold text-[#6D28D9] bg-[#F1ECFE] px-2.5 py-0.5 rounded-full border border-[#DDD6FE]">
+              Active: {priority}
+            </span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {PRIORITY_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                id={`priority-option-${opt.value.toLowerCase()}`}
+                onClick={() => handlePrioritySelect(opt.value)}
+                className={`p-3 rounded-xl border text-left transition-all ${
+                  priority === opt.value
+                    ? "border-[#6D28D9] bg-[#F1ECFE] ring-1 ring-[#6D28D9]"
+                    : "border-[#E6E9F0] bg-[#FBFAF9] hover:bg-white"
+                }`}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-bold text-[#0E1726]">{opt.label}</span>
+                  {priority === opt.value && <CheckCircle2 className="w-3.5 h-3.5 text-[#6D28D9]" />}
+                </div>
+                <p className="text-[11px] text-[#6B7488] leading-tight">{opt.desc}</p>
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Impact */}
         <div>
           <label className="block text-xs font-bold text-[#0E1726] mb-2">
@@ -464,7 +542,7 @@ export default function CreateIncidentPage() {
                   name="impact"
                   value={opt.value}
                   checked={impact === opt.value}
-                  onChange={(e) => setImpact(e.target.value)}
+                  onChange={(e) => handleImpactSelect(e.target.value)}
                   className="mt-0.5 text-[#6D28D9] focus:ring-[#6D28D9]"
                 />
                 <div>
@@ -496,7 +574,7 @@ export default function CreateIncidentPage() {
                   name="urgency"
                   value={opt.value}
                   checked={urgency === opt.value}
-                  onChange={(e) => setUrgency(e.target.value)}
+                  onChange={(e) => handleUrgencySelect(e.target.value)}
                   className="mt-0.5 text-[#6D28D9] focus:ring-[#6D28D9]"
                 />
                 <div>

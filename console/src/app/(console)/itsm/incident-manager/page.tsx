@@ -225,7 +225,7 @@ export default function IncidentManagerPage() {
           <MetricCard label="Open incidents" value={summary.open_incidents} help="Active incident queue" icon={Gauge} tone="violet" href="/itsm/incident-manager/incidents" />
           <MetricCard label="Watch list" value={summary.escalation_watch} help="Requires operational review" icon={ShieldAlert} tone="indigo" active={view === "all"} onClick={() => setView("all")} />
           <MetricCard label="P1 / P2" value={summary.p1_p2} help="High-priority incidents" icon={Flame} tone="rose" active={view === "priority"} onClick={() => setView("priority")} />
-          <MetricCard label="SLA breached" value={summary.sla_breached} help="Past the SLA target" icon={TimerOff} tone="rose" active={view === "breached"} onClick={() => setView("breached")} />
+          <MetricCard label="SLA breached" value={summary.sla_breached} help="Past the SLA target" icon={TimerOff} tone="rose" href="/itsm/incident-manager/incidents?attention=SLA_BREACHED" />
           <MetricCard label="SLA at risk" value={summary.sla_at_risk} help="Approaching the SLA target" icon={Clock3} tone="amber" active={view === "risk"} onClick={() => setView("risk")} />
           <MetricCard label="Stuck / idle" value={summary.stuck} help="No recent meaningful activity" icon={AlertTriangle} tone="slate" active={view === "stuck"} onClick={() => setView("stuck")} />
           <MetricCard label="Unassigned" value={summary.unassigned} help="Needs team or owner" icon={UsersRound} tone="sand" href="/itsm/incident-manager/incidents?assignment_group=__UNASSIGNED__&unassigned=true" />

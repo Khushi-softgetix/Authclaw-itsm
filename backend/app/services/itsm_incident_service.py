@@ -98,10 +98,17 @@ def calculate_priority_from_matrix(impact: str, urgency: str) -> str:
 
 class IncidentService:
     @staticmethod
-    def _find_sla_policy(db: Session, tenant_id: UUID, priority: str, service_id: UUID | None) -> ITSMSLAPolicy | None:
+    def _find_sla_policy(
+        db: Session,
+        tenant_id: UUID,
+        priority: str,
+        service_id: UUID | None,
+        ticket_type: str = "INCIDENT",
+    ) -> ITSMSLAPolicy | None:
+        norm_ticket_type = (ticket_type or "INCIDENT").strip().upper()
         query = db.query(ITSMSLAPolicy).filter(
             ITSMSLAPolicy.tenant_id == tenant_id,
-            ITSMSLAPolicy.ticket_type == "INCIDENT",
+            ITSMSLAPolicy.ticket_type == norm_ticket_type,
             ITSMSLAPolicy.priority == priority,
             ITSMSLAPolicy.is_active.is_(True),
         )
@@ -110,7 +117,43 @@ class IncidentService:
             query = query.order_by(case((ITSMSLAPolicy.service_id == service_id, 0), else_=1))
         else:
             query = query.filter(ITSMSLAPolicy.service_id.is_(None))
-        return query.first()
+        policy = query.first()
+
+        # Fallback for SERVICE_REQUEST if no dedicated policy exists: try active INCIDENT policy
+        if not policy and norm_ticket_type != "INCIDENT":
+            fallback_query = db.query(ITSMSLAPolicy).filter(
+                ITSMSLAPolicy.tenant_id == tenant_id,
+                ITSMSLAPolicy.ticket_type == "INCIDENT",
+                ITSMSLAPolicy.priority == priority,
+                ITSMSLAPolicy.is_active.is_(True),
+            )
+            if service_id:
+                fallback_query = fallback_query.filter(or_(ITSMSLAPolicy.service_id == service_id, ITSMSLAPolicy.service_id.is_(None)))
+                fallback_query = fallback_query.order_by(case((ITSMSLAPolicy.service_id == service_id, 0), else_=1))
+            else:
+                fallback_query = fallback_query.filter(ITSMSLAPolicy.service_id.is_(None))
+            policy = fallback_query.first()
+
+        # Fallback if service_id was None but tenant only has service-specific policies
+        if not policy and service_id is None:
+            any_policy_query = db.query(ITSMSLAPolicy).filter(
+                ITSMSLAPolicy.tenant_id == tenant_id,
+                ITSMSLAPolicy.ticket_type == norm_ticket_type,
+                ITSMSLAPolicy.priority == priority,
+                ITSMSLAPolicy.is_active.is_(True),
+            ).order_by(ITSMSLAPolicy.created_at.asc())
+            policy = any_policy_query.first()
+
+            if not policy and norm_ticket_type != "INCIDENT":
+                any_incident_query = db.query(ITSMSLAPolicy).filter(
+                    ITSMSLAPolicy.tenant_id == tenant_id,
+                    ITSMSLAPolicy.ticket_type == "INCIDENT",
+                    ITSMSLAPolicy.priority == priority,
+                    ITSMSLAPolicy.is_active.is_(True),
+                ).order_by(ITSMSLAPolicy.created_at.asc())
+                policy = any_incident_query.first()
+
+        return policy
 
     @staticmethod
     def list_saved_views(db: Session, tenant_id: UUID, user_id: UUID) -> list:
@@ -593,7 +636,7 @@ class IncidentService:
             else matrix_priority
         )
         if priority != matrix_priority and not (payload.priority_override_reason or "").strip():
-            raise HTTPException(status_code=400, detail="priority_override_reason is required when overriding the impact/urgency matrix")
+            payload.priority_override_reason = f"Intake priority set to {priority}"
 
         assignment_group = payload.assignment_group
         if not assignment_group and service and service.escalation_team:
@@ -601,7 +644,7 @@ class IncidentService:
             assignment_group = service.escalation_team
 
         # Minimal SLA Policy Association (Step 14: no SLA engine calculations)
-        sla_policy = cls._find_sla_policy(db, tenant_id, priority, payload.service_id)
+        sla_policy = cls._find_sla_policy(db, tenant_id, priority, payload.service_id, ticket_type="INCIDENT")
 
         ticket_number = cls.generate_ticket_number(db, tenant_id, "INCIDENT")
         initial_status = "ASSIGNED" if (payload.assignee_id or assignment_group) else "NEW"
@@ -631,8 +674,6 @@ class IncidentService:
             updated_at=now,
         )
         apply_sla_policy(ticket, sla_policy, now)
-        if ticket.assignee_id or ticket.assignment_group:
-            ticket.sla_response_met_at = now
         db.add(ticket)
         db.flush()
 
@@ -1210,7 +1251,7 @@ class IncidentService:
 
         if changed_fields:
             if "priority" in changed_fields or "service_id" in changed_fields:
-                policy = cls._find_sla_policy(db, tenant_id, ticket.priority, ticket.service_id)
+                policy = cls._find_sla_policy(db, tenant_id, ticket.priority, ticket.service_id, ticket_type=ticket.ticket_type)
                 response_met_at = ticket.sla_response_met_at
                 apply_sla_policy(ticket, policy, ticket.created_at)
                 ticket.sla_response_met_at = response_met_at
@@ -1301,6 +1342,8 @@ class IncidentService:
             pause_sla(ticket, transition_time)
         elif current_status == "PENDING" and target_status in {"IN_PROGRESS", "RESOLVED"}:
             resume_sla(ticket, transition_time)
+        if target_status in {"IN_PROGRESS", "RESOLVED"} and ticket.sla_response_met_at is None:
+            ticket.sla_response_met_at = transition_time
         if target_status == "RESOLVED":
             res_code = payload.resolution_code or ticket.resolution_code
             res_summary = payload.resolution_summary or ticket.resolution_summary
@@ -1413,9 +1456,6 @@ class IncidentService:
         # If incident was NEW and is now assigned, advance to ASSIGNED
         if ticket.status == "NEW" and (ticket.assignee_id or ticket.assignment_group):
             ticket.status = "ASSIGNED"
-
-        if ticket.sla_response_met_at is None and (ticket.assignee_id or ticket.assignment_group):
-            ticket.sla_response_met_at = datetime.now(timezone.utc)
 
         ticket.updated_at = datetime.now(timezone.utc)
 
@@ -1564,6 +1604,9 @@ class IncidentService:
             actor_id=actor_id,
             is_internal=payload.is_internal,
         )
+
+        if ticket.sla_response_met_at is None and actor_id != ticket.requester_id:
+            ticket.sla_response_met_at = datetime.now(timezone.utc)
 
         ticket.updated_at = datetime.now(timezone.utc)
 

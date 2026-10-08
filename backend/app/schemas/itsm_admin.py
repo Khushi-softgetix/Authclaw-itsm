@@ -281,6 +281,20 @@ class ITSMServiceCatalogItemUpdateRequest(BaseModel):
     intake_schema: Optional[dict] = Field(default=None)
 
 
+class ValidationCheckItem(BaseModel):
+    category: str
+    name: str
+    passed: bool
+    message: Optional[str] = None
+
+
+class ITSMServiceCatalogValidationResponse(BaseModel):
+    is_valid: bool
+    status: str  # "READY TO PUBLISH" or "VALIDATION FAILED"
+    errors: List[str] = Field(default_factory=list)
+    checks: List[ValidationCheckItem] = Field(default_factory=list)
+
+
 # --- Business Calendar Schemas ---
 class ITSMBusinessCalendarResponse(BaseModel):
     id: UUID

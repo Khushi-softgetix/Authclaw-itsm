@@ -57,6 +57,7 @@ from app.schemas.itsm_admin import (
     ITSMServiceCatalogItemCreateRequest,
     ITSMServiceCatalogItemResponse,
     ITSMServiceCatalogItemUpdateRequest,
+    ITSMServiceCatalogValidationResponse,
     ITSMServiceCreateRequest,
     ITSMServiceResponse,
     ITSMServiceUpdateRequest,
@@ -258,6 +259,200 @@ def _validate_fulfillment_group(db: Session, tenant_id: UUID, group_name: Option
         )
 
     return trimmed
+
+
+def _validate_catalog_offering(
+    db: Session,
+    tenant_id: UUID,
+    item: ITSMServiceCatalogItem,
+) -> tuple[bool, str, list[str], list[dict]]:
+    """
+    Deterministically validate a catalog offering configuration across:
+    1. Basic Information (name, slug, parent service)
+    2. Form Configuration (intake_schema structure)
+    3. Question Definitions (field keys, types, options, required flags, uniqueness)
+    4. Approval Configuration (approval_required boolean)
+    5. Fulfillment Configuration (active team belonging to current tenant)
+    """
+    errors: list[str] = []
+    checks: list[dict] = []
+
+    # 1. Basic Information
+    basic_errors: list[str] = []
+    if not item.name or not item.name.strip():
+        basic_errors.append("Catalog item requires a non-empty title/name")
+    elif len(item.name.strip()) < 2:
+        basic_errors.append("Catalog item name must be at least 2 characters long")
+    elif len(item.name.strip()) > 255:
+        basic_errors.append("Catalog item name cannot exceed 255 characters")
+
+    if not item.slug or not item.slug.strip():
+        basic_errors.append("Catalog item requires a valid URL slug identifier")
+    elif len(item.slug.strip()) > 100:
+        basic_errors.append("Catalog item slug cannot exceed 100 characters")
+
+    if not item.service_id:
+        basic_errors.append("Parent service is required")
+    else:
+        srv = (
+            db.query(ITSMService)
+            .filter(ITSMService.tenant_id == tenant_id, ITSMService.id == item.service_id)
+            .first()
+        )
+        if not srv:
+            cross_srv = db.query(ITSMService).filter(ITSMService.id == item.service_id).first()
+            if cross_srv:
+                basic_errors.append("Parent service belongs to another tenant")
+            else:
+                basic_errors.append("Referenced parent service does not exist in this tenant")
+        elif hasattr(srv, "status") and srv.status and str(srv.status).upper() in ("INACTIVE", "DEPRECATED", "DELETED"):
+            basic_errors.append(f"Referenced parent service is {srv.status}")
+
+    checks.append({
+        "category": "basic_info",
+        "name": "Basic Information",
+        "passed": len(basic_errors) == 0,
+        "message": "; ".join(basic_errors) if basic_errors else "Title, slug, and parent service valid",
+    })
+    errors.extend(basic_errors)
+
+    # 2. Form Configuration & 3. Question Definitions
+    form_errors: list[str] = []
+    question_errors: list[str] = []
+
+    schema = item.intake_schema
+    if schema is not None and not isinstance(schema, dict):
+        form_errors.append("intake_schema must be a valid JSON object")
+    else:
+        questions = (schema or {}).get("questions")
+        if questions is not None and not isinstance(questions, list):
+            form_errors.append("Form intake_schema.questions must be an array")
+        elif questions:
+            seen_keys: set[str] = set()
+            for idx, q in enumerate(questions):
+                if not isinstance(q, dict):
+                    question_errors.append(f"Question at index {idx} must be a JSON object")
+                    continue
+
+                q_id = q.get("id") or q.get("field_key") or q.get("key")
+                if not q_id or not isinstance(q_id, str) or not q_id.strip():
+                    question_errors.append(f"Question at index {idx} requires a valid key")
+                    continue
+
+                q_id = q_id.strip()
+                if not FIELD_KEY_REGEX.match(q_id):
+                    question_errors.append(
+                        f"Question field key '{q_id}' must start with a lowercase letter and contain only lowercase letters, digits, and underscores"
+                    )
+
+                if q_id in seen_keys:
+                    question_errors.append(f"Duplicate question key '{q_id}' found in form configuration")
+                seen_keys.add(q_id)
+
+                label = q.get("label")
+                if label is not None and not isinstance(label, str):
+                    question_errors.append(f"Question '{q_id}' label must be a string")
+
+                q_type = q.get("type")
+                if not q_type or not isinstance(q_type, str) or q_type.lower() not in SUPPORTED_QUESTION_TYPES:
+                    question_errors.append(
+                        f"Question '{q_id}' has unsupported type '{q_type}'"
+                    )
+                else:
+                    q_type = q_type.lower()
+                    if q_type in ("dropdown", "radio", "multiselect"):
+                        opts = q.get("options")
+                        if not isinstance(opts, list) or len(opts) == 0:
+                            question_errors.append(f"Question '{q_id}' of type '{q_type}' has no valid options")
+                        else:
+                            clean_opts = []
+                            for opt_idx, opt in enumerate(opts):
+                                if not isinstance(opt, str) or not opt.strip():
+                                    question_errors.append(f"Option at index {opt_idx} for question '{q_id}' cannot be empty")
+                                else:
+                                    clean_opts.append(opt.strip())
+                            if len(clean_opts) != len({o.lower() for o in clean_opts}):
+                                question_errors.append(f"Duplicate options are not allowed for question '{q_id}'")
+
+                req = q.get("required")
+                if req is not None and not isinstance(req, bool):
+                    question_errors.append(f"Question '{q_id}' 'required' must be a boolean")
+
+    checks.append({
+        "category": "form_schema",
+        "name": "Form Configuration",
+        "passed": len(form_errors) == 0,
+        "message": "; ".join(form_errors) if form_errors else "Intake schema structure valid",
+    })
+    errors.extend(form_errors)
+
+    checks.append({
+        "category": "question_definitions",
+        "name": "Question Definitions",
+        "passed": len(question_errors) == 0,
+        "message": "; ".join(question_errors) if question_errors else "All question keys, types, and options valid",
+    })
+    errors.extend(question_errors)
+
+    # 4. Approval Configuration
+    approval_errors: list[str] = []
+    if not isinstance(item.approval_required, bool):
+        approval_errors.append("Approval configuration must be a boolean flag")
+
+    checks.append({
+        "category": "approval",
+        "name": "Approval Configuration",
+        "passed": len(approval_errors) == 0,
+        "message": "; ".join(approval_errors) if approval_errors else "Approval routing configuration valid",
+    })
+    errors.extend(approval_errors)
+
+    # 5. Fulfillment Configuration
+    fulfillment_errors: list[str] = []
+    if item.fulfillment_group and item.fulfillment_group.strip():
+        fg_name = item.fulfillment_group.strip()
+        team_in_tenant = (
+            db.query(ITSMTeam)
+            .filter(
+                ITSMTeam.tenant_id == tenant_id,
+                func.lower(ITSMTeam.name) == fg_name.lower(),
+            )
+            .first()
+        )
+        if team_in_tenant:
+            if not team_in_tenant.is_active:
+                fulfillment_errors.append(f"Fulfillment team '{fg_name}' is inactive in this tenant")
+        else:
+            cross_team = (
+                db.query(ITSMTeam)
+                .filter(
+                    ITSMTeam.tenant_id != tenant_id,
+                    func.lower(ITSMTeam.name) == fg_name.lower(),
+                )
+                .first()
+            )
+            if cross_team:
+                fulfillment_errors.append(f"Fulfillment team '{fg_name}' belongs to another tenant")
+            else:
+                tenant_has_teams = (
+                    db.query(ITSMTeam.id)
+                    .filter(ITSMTeam.tenant_id == tenant_id)
+                    .first()
+                ) is not None
+                if tenant_has_teams:
+                    fulfillment_errors.append(f"Fulfillment team '{fg_name}' does not exist in this tenant")
+
+    checks.append({
+        "category": "fulfillment",
+        "name": "Fulfillment Configuration",
+        "passed": len(fulfillment_errors) == 0,
+        "message": "; ".join(fulfillment_errors) if fulfillment_errors else "Fulfillment team valid and active",
+    })
+    errors.extend(fulfillment_errors)
+
+    is_valid = len(errors) == 0
+    status_str = "READY TO PUBLISH" if is_valid else "VALIDATION FAILED"
+    return is_valid, status_str, errors, checks
 
 
 def require_itsm_platform_admin(request: Request, db: Session = Depends(get_tenant_db)):
@@ -2058,6 +2253,15 @@ def update_itsm_service_catalog_item(
         item.estimated_delivery_hours = payload.estimated_delivery_hours
 
     if payload.is_active is not None:
+        if payload.is_active is True:
+            item.is_active = True
+            is_valid, status_str, val_errors, _ = _validate_catalog_offering(db, tenant_id, item)
+            if not is_valid:
+                item.is_active = False
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"Cannot activate catalog item: validation failed. {val_errors[0] if val_errors else ''}".strip(),
+                )
         item.is_active = payload.is_active
         logger.info(
             "[ITSM_ADMIN_AUDIT] action=catalog_item_status_toggled tenant_id=%s user_id=%s item_id=%s is_active=%s",
@@ -2089,6 +2293,235 @@ def update_itsm_service_catalog_item(
         item.fulfillment_group,
         item.estimated_delivery_hours,
     )
+
+    return ITSMServiceCatalogItemResponse(
+        id=item.id,
+        name=item.name,
+        slug=item.slug,
+        description=item.description,
+        service_id=item.service_id,
+        service_name=service_name,
+        version=item.version,
+        approval_required=item.approval_required,
+        fulfillment_group=item.fulfillment_group,
+        estimated_delivery_hours=item.estimated_delivery_hours,
+        is_active=item.is_active,
+        intake_schema=item.intake_schema or {},
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
+
+
+@router.get(
+    "/service-catalog/{item_id}/validate",
+    response_model=ITSMServiceCatalogValidationResponse,
+    dependencies=[Depends(require_itsm_catalog_manager_or_admin)],
+    summary="Validate catalog item configuration for publishing readiness",
+)
+def validate_itsm_service_catalog_item(
+    item_id: UUID,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    item = db.query(ITSMServiceCatalogItem).filter(
+        ITSMServiceCatalogItem.tenant_id == tenant_id,
+        ITSMServiceCatalogItem.id == item_id,
+    ).first()
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Catalog item not found in this tenant",
+        )
+
+    is_valid, status_str, errors, checks = _validate_catalog_offering(db, tenant_id, item)
+
+    logger.info(
+        "[ITSM_ADMIN_AUDIT] action=catalog_item_validated tenant_id=%s user_id=%s item_id=%s is_valid=%s",
+        tenant_id,
+        request.state.user_id,
+        item.id,
+        is_valid,
+    )
+
+    return ITSMServiceCatalogValidationResponse(
+        is_valid=is_valid,
+        status=status_str,
+        errors=errors,
+        checks=checks,
+    )
+
+
+@router.post(
+    "/service-catalog/{item_id}/publish",
+    response_model=ITSMServiceCatalogItemResponse,
+    dependencies=[Depends(require_itsm_catalog_manager_or_admin)],
+    summary="Publish service catalog item to make it available to requesters",
+)
+def publish_itsm_service_catalog_item(
+    item_id: UUID,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    item = db.query(ITSMServiceCatalogItem).filter(
+        ITSMServiceCatalogItem.tenant_id == tenant_id,
+        ITSMServiceCatalogItem.id == item_id,
+    ).first()
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Catalog item not found in this tenant",
+        )
+
+    is_valid, status_str, errors, checks = _validate_catalog_offering(db, tenant_id, item)
+    if not is_valid:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Cannot publish catalog item: validation failed.",
+                "status": status_str,
+                "errors": errors,
+            },
+        )
+
+    item.is_active = True
+    item.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(item)
+
+    logger.info(
+        "[ITSM_ADMIN_AUDIT] action=catalog_item_published tenant_id=%s user_id=%s item_id=%s name=%s",
+        tenant_id,
+        request.state.user_id,
+        item.id,
+        item.name,
+    )
+
+    service_name = None
+    srv = db.query(ITSMService.name).filter(ITSMService.tenant_id == tenant_id, ITSMService.id == item.service_id).first()
+    if srv:
+        service_name = srv[0]
+
+    return ITSMServiceCatalogItemResponse(
+        id=item.id,
+        name=item.name,
+        slug=item.slug,
+        description=item.description,
+        service_id=item.service_id,
+        service_name=service_name,
+        version=item.version,
+        approval_required=item.approval_required,
+        fulfillment_group=item.fulfillment_group,
+        estimated_delivery_hours=item.estimated_delivery_hours,
+        is_active=item.is_active,
+        intake_schema=item.intake_schema or {},
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
+
+
+@router.post(
+    "/service-catalog/{item_id}/deactivate",
+    response_model=ITSMServiceCatalogItemResponse,
+    dependencies=[Depends(require_itsm_catalog_manager_or_admin)],
+    summary="Deactivate service catalog item to withdraw it from new requests",
+)
+def deactivate_itsm_service_catalog_item(
+    item_id: UUID,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    item = db.query(ITSMServiceCatalogItem).filter(
+        ITSMServiceCatalogItem.tenant_id == tenant_id,
+        ITSMServiceCatalogItem.id == item_id,
+    ).first()
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Catalog item not found in this tenant",
+        )
+
+    item.is_active = False
+    item.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(item)
+
+    logger.info(
+        "[ITSM_ADMIN_AUDIT] action=catalog_item_deactivated tenant_id=%s user_id=%s item_id=%s name=%s",
+        tenant_id,
+        request.state.user_id,
+        item.id,
+        item.name,
+    )
+
+    service_name = None
+    srv = db.query(ITSMService.name).filter(ITSMService.tenant_id == tenant_id, ITSMService.id == item.service_id).first()
+    if srv:
+        service_name = srv[0]
+
+    return ITSMServiceCatalogItemResponse(
+        id=item.id,
+        name=item.name,
+        slug=item.slug,
+        description=item.description,
+        service_id=item.service_id,
+        service_name=service_name,
+        version=item.version,
+        approval_required=item.approval_required,
+        fulfillment_group=item.fulfillment_group,
+        estimated_delivery_hours=item.estimated_delivery_hours,
+        is_active=item.is_active,
+        intake_schema=item.intake_schema or {},
+        created_at=item.created_at,
+        updated_at=item.updated_at,
+    )
+
+
+@router.post(
+    "/service-catalog/{item_id}/retire",
+    response_model=ITSMServiceCatalogItemResponse,
+    dependencies=[Depends(require_itsm_catalog_manager_or_admin)],
+    summary="Retire service catalog item preserving historical requests and audit trails",
+)
+def retire_itsm_service_catalog_item(
+    item_id: UUID,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    item = db.query(ITSMServiceCatalogItem).filter(
+        ITSMServiceCatalogItem.tenant_id == tenant_id,
+        ITSMServiceCatalogItem.id == item_id,
+    ).first()
+    if not item:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Catalog item not found in this tenant",
+        )
+
+    item.is_active = False
+    item.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(item)
+
+    logger.info(
+        "[ITSM_ADMIN_AUDIT] action=catalog_item_retired tenant_id=%s user_id=%s item_id=%s name=%s",
+        tenant_id,
+        request.state.user_id,
+        item.id,
+        item.name,
+    )
+
+    service_name = None
+    srv = db.query(ITSMService.name).filter(ITSMService.tenant_id == tenant_id, ITSMService.id == item.service_id).first()
+    if srv:
+        service_name = srv[0]
 
     return ITSMServiceCatalogItemResponse(
         id=item.id,

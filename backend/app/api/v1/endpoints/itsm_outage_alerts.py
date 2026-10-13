@@ -16,9 +16,9 @@ from app.db.models import (
     ITSMTeamMember, ITSMUserAccess, User,
 )
 from app.schemas.itsm_outage_alerts import (
-    AlertDetail, AlertDraftRequest, AlertEvidencePage, AlertPreview, AlertPreviewRequest,
-    AlertPublicationRequest, AlertReferenceData, AlertSummary, ServiceConsumerRequest,
-    ServiceSupportTeamRequest,
+    AlertDeliveryHealthPage, AlertDetail, AlertDraftRequest, AlertEvidencePage, AlertPreview,
+    AlertPreviewRequest, AlertPublicationRequest, AlertReferenceData, AlertSummary,
+    ServiceConsumerRequest, ServiceSupportTeamRequest,
 )
 from app.services.itsm_outage_alert_service import OutageAlertService
 
@@ -70,6 +70,31 @@ def list_auditor_evidence(
         delivery_status=delivery_status,
         start=start,
         end=end,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@router.get("/delivery-health", response_model=AlertDeliveryHealthPage)
+def list_delivery_health(
+    request: Request,
+    search: str | None = Query(default=None, min_length=1, max_length=120),
+    alert_status: str | None = Query(default=None, alias="status", pattern="^(DRAFT|ACTIVE|RECOVERED|CANCELLED)$"),
+    delivery_status: str | None = Query(default=None, pattern="^(QUEUED|AVAILABLE|FAILED|RETRYING|PERMANENTLY_FAILED)$"),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    ensure_itsm_role(request, db, ["PLATFORM_ADMINISTRATOR", "INCIDENT_MANAGER"])
+    tenant, actor_id = _identity(request, tenant_id)
+    return OutageAlertService.list_delivery_health(
+        db,
+        tenant,
+        actor_id,
+        search=search,
+        alert_status=alert_status,
+        delivery_status=delivery_status,
         offset=offset,
         limit=limit,
     )

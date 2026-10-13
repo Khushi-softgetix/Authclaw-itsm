@@ -11,6 +11,7 @@ import {
   Layers,
   LogOut,
   Menu,
+  Radio,
   Server,
   Settings,
   ShieldCheck,
@@ -37,6 +38,7 @@ const adminNavigation = [
   { name: "Configuration Items", href: "/itsm/admin-portal/configuration-items", icon: Database },
   { name: "Service Catalog", href: "/itsm/admin-portal/service-catalog", icon: Layers },
   { name: "SLA Configuration", href: "/itsm/admin-portal/sla", icon: Clock },
+  { name: "Broadcast Health", href: "/itsm/admin-portal/broadcast-health", icon: Radio },
   { name: "Macros & Templates", href: "/itsm/admin-portal/macros", icon: Zap },
   { name: "Settings", href: "/itsm/admin-portal/settings", icon: Settings },
 ];
@@ -79,6 +81,8 @@ export default function AdminPortalShell({
       ? "Service Catalog"
       : pathname.startsWith("/itsm/admin-portal/sla")
       ? "SLA Configuration"
+      : pathname.startsWith("/itsm/admin-portal/broadcast-health")
+      ? "Broadcast Health"
       : pathname.startsWith("/itsm/admin-portal/macros")
       ? "Macros & Templates"
       : pathname.startsWith("/itsm/admin-portal/settings")

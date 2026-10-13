@@ -37,6 +37,43 @@ export type AlertEvidencePage = {
   has_more: boolean;
 };
 
+export type AlertDeliveryHealthSummary = AlertSummary & {
+  publication_count: number;
+  recipient_count: number;
+  delivery_summary: Record<string, number>;
+  channels: string[];
+  failed_recipient_count: number;
+  retrying_recipient_count: number;
+  delivery_health_status: "HEALTHY" | "RETRYING" | "FAILED" | "IDLE" | string;
+  last_error?: string | null;
+};
+
+export type AlertDeliveryHealthMetrics = {
+  total_broadcasts: number;
+  active_broadcasts: number;
+  total_recipients: number;
+  total_delivered: number;
+  total_retrying: number;
+  total_failed: number;
+};
+
+export type NotificationChannelInfo = {
+  channel: string;
+  status: string;
+  name: string;
+  description: string;
+};
+
+export type AlertDeliveryHealthPage = {
+  items: AlertDeliveryHealthSummary[];
+  total: number;
+  metrics: AlertDeliveryHealthMetrics;
+  channels: NotificationChannelInfo[];
+  offset: number;
+  limit: number;
+  has_more: boolean;
+};
+
 export type AlertDetail = {
   id: string;
   alert_number: string;
@@ -48,6 +85,13 @@ export type AlertDetail = {
   links: Array<{ type: string; id: string }>;
   publications: Array<Record<string, unknown>>;
   delivery_summary?: Record<string, number> | null;
+  delivery_health?: {
+    summary?: Record<string, number>;
+    total_recipients?: number;
+    channels?: Array<{ channel: string; status: string; name?: string }>;
+    recent_errors?: Array<{ version?: number; attempt_count?: number; error?: string; status?: string }>;
+    publications_diagnostics?: Array<Record<string, unknown>>;
+  } | null;
   evidence?: {
     summary?: { status?: string; checks?: Record<string, string> };
     creator_display?: string | null;

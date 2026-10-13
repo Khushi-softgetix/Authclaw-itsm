@@ -1131,3 +1131,79 @@ def test_recovery_is_atomic_and_idempotent(outage_context):
     assert state.recovered_at is not None
     assert str(state.current_publication_id) == first.json()["publication_id"]
     assert recovery_count == 1
+
+
+def test_platform_admin_can_view_delivery_health_and_technical_diagnostics(outage_context):
+    client = outage_context["client"]
+    alert_id = publish_initial_alert(outage_context)
+
+    # 1. Platform Admin accesses delivery-health endpoint
+    res = client.get(
+        "/v1/itsm/outage-alerts/delivery-health",
+        headers=headers(outage_context, "platform_admin"),
+    )
+    assert res.status_code == 200, res.text
+    data = res.json()
+    assert "metrics" in data
+    assert "channels" in data
+    assert "items" in data
+    assert data["metrics"]["total_broadcasts"] >= 1
+    item = next(it for it in data["items"] if it["id"] == alert_id)
+    assert item["delivery_health_status"] in {"HEALTHY", "RETRYING", "FAILED", "IDLE"}
+    assert item["recipient_count"] >= 1
+    assert "channels" in item
+    assert "title" not in item or item["title"] is None  # Operational title not leaked
+
+    # 2. Platform Admin accesses individual alert detail
+    detail_res = client.get(
+        f"/v1/itsm/outage-alerts/{alert_id}",
+        headers=headers(outage_context, "platform_admin"),
+    )
+    assert detail_res.status_code == 200, detail_res.text
+    detail = detail_res.json()
+    assert detail["projection_type"] == "DELIVERY_OPERATOR"
+    assert detail["allowed_actions"] == ["VIEW_DELIVERY_HEALTH"]
+    assert detail["links"] == []
+    assert detail["delivery_health"] is not None
+    assert "channels" in detail["delivery_health"]
+    assert "summary" in detail["delivery_health"]
+    assert "internal_notes" not in detail["content"]
+    assert "service_agent_guidance" not in detail["content"]
+    assert "public_summary" not in detail["content"]
+
+    # 3. Unauthorized roles cannot access delivery-health
+    for unauthorized in ("requester", "service_agent", "auditor"):
+        denied = client.get(
+            "/v1/itsm/outage-alerts/delivery-health",
+            headers=headers(outage_context, unauthorized),
+        )
+        assert denied.status_code == 403, (unauthorized, denied.text)
+
+
+def test_platform_admin_cannot_mutate_or_publish_alerts(outage_context):
+    client = outage_context["client"]
+    alert_id = publish_initial_alert(outage_context)
+
+    # Cannot update alert
+    update_res = client.put(
+        f"/v1/itsm/outage-alerts/{alert_id}",
+        headers=headers(outage_context, "platform_admin"),
+        json=draft_payload(outage_context),
+    )
+    assert update_res.status_code == 403
+
+    # Cannot publish recovery
+    recov_res = client.post(
+        f"/v1/itsm/outage-alerts/{alert_id}/recovery",
+        headers=headers(outage_context, "platform_admin"),
+        json={"preview_token": "a" * 32, "idempotency_key": f"rec-{uuid4()}"},
+    )
+    assert recov_res.status_code == 403
+
+    # Cannot cancel alert
+    cancel_res = client.delete(
+        f"/v1/itsm/outage-alerts/{alert_id}",
+        headers=headers(outage_context, "platform_admin"),
+    )
+    assert cancel_res.status_code == 403
+

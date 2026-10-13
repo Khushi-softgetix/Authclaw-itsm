@@ -18,6 +18,7 @@ test("BFF exposes the protected alert lifecycle and targeting routes", () => {
   assert.equal(resolveBffRoute("GET", "itsm/outage-alerts/reference-data")?.backendPath, "/v1/itsm/outage-alerts/reference-data");
   assert.equal(resolveBffRoute("GET", "itsm/outage-alerts/reference-options")?.backendPath, "/v1/itsm/outage-alerts/reference-options");
   assert.equal(resolveBffRoute("GET", "itsm/outage-alerts/auditor-evidence")?.backendPath, "/v1/itsm/outage-alerts/auditor-evidence");
+  assert.equal(resolveBffRoute("GET", "itsm/outage-alerts/delivery-health")?.backendPath, "/v1/itsm/outage-alerts/delivery-health");
   assert.equal(resolveBffRoute("POST", "itsm/outage-alerts/alert-id/preview")?.backendPath, "/v1/itsm/outage-alerts/alert-id/preview");
   assert.equal(resolveBffRoute("POST", "itsm/outage-alerts/alert-id/recovery")?.backendPath, "/v1/itsm/outage-alerts/alert-id/recovery");
   assert.equal(resolveBffRoute("PUT", "itsm/outage-alerts/services/service-id/consumers/user-id")?.backendPath, "/v1/itsm/outage-alerts/services/service-id/consumers/user-id");
@@ -320,8 +321,8 @@ test("Auditor evidence is structured, restricted, and read-only", () => {
   const detail = read("../src/app/(console)/itsm/outage-alerts/[alertId]/page.tsx");
 
   // Auditor navigation points to auditor dashboard evidence
-  assert.match(detail, /alert\.projection_type === "AUDITOR" \? "\/itsm\/dashboard\/auditor\/outage-alerts" : "\/itsm\/outage-alerts"/);
-  assert.match(detail, /alert\.projection_type === "AUDITOR" \? "Back to outage evidence" : "Back to service alerts"/);
+  assert.match(detail, /alert\.projection_type === "AUDITOR"[\s\S]*?"\/itsm\/dashboard\/auditor\/outage-alerts"/);
+  assert.match(detail, /alert\.projection_type === "AUDITOR"[\s\S]*?"Back to outage evidence"/);
 
   // Auditor evidence renders governance evidence without restricted notes.
   assert.match(detail, /alert\.projection_type === "AUDITOR"/);
@@ -344,4 +345,46 @@ test("Unauthorized links are never reconstructed, guessed, or fetched independen
   assert.doesNotMatch(detail, /fetch\(["'`]\/api\/itsm\/(?:incidents|problems|changes|tickets)/);
   assert.doesNotMatch(detail, /alertApi<[^>]*>\(["'`]\/(?:incidents|problems|changes)/);
 });
+
+test("Platform Administrator: Broadcast health monitoring, delivery telemetry, and segregation of duties", () => {
+  const shell = read("../src/components/admin-portal-shell.tsx");
+  const dashboard = read("../src/app/(console)/itsm/dashboard/platform-admin/page.tsx");
+  const healthPage = read("../src/app/(console)/itsm/admin-portal/broadcast-health/page.tsx");
+  const detail = read("../src/app/(console)/itsm/outage-alerts/[alertId]/page.tsx");
+
+  // 1. Navigation Shell includes Broadcast Health
+  assert.match(shell, /\/itsm\/admin-portal\/broadcast-health/);
+  assert.match(shell, /Broadcast Health/);
+
+  // 2. Platform Admin Dashboard includes Broadcast Delivery & Diagnostics card
+  assert.match(dashboard, /\/itsm\/admin-portal\/broadcast-health/);
+  assert.match(dashboard, /Broadcast Delivery (?:&|&amp;) Diagnostics/);
+
+  // 3. Broadcast Health page implements delivery telemetry & diagnostic controls
+  assert.match(healthPage, /alertApi<AlertDeliveryHealthPage>/);
+  assert.match(healthPage, /\/delivery-health/);
+  assert.match(healthPage, /total_broadcasts/);
+  assert.match(healthPage, /total_delivered/);
+  assert.match(healthPage, /total_retrying/);
+  assert.match(healthPage, /total_failed/);
+  assert.match(healthPage, /Notification Channel (?:&|&amp;) Delivery Connectors/);
+  assert.match(healthPage, /Broadcast Delivery Telemetry (?:&|&amp;) Diagnostics/);
+  assert.match(healthPage, /Segregation of Duties/);
+
+  // Does not allow authoring or publishing business alerts
+  assert.doesNotMatch(healthPage, /method[=:]\s*["']POST/);
+  assert.doesNotMatch(healthPage, /\/publish/);
+  assert.doesNotMatch(healthPage, /Create alert/i);
+
+  // 4. Detail page projection handles DELIVERY_OPERATOR
+  assert.match(detail, /alert\.projection_type === "DELIVERY_OPERATOR"/);
+  assert.match(detail, /\/itsm\/admin-portal\/broadcast-health/);
+  assert.match(detail, /Back to broadcast delivery health/);
+  assert.match(detail, /DeliveryOperatorDiagnostics/);
+  assert.match(detail, /Broadcasting delivery diagnostics/);
+  assert.match(detail, /Dispatched recipients/);
+  assert.match(detail, /Retrying in queue/);
+  assert.match(detail, /Notification transport channels/);
+});
+
 

@@ -81,7 +81,12 @@ export default function RecipientAlertPage() {
   const publicStatus = formatPublicStatus(content.public_status);
   const isRecovered = alert.status === "RECOVERED" || content.public_status === "RECOVERED";
   const publications = [...alert.publications].reverse() as Publication[];
-  const backHref = alert.projection_type === "AUDITOR" ? "/itsm/dashboard/auditor/outage-alerts" : "/itsm/outage-alerts";
+  const backHref =
+    alert.projection_type === "AUDITOR"
+      ? "/itsm/dashboard/auditor/outage-alerts"
+      : alert.projection_type === "DELIVERY_OPERATOR"
+      ? "/itsm/admin-portal/broadcast-health"
+      : "/itsm/outage-alerts";
 
   const incidentLinks = getAlertIncidentLinks(alert.links);
   const primaryIncidentLink = getPrimaryIncidentLink(alert.links);
@@ -92,7 +97,11 @@ export default function RecipientAlertPage() {
     <div className="mx-auto max-w-4xl space-y-5">
       <Link href={backHref} className="inline-flex items-center gap-2 text-sm font-semibold text-[#5B21B6]">
         <ArrowLeft className="h-4 w-4" />
-        {alert.projection_type === "AUDITOR" ? "Back to outage evidence" : "Back to service alerts"}
+        {alert.projection_type === "AUDITOR"
+          ? "Back to outage evidence"
+          : alert.projection_type === "DELIVERY_OPERATOR"
+          ? "Back to broadcast delivery health"
+          : "Back to service alerts"}
       </Link>
       {error ? <div className="rounded-xl border border-[#E7D9CF] bg-[#FFF9F5] p-4 text-sm text-[#704C3B]">{error}</div> : null}
 
@@ -241,6 +250,10 @@ export default function RecipientAlertPage() {
         <AuditorEvidence alert={alert} content={content} publications={publications} />
       ) : null}
 
+      {alert.projection_type === "DELIVERY_OPERATOR" ? (
+        <DeliveryOperatorDiagnostics alert={alert} />
+      ) : null}
+
       <section className="rounded-2xl border border-[#E6E9F0] bg-white p-6">
         <h2 className="flex items-center gap-2 font-semibold"><Clock3 className="h-5 w-5 text-[#6D28D9]" /> Communication history</h2>
         {publications.length ? (
@@ -353,4 +366,106 @@ function HistoryField({ label, value }: { label: string; value: unknown }) {
 
 function Field({ label, value, wide = false }: { label: string; value: unknown; wide?: boolean }) {
   return <div className={wide ? "sm:col-span-2" : ""}><p className="text-xs font-semibold uppercase tracking-wide text-[#8A93A5]">{label}</p><p className="mt-1 whitespace-pre-wrap text-sm font-medium">{String(value || "Not provided")}</p></div>;
+}
+
+function DeliveryOperatorDiagnostics({ alert }: { alert: AlertDetail }) {
+  const health = alert.delivery_health;
+  const status = health?.delivery_health_status || "UNKNOWN";
+  const channels = health?.channels || [];
+  const statusColor =
+    status === "HEALTHY"
+      ? "text-[#166534] bg-[#F0FDF4] border-[#BBF7D0]"
+      : status === "DEGRADED"
+      ? "text-[#854D0E] bg-[#FEFCE8] border-[#FEF08A]"
+      : status === "CRITICAL"
+      ? "text-[#991B1B] bg-[#FEF2F2] border-[#FECACA]"
+      : "text-[#6B7488] bg-[#F8F9FA] border-[#E6E9F0]";
+
+  return (
+    <div className="space-y-5">
+      <section className="rounded-2xl border border-[#DDD6FE] bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="flex items-center gap-2 font-semibold text-[#0E1726]">
+              <Radio className="h-5 w-5 text-[#6D28D9]" /> Broadcasting delivery diagnostics
+            </h2>
+            <p className="mt-1 text-xs text-[#6B7488]">
+              Technical delivery metrics and channel states for Platform Administrators. Business content and recipient PII are excluded under Segregation of Duties.
+            </p>
+          </div>
+          <span className={`rounded-full border px-3 py-1 text-xs font-bold ${statusColor}`}>
+            Delivery: {status}
+          </span>
+        </div>
+
+        <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <div className="rounded-xl border border-[#EEF1F5] bg-[#FBFAF9] p-3 text-center">
+            <p className="text-2xl font-bold text-[#0E1726]">{health?.total_recipients ?? 0}</p>
+            <p className="mt-1 text-xs font-semibold text-[#6B7488]">Dispatched recipients</p>
+          </div>
+          <div className="rounded-xl border border-[#BBF7D0] bg-[#F0FDF4] p-3 text-center">
+            <p className="text-2xl font-bold text-[#166534]">{health?.total_delivered ?? 0}</p>
+            <p className="mt-1 text-xs font-semibold text-[#166534]">Delivered</p>
+          </div>
+          <div className="rounded-xl border border-[#FEF08A] bg-[#FEFCE8] p-3 text-center">
+            <p className="text-2xl font-bold text-[#854D0E]">{health?.total_retrying ?? 0}</p>
+            <p className="mt-1 text-xs font-semibold text-[#854D0E]">Retrying in queue</p>
+          </div>
+          <div className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] p-3 text-center">
+            <p className="text-2xl font-bold text-[#991B1B]">{health?.total_failed ?? 0}</p>
+            <p className="mt-1 text-xs font-semibold text-[#991B1B]">Failed / Dead-letter</p>
+          </div>
+        </div>
+
+        {health?.last_error ? (
+          <div className="mt-5 rounded-xl border border-[#FECACA] bg-[#FEF2F2] p-4 text-xs text-[#991B1B]">
+            <p className="font-semibold">Last recorded transmission error:</p>
+            <p className="mt-1 font-mono">{health.last_error}</p>
+          </div>
+        ) : null}
+      </section>
+
+      <section className="rounded-2xl border border-[#E6E9F0] bg-white p-6 shadow-sm">
+        <h3 className="text-sm font-semibold text-[#0E1726]">Notification transport channels</h3>
+        <p className="mt-1 text-xs text-[#6B7488]">Delivery performance across enabled notification backends.</p>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          {channels.length ? (
+            channels.map((chan) => (
+              <div key={chan.channel} className="rounded-xl border border-[#EEF1F5] bg-[#FBFAF9] p-4">
+                <div className="flex items-center justify-between">
+                  <p className="font-semibold text-sm text-[#0E1726]">{chan.channel.replaceAll("_", " ")}</p>
+                  <span
+                    className={`rounded-full border px-2 py-0.5 text-[10px] font-bold ${
+                      chan.status === "ACTIVE"
+                        ? "bg-[#F0FDF4] text-[#166534] border-[#BBF7D0]"
+                        : "bg-[#FEF2F2] text-[#991B1B] border-[#FECACA]"
+                    }`}
+                  >
+                    {chan.status}
+                  </span>
+                </div>
+                <div className="mt-3 flex justify-between text-xs text-[#6B7488]">
+                  <span>
+                    Delivered: <strong className="text-[#0E1726]">{chan.delivered_count}</strong>
+                  </span>
+                  <span>
+                    Failed: <strong className="text-[#0E1726]">{chan.failed_count}</strong>
+                  </span>
+                </div>
+              </div>
+            ))
+          ) : (
+            <p className="col-span-2 text-sm text-[#6B7488]">No channel telemetry recorded for this alert.</p>
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-2xl border border-[#DDD6FE] bg-[#F8F5FF] p-4 text-xs text-[#5B21B6]">
+        <p className="font-bold uppercase tracking-wider">Operational Segregation of Duties (SoD)</p>
+        <p className="mt-1 text-[#4C1D95]">
+          Platform Administrators monitor broadcasting reliability, channel health, and retry pipelines. Drafting, editing, and publishing business outage notices is reserved exclusively for Incident Commanders and Incident Managers.
+        </p>
+      </section>
+    </div>
+  );
 }

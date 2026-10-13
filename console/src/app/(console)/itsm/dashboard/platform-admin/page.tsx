@@ -16,6 +16,7 @@ import {
   Cpu,
   Layers,
   Key,
+  Radio,
 } from "lucide-react";
 import { Incident } from "@/lib/itsm-types";
 
@@ -154,6 +155,28 @@ export default function PlatformAdminDashboardPage() {
           <div className="pt-2 border-t border-[#F0F2F6] flex items-center justify-between text-xs">
             <span className="text-[#6B7488]">HITL Required</span>
             <span className="font-semibold text-[#7C3AED]">Enabled</span>
+          </div>
+        </div>
+
+        <div className="bg-white rounded-2xl border border-[#E6E9F0] shadow-sm p-6 space-y-4">
+          <div className="w-10 h-10 rounded-xl bg-amber-50 text-[#D97706] flex items-center justify-center">
+            <Radio className="w-5 h-5" />
+          </div>
+          <div>
+            <h3 className="text-sm font-bold text-[#0E1726]">Broadcast Delivery &amp; Diagnostics</h3>
+            <p className="text-xs text-[#6B7488] mt-1 leading-relaxed">
+              Monitor outage notification dispatch, in-app/portal delivery trace, channel errors, and service audience targeting.
+            </p>
+          </div>
+          <div className="pt-2 border-t border-[#F0F2F6] flex items-center justify-between text-xs">
+            <Link
+              href="/itsm/admin-portal/broadcast-health"
+              className="font-semibold text-[#D97706] hover:underline inline-flex items-center gap-1"
+            >
+              <span>Broadcast Health</span>
+              <ArrowRight className="w-3 h-3" />
+            </Link>
+            <span className="font-semibold text-[#059669]">Operational</span>
           </div>
         </div>
       </div>

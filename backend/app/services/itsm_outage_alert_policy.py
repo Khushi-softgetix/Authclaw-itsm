@@ -56,6 +56,13 @@ AUDITOR_FIELDS = PUBLIC_FIELDS | {
 }
 
 
+PLATFORM_ADMIN_FIELDS = {
+    "alert_number", "status", "public_status", "published_at",
+    "latest_publication_at", "recovered_at", "updated_at",
+    "outage_started_at", "affected_services",
+}
+
+
 def normalize_role(role: str | None) -> str:
     value = str(role or "").strip().upper().replace(" ", "_").replace("&", "AND")
     aliases = {
@@ -71,6 +78,10 @@ def normalize_role(role: str | None) -> str:
 
 def can_manage(role: str | None) -> bool:
     return normalize_role(role) in MANAGE_ROLES
+
+
+def can_view_delivery_health(role: str | None) -> bool:
+    return normalize_role(role) in {"PLATFORM_ADMIN", "INCIDENT_MANAGER"}
 
 
 def projection_type_for_role(role: str | None) -> str:
@@ -129,7 +140,7 @@ def project_alert(content: dict[str, Any], role: str | None) -> dict[str, Any]:
         # guidance and internal notes remain excluded.
         fields = AUDITOR_FIELDS
     elif role == "PLATFORM_ADMIN":
-        fields = {"alert_number", "status", "published_at", "latest_publication_at", "updated_at"}
+        fields = PLATFORM_ADMIN_FIELDS
     else:
         fields = set()
     return {key: value for key, value in content.items() if key in fields}

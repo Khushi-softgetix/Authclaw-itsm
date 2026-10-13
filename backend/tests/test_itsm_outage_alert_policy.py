@@ -137,3 +137,41 @@ def test_auditor_evidence_status_flags_missing_required_publication():
 
     assert evidence["status"] == "INCOMPLETE"
     assert evidence["checks"]["publication_history"] == "MISSING"
+
+
+def test_platform_admin_projection_is_delivery_operator_and_excludes_business_content():
+    projected = project_alert(CONTENT, "PLATFORM_ADMINISTRATOR")
+    assert projected["alert_number"] == CONTENT["alert_number"]
+    assert projected["status"] == "ACTIVE"
+    assert projected["public_status"] == "INVESTIGATING"
+    assert projected["affected_services"] == CONTENT["affected_services"]
+    # Operational content and internal notes MUST be strictly excluded
+    assert "title" not in projected
+    assert "public_summary" not in projected
+    assert "impact_summary" not in projected
+    assert "recommended_action" not in projected
+    assert "service_agent_guidance" not in projected
+    assert "internal_notes" not in projected
+    assert "links" not in projected
+    assert "audiences" not in projected
+
+
+def test_platform_admin_delivery_health_permission_and_actions():
+    from app.services.itsm_outage_alert_policy import (
+        can_view_delivery_health,
+        projection_type_for_role,
+    )
+
+    assert can_view_delivery_health("PLATFORM_ADMINISTRATOR") is True
+    assert can_view_delivery_health("INCIDENT_MANAGER") is True
+    assert can_view_delivery_health("REQUESTER") is False
+    assert can_view_delivery_health("SERVICE_AGENT") is False
+    assert can_view_delivery_health("AUDITOR") is False
+
+    assert projection_type_for_role("PLATFORM_ADMINISTRATOR") == "DELIVERY_OPERATOR"
+    assert allowed_actions_for(
+        "PLATFORM_ADMINISTRATOR",
+        intent="RESOLVE",
+        handling="SOLVE",
+        has_incident_link=True,
+    ) == ["VIEW_DELIVERY_HEALTH"]

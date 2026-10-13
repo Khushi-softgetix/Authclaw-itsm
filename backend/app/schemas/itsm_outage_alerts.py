@@ -158,6 +158,27 @@ class AlertEvidencePage(BaseModel):
     has_more: bool
 
 
+class AlertDeliveryHealthSummary(AlertSummary):
+    publication_count: int = 0
+    recipient_count: int = 0
+    delivery_summary: dict[str, int] = Field(default_factory=dict)
+    channels: list[str] = Field(default_factory=list)
+    failed_recipient_count: int = 0
+    retrying_recipient_count: int = 0
+    delivery_health_status: str = "HEALTHY"
+    last_error: str | None = None
+
+
+class AlertDeliveryHealthPage(BaseModel):
+    items: list[AlertDeliveryHealthSummary]
+    total: int
+    metrics: dict[str, Any]
+    channels: list[dict[str, Any]]
+    offset: int
+    limit: int
+    has_more: bool
+
+
 class AlertDetail(BaseModel):
     id: UUID
     alert_number: str
@@ -169,6 +190,7 @@ class AlertDetail(BaseModel):
     links: list[dict[str, Any]]
     publications: list[dict[str, Any]]
     delivery_summary: dict[str, int] | None = None
+    delivery_health: dict[str, Any] | None = None
     evidence: dict[str, Any] | None = None
 
 

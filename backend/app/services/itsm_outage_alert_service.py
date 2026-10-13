@@ -42,6 +42,7 @@ from app.services.itsm_outage_alert_policy import (
     ACTION_PERMISSIONS,
     allowed_actions_for,
     can_manage,
+    can_view_delivery_health,
     normalize_role,
     project_alert,
     projection_fields,
@@ -1324,6 +1325,137 @@ class OutageAlertService:
         }
 
     @classmethod
+    def list_delivery_health(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        user_id: UUID,
+        *,
+        search: str | None = None,
+        alert_status: str | None = None,
+        delivery_status: str | None = None,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        role = cls.role_for(db, tenant_id, user_id)
+        if not can_view_delivery_health(role):
+            raise HTTPException(status_code=403, detail="Broadcast delivery health permission required")
+
+        query = cls._query(db, tenant_id)
+        if alert_status:
+            query = query.filter(ITSMOutageAlert.status == alert_status.upper())
+        if search:
+            pattern = f"%{search.strip()}%"
+            service_alert_ids = db.query(ITSMOutageAlertService.alert_id).join(
+                ITSMService,
+                (ITSMService.id == ITSMOutageAlertService.service_id)
+                & (ITSMService.tenant_id == ITSMOutageAlertService.tenant_id),
+            ).filter(
+                ITSMOutageAlertService.tenant_id == tenant_id,
+                ITSMService.name.ilike(pattern),
+            )
+            query = query.filter(or_(
+                ITSMOutageAlert.alert_number.ilike(pattern),
+                cast(ITSMOutageAlert.id, String).ilike(pattern),
+                ITSMOutageAlert.id.in_(service_alert_ids),
+            ))
+        if delivery_status:
+            delivery_alert_ids = db.query(ITSMOutageAlertPublication.alert_id).join(
+                ITSMOutageAlertRecipient,
+                (ITSMOutageAlertRecipient.publication_id == ITSMOutageAlertPublication.id)
+                & (ITSMOutageAlertRecipient.tenant_id == ITSMOutageAlertPublication.tenant_id),
+            ).filter(
+                ITSMOutageAlertPublication.tenant_id == tenant_id,
+                ITSMOutageAlertRecipient.delivery_status == delivery_status.upper(),
+            )
+            query = query.filter(ITSMOutageAlert.id.in_(delivery_alert_ids))
+
+        total = query.count()
+        alerts = (
+            query.order_by(ITSMOutageAlert.updated_at.desc(), ITSMOutageAlert.id.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        all_published_alerts = db.query(ITSMOutageAlert).filter(
+            ITSMOutageAlert.tenant_id == tenant_id,
+            ITSMOutageAlert.status.in_(["ACTIVE", "RECOVERED"]),
+        ).all()
+        total_broadcasts = len(all_published_alerts)
+        active_broadcasts = sum(1 for a in all_published_alerts if a.status == "ACTIVE")
+
+        recipient_counts_query = db.query(
+            ITSMOutageAlertRecipient.delivery_status,
+            func.count(ITSMOutageAlertRecipient.id),
+        ).filter(
+            ITSMOutageAlertRecipient.tenant_id == tenant_id,
+        ).group_by(ITSMOutageAlertRecipient.delivery_status).all()
+
+        global_delivery = {row[0]: int(row[1]) for row in recipient_counts_query}
+        total_recipients = sum(global_delivery.values())
+        total_delivered = global_delivery.get("AVAILABLE", 0)
+        total_retrying = global_delivery.get("RETRYING", 0)
+        total_failed = global_delivery.get("FAILED", 0) + global_delivery.get("PERMANENTLY_FAILED", 0)
+
+        items = []
+        for alert in alerts:
+            delivery = cls._delivery_counts(alert)
+            failed_count = delivery.get("FAILED", 0) + delivery.get("PERMANENTLY_FAILED", 0)
+            retrying_count = delivery.get("RETRYING", 0)
+            publication_recipient_counts = [p.recipient_count for p in alert.publications]
+            last_err = None
+            for p in alert.publications:
+                for r in p.recipients:
+                    if r.last_error:
+                        last_err = r.last_error
+                        break
+                if last_err:
+                    break
+
+            if failed_count > 0:
+                health_status = "FAILED"
+            elif retrying_count > 0:
+                health_status = "RETRYING"
+            elif len(alert.publications) > 0:
+                health_status = "HEALTHY"
+            else:
+                health_status = "IDLE"
+
+            summary = cls.summary(alert, role)
+            summary.update({
+                "publication_count": len(alert.publications),
+                "recipient_count": publication_recipient_counts[-1] if publication_recipient_counts else 0,
+                "delivery_summary": delivery,
+                "channels": ["IN_APP", "PORTAL"],
+                "failed_recipient_count": failed_count,
+                "retrying_recipient_count": retrying_count,
+                "delivery_health_status": health_status,
+                "last_error": last_err,
+            })
+            items.append(summary)
+
+        return {
+            "items": items,
+            "total": total,
+            "metrics": {
+                "total_broadcasts": total_broadcasts,
+                "active_broadcasts": active_broadcasts,
+                "total_recipients": total_recipients,
+                "total_delivered": total_delivered,
+                "total_retrying": total_retrying,
+                "total_failed": total_failed,
+            },
+            "channels": [
+                {"channel": "IN_APP", "status": "OPERATIONAL", "name": "In-App Notifications", "description": "Persistent tenant in-app notification feed"},
+                {"channel": "PORTAL", "status": "OPERATIONAL", "name": "Employee Portal Banner", "description": "Real-time self-service portal outage banners"},
+            ],
+            "offset": offset,
+            "limit": limit,
+            "has_more": offset + len(items) < total,
+        }
+
+    @classmethod
     def list_visible(cls, db: Session, tenant_id: UUID, user_id: UUID, requested_status: str | None = None, linked_type: str | None = None, linked_id: UUID | None = None) -> list[dict[str, Any]]:
         role = cls.role_for(db, tenant_id, user_id)
         query = cls._query(db, tenant_id)
@@ -1337,7 +1469,7 @@ class OutageAlertService:
             )
             query = query.filter(ITSMOutageAlert.id.in_(linked_alert_ids))
         normalized = normalize_role(role)
-        if not can_manage(role) and normalized != "AUDITOR":
+        if not can_manage(role) and normalized not in {"AUDITOR", "PLATFORM_ADMIN"}:
             visible_ids = db.query(ITSMOutageAlertPublication.alert_id).join(ITSMOutageAlertRecipient).filter(
                 ITSMOutageAlertPublication.tenant_id == tenant_id, ITSMOutageAlertRecipient.user_id == user_id
             ).distinct()
@@ -1348,11 +1480,11 @@ class OutageAlertService:
                 alert for alert in alerts
                 if cls._has_alert_permission(db, tenant_id, user_id, "OUTAGE_ALERT:READ", alert)
             ]
-        elif normalized != "AUDITOR":
+        elif normalized not in {"AUDITOR", "PLATFORM_ADMIN"}:
             alerts = [alert for alert in alerts if cls._current_recipient(db, alert, user_id)]
         summaries = []
         for alert in alerts:
-            if can_manage(role) or normalized == "AUDITOR":
+            if can_manage(role) or normalized in {"AUDITOR", "PLATFORM_ADMIN"}:
                 summaries.append(cls.summary(alert, role))
                 continue
             recipient = cls._current_recipient(db, alert, user_id)
@@ -1369,6 +1501,7 @@ class OutageAlertService:
         alert = cls.get_alert(db, tenant_id, alert_id)
         normalized = normalize_role(role)
         evidence = None
+        delivery_health = None
         if can_manage(role):
             cls.require_alert_permission(db, tenant_id, user_id, "OUTAGE_ALERT:READ", alert)
             content = project_alert(cls._content(alert), role)
@@ -1459,6 +1592,53 @@ class OutageAlertService:
                 },
                 "recipient_identities_exposed": False,
             }
+        elif normalized == "PLATFORM_ADMIN":
+            content = project_alert(cls._content(alert), role)
+            actions = allowed_actions_for(role, intent=alert.intent, handling=alert.service_agent_handling, has_incident_link=any(link.target_type == "INCIDENT" for link in alert.links))
+            projection = projection_type_for_role(role)
+            delivery = cls._delivery_counts(alert)
+            publications = []
+            recent_errors = []
+            for publication in alert.publications:
+                recipient_summary = defaultdict(lambda: defaultdict(int))
+                failed_recipients = 0
+                for recipient in publication.recipients:
+                    recipient_summary[recipient.audience_type][recipient.delivery_status] += 1
+                    if recipient.delivery_status in {"FAILED", "PERMANENTLY_FAILED"}:
+                        failed_recipients += 1
+                    if recipient.last_error:
+                        recent_errors.append({
+                            "version": publication.version,
+                            "attempt_count": recipient.attempt_count,
+                            "error": recipient.last_error,
+                            "status": recipient.delivery_status,
+                        })
+                publications.append({
+                    "id": str(publication.id),
+                    "version": publication.version,
+                    "type": publication.publication_type,
+                    "published_at": publication.published_at,
+                    "recipient_count": publication.recipient_count,
+                    "failed_count": failed_recipients,
+                    "delivery_summary": {
+                        st: sum(cnts[st] for cnts in recipient_summary.values())
+                        for st in ["AVAILABLE", "QUEUED", "RETRYING", "FAILED", "PERMANENTLY_FAILED"]
+                        if sum(cnts[st] for cnts in recipient_summary.values()) > 0
+                    },
+                    "delivery_channels": sorted({
+                        "IN_APP" for recipient in publication.recipients if recipient.notification_id
+                    } or ["IN_APP", "PORTAL"]),
+                })
+            delivery_health = {
+                "summary": delivery,
+                "total_recipients": sum(p.recipient_count for p in alert.publications),
+                "channels": [
+                    {"channel": "IN_APP", "status": "OPERATIONAL", "name": "In-App Notifications"},
+                    {"channel": "PORTAL", "status": "OPERATIONAL", "name": "Employee Portal Banner"},
+                ],
+                "recent_errors": recent_errors[:10],
+                "publications_diagnostics": publications,
+            }
         else:
             current_recipient = cls._current_recipient(db, alert, user_id)
             if not current_recipient:
@@ -1485,14 +1665,15 @@ class OutageAlertService:
                         "content": project_alert(historic.content_snapshot, role),
                     })
         delivery = None
-        if can_manage(role) or normalized == "AUDITOR":
+        if can_manage(role) or normalized in {"AUDITOR", "PLATFORM_ADMIN"}:
             delivery = cls._delivery_counts(alert)
         return {
             "id": alert.id, "alert_number": alert.alert_number, "status": alert.status,
             "projection_type": projection, "content": content, "allowed_actions": actions,
-            "affected_services": content.get("affected_services", []),
-            "links": content.get("links", []) if can_manage(role) or normalized == "AUDITOR" else content.get("authorized_links", []),
+            "affected_services": content.get("affected_services", [{"id": str(s.service_id), "name": s.service.name} for s in alert.services if s.service]),
+            "links": [] if normalized == "PLATFORM_ADMIN" else (content.get("links", []) if can_manage(role) or normalized == "AUDITOR" else content.get("authorized_links", [])),
             "publications": publications, "delivery_summary": delivery,
+            "delivery_health": delivery_health,
             "evidence": evidence,
         }
 

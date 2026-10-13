@@ -92,9 +92,10 @@ test("ITSM Landing page CTA routes unauthenticated visitors to /itsm/login", () 
 
   assert.match(
     landingSource,
-    /Service work,<\/span>[\s\S]*ownership, and<\/span>[\s\S]*decisions - connected<\/span>/,
+    /Service work,<\/span>[\s\S]*ownership, and<\/span>[\s\S]*decisions-connected<\/span>/,
     "ITSM landing headline must use the approved aligned copy"
   );
+  assert.ok(!landingSource.includes("decisions - connected"), "Spaced headline punctuation must not return");
   assert.ok(!landingSource.includes("decisions&mdash;connected."), "Old headline punctuation must not return");
 });
 

@@ -89,7 +89,7 @@ export default async function ItsmLandingPage() {
             <h1 className="max-w-[760px] text-[42px] font-semibold leading-[1.05] tracking-[-0.045em] text-[#0E1726] sm:text-[56px] lg:text-[60px]">
               <span className="block">Service work,</span>
               <span className="block">ownership, and</span>
-              <span className="block sm:whitespace-nowrap">decisions - connected</span>
+              <span className="block sm:whitespace-nowrap">decisions-connected</span>
             </h1>
             <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
               <Link className="btn btn-primary w-full justify-center sm:w-auto" href={primaryCtaHref}>

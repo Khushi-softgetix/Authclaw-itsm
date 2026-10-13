@@ -54,6 +54,7 @@ export interface Incident {
   resolved_at?: string | null;
   closed_at?: string | null;
   closed_by?: string | null;
+  version: number;
   approval_status?: "PENDING" | "APPROVED" | "REJECTED" | "NOT_REQUIRED" | string | null;
   approval_required?: boolean;
   rejection_reason?: string | null;
@@ -241,6 +242,44 @@ export interface IncidentOperationsQueue {
   total: number;
   offset: number;
   limit: number;
+}
+
+export interface OperationalKPIIncidentRecord {
+  id: string;
+  ticket_number: string;
+  title: string;
+  priority: string;
+  status: string;
+  service_id?: string | null;
+  created_at: string;
+  measured_at?: string | null;
+  duration_seconds?: number | null;
+  sla_dimension?: string | null;
+  sla_outcome?: string | null;
+  age_bucket?: string | null;
+}
+
+export interface OperationalSLAAdherence {
+  dimension: "RESPONSE" | "RESOLUTION";
+  total_with_commitment: number;
+  evaluated_count: number;
+  met_count: number;
+  breached_count: number;
+  pending_count: number;
+  unavailable_count: number;
+  compliance_rate_pct?: number | null;
+}
+
+export interface OperationalKPIDashboard {
+  date_range: { start_time?: string | null; end_time: string; evaluated_at: string };
+  filters: { service_id?: string | null; priority?: string | null; status?: string | null };
+  mtta: { count: number; unacknowledged_count: number; total_tickets: number; mean_seconds?: number | null; definition: string };
+  mttr: { count: number; mean_seconds?: number | null; definition: string };
+  backlog_age: { total_open: number; mean_age_seconds?: number | null; distribution: Record<string, number>; definition: string };
+  sla_response: OperationalSLAAdherence;
+  sla_resolution: OperationalSLAAdherence;
+  drilldowns: Record<string, OperationalKPIIncidentRecord[]>;
+  drilldown_limit: number;
 }
 
 export interface IncidentWorkloadEntry {

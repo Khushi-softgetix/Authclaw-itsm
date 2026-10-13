@@ -1,0 +1,1209 @@
+"""Authoritative lifecycle, targeting, projection, and delivery logic for alerts."""
+from __future__ import annotations
+
+import hashlib
+import json
+import logging
+from collections import defaultdict
+from datetime import datetime, timezone
+from typing import Any
+from uuid import UUID, uuid4
+
+from fastapi import HTTPException, status
+from sqlalchemy import func, or_, text
+from sqlalchemy.orm import Session, selectinload
+
+from app.db.models import (
+    ITSMChangeRequest,
+    ITSMConfigurationItem,
+    ITSMMajorIncident,
+    ITSMOutageAlert,
+    ITSMOutageAlertAudience,
+    ITSMOutageAlertCI,
+    ITSMOutageAlertGrant,
+    ITSMOutageAlertLink,
+    ITSMOutageAlertPublication,
+    ITSMOutageAlertRecipient,
+    ITSMOutageAlertService,
+    ITSMProblemDetail,
+    ITSMService,
+    ITSMServiceConsumer,
+    ITSMServiceSupportTeam,
+    ITSMTeam,
+    ITSMTeamMember,
+    ITSMTicket,
+    ITSMUserAccess,
+    User,
+)
+from app.schemas.itsm_outage_alerts import AlertDraftRequest, AlertPublicationRequest
+from app.services.audit_store import append_audit_event
+from app.services.itsm_outage_alert_policy import (
+    ACTION_PERMISSIONS,
+    allowed_actions_for,
+    can_manage,
+    normalize_role,
+    project_alert,
+    projection_fields,
+    projection_type_for_role,
+)
+from app.services.notifications import add_notification
+from app.services.itsm_incident_service import IncidentService
+
+logger = logging.getLogger("services.itsm_outage_alerts")
+
+RECIPIENT_ROLES = {"REQUESTER", "SERVICE_AGENT", "PROCESS_CHANGE_MANAGER", "PROBLEM_CHANGE_MANAGER", "CATALOG_MANAGER"}
+
+
+class OutageAlertService:
+    @staticmethod
+    def role_for(db: Session, tenant_id: UUID, user_id: UUID) -> str:
+        access = db.query(ITSMUserAccess).filter(
+            ITSMUserAccess.tenant_id == tenant_id,
+            ITSMUserAccess.user_id == user_id,
+            ITSMUserAccess.has_itsm_access.is_(True),
+        ).first()
+        if not access:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ITSM access required")
+        return str(access.itsm_role).upper()
+
+    @classmethod
+    def require_manager(cls, db: Session, tenant_id: UUID, user_id: UUID) -> str:
+        role = cls.role_for(db, tenant_id, user_id)
+        if not can_manage(role):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Outage Alert permission required")
+        return role
+
+    @classmethod
+    def permission_scope(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        user_id: UUID,
+        permission: str,
+    ) -> set[UUID] | None:
+        """Return allowed service ids, or None for an explicit tenant-wide grant."""
+        cls.require_manager(db, tenant_id, user_id)
+        grants = db.query(ITSMOutageAlertGrant.service_id).filter(
+            ITSMOutageAlertGrant.tenant_id == tenant_id,
+            ITSMOutageAlertGrant.user_id == user_id,
+            ITSMOutageAlertGrant.permission == permission,
+        ).all()
+        if not grants:
+            raise HTTPException(status_code=403, detail=f"Missing permission: {permission}")
+        if any(row.service_id is None for row in grants):
+            return None
+        return {row.service_id for row in grants}
+
+    @classmethod
+    def require_permission(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        user_id: UUID,
+        permission: str,
+        service_ids: set[UUID] | None = None,
+    ) -> set[UUID] | None:
+        scope = cls.permission_scope(db, tenant_id, user_id, permission)
+        requested = set(service_ids or ())
+        if scope is not None and (not requested or not requested.issubset(scope)):
+            raise HTTPException(status_code=403, detail="Alert operation is outside the authorized service scope")
+        return scope
+
+    @staticmethod
+    def _service_ids(alert: ITSMOutageAlert) -> set[UUID]:
+        return {item.service_id for item in alert.services}
+
+    @classmethod
+    def require_alert_permission(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        user_id: UUID,
+        permission: str,
+        alert: ITSMOutageAlert,
+    ) -> None:
+        cls.require_permission(db, tenant_id, user_id, permission, cls._service_ids(alert))
+
+    @staticmethod
+    def _query(db: Session, tenant_id: UUID):
+        return db.query(ITSMOutageAlert).options(
+            selectinload(ITSMOutageAlert.services).selectinload(ITSMOutageAlertService.service),
+            selectinload(ITSMOutageAlert.configuration_items).selectinload(ITSMOutageAlertCI.configuration_item),
+            selectinload(ITSMOutageAlert.audiences).selectinload(ITSMOutageAlertAudience.team),
+            selectinload(ITSMOutageAlert.audiences).selectinload(ITSMOutageAlertAudience.user),
+            selectinload(ITSMOutageAlert.links),
+            selectinload(ITSMOutageAlert.publications).selectinload(ITSMOutageAlertPublication.recipients),
+        ).filter(ITSMOutageAlert.tenant_id == tenant_id)
+
+    @classmethod
+    def get_alert(cls, db: Session, tenant_id: UUID, alert_id: UUID) -> ITSMOutageAlert:
+        alert = cls._query(db, tenant_id).filter(ITSMOutageAlert.id == alert_id).first()
+        if not alert:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
+        return alert
+
+    @staticmethod
+    def _next_number(db: Session, tenant_id: UUID) -> str:
+        count = db.query(func.count(ITSMOutageAlert.id)).filter(ITSMOutageAlert.tenant_id == tenant_id).scalar() or 0
+        return f"ALT-{count + 1:06d}"
+
+    @classmethod
+    def _validate_payload(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        actor_id: UUID,
+        payload: AlertDraftRequest,
+        permission: str,
+    ) -> None:
+        service_ids = set(payload.service_ids)
+        cls.require_permission(db, tenant_id, actor_id, permission, service_ids)
+        if service_ids:
+            found = {row.id for row in db.query(ITSMService.id).filter(ITSMService.tenant_id == tenant_id, ITSMService.id.in_(service_ids)).all()}
+            if found != service_ids:
+                raise HTTPException(status_code=422, detail="One or more affected services are unavailable")
+        ci_ids = set(payload.ci_ids)
+        if ci_ids:
+            cis = db.query(ITSMConfigurationItem).filter(ITSMConfigurationItem.tenant_id == tenant_id, ITSMConfigurationItem.id.in_(ci_ids)).all()
+            if {row.id for row in cis} != ci_ids:
+                raise HTTPException(status_code=422, detail="One or more configuration items are unavailable")
+            if service_ids and any(row.service_id and row.service_id not in service_ids for row in cis):
+                raise HTTPException(status_code=422, detail="A selected configuration item is outside the affected services")
+        team_ids = {aud.team_id for aud in payload.audiences if aud.team_id}
+        if team_ids:
+            found = {row.id for row in db.query(ITSMTeam.id).filter(ITSMTeam.tenant_id == tenant_id, ITSMTeam.id.in_(team_ids), ITSMTeam.is_active.is_(True)).all()}
+            if found != team_ids:
+                raise HTTPException(status_code=422, detail="One or more selected teams are unavailable")
+        for link in payload.links:
+            cls.require_permission(db, tenant_id, actor_id, "OUTAGE_ALERT:LINK", service_ids)
+            cls._validate_link(db, tenant_id, link.target_type, link.target_id, service_ids)
+        for audience in payload.audiences:
+            if audience.audience_type == "SPECIFIC_USER" and not cls._specific_user_is_eligible(
+                db,
+                tenant_id,
+                audience.user_id,
+                service_ids,
+                [(link.target_type, link.target_id) for link in payload.links],
+            ):
+                raise HTTPException(
+                    status_code=422,
+                    detail="Selected user is not currently eligible for the affected services or linked records",
+                )
+
+    @staticmethod
+    def _validate_publishable(alert: ITSMOutageAlert) -> None:
+        """Require complete delivery scope only when a draft is previewed/published."""
+        service_scoped = any(
+            audience.audience_type in {
+                "SERVICE_USERS",
+                "SERVICE_AGENTS",
+                "SERVICE_OWNERS",
+                "SPECIFIC_USER",
+            }
+            for audience in alert.audiences
+        )
+        if service_scoped and not alert.services:
+            raise HTTPException(status_code=422, detail="Service-scoped audiences require at least one affected service")
+        if alert.service_agent_handling == "SOLVE" and not any(
+            link.target_type == "INCIDENT" for link in alert.links
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail="Solve requires an existing linked Incident; alerts never create work automatically",
+            )
+
+    @staticmethod
+    def _validate_link(
+        db: Session,
+        tenant_id: UUID,
+        target_type: str,
+        target_id: UUID,
+        alert_service_ids: set[UUID],
+    ) -> None:
+        target_service_id: UUID | None = None
+        if target_type in {"INCIDENT", "PROBLEM"}:
+            expected = target_type
+            exists = db.query(ITSMTicket.id, ITSMTicket.service_id).filter(
+                ITSMTicket.tenant_id == tenant_id,
+                ITSMTicket.id == target_id,
+                ITSMTicket.ticket_type == expected,
+            ).first()
+            target_service_id = exists.service_id if exists else None
+        elif target_type == "MAJOR_INCIDENT":
+            exists = db.query(ITSMMajorIncident.id, ITSMTicket.service_id).join(
+                ITSMTicket, ITSMTicket.id == ITSMMajorIncident.ticket_id
+            ).filter(
+                ITSMMajorIncident.tenant_id == tenant_id,
+                ITSMMajorIncident.id == target_id,
+                ITSMTicket.tenant_id == tenant_id,
+            ).first()
+            target_service_id = exists.service_id if exists else None
+        elif target_type == "CHANGE":
+            exists = db.query(ITSMChangeRequest.id, ITSMChangeRequest.service_id).filter(
+                ITSMChangeRequest.tenant_id == tenant_id,
+                ITSMChangeRequest.id == target_id,
+            ).first()
+            target_service_id = exists.service_id if exists else None
+        else:
+            exists = None
+        if not exists:
+            raise HTTPException(status_code=422, detail=f"Linked {target_type.lower()} is unavailable")
+        if target_service_id is None:
+            raise HTTPException(status_code=422, detail=f"Linked {target_type.lower()} must have an authorized service")
+        if target_service_id not in alert_service_ids:
+            raise HTTPException(status_code=422, detail=f"Linked {target_type.lower()} is outside the affected services")
+
+    @classmethod
+    def _specific_user_is_eligible(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        user_id: UUID | None,
+        service_ids: set[UUID],
+        links: list[tuple[str, UUID]],
+    ) -> bool:
+        """A named recipient must already have an authorized business relationship.
+
+        Selecting a person is a narrowing mechanism, never a way to bypass
+        service, team, owner, or assigned-record eligibility.
+        """
+        if user_id is None:
+            return False
+        row = db.query(User, ITSMUserAccess).join(
+            ITSMUserAccess,
+            (ITSMUserAccess.user_id == User.id)
+            & (ITSMUserAccess.tenant_id == User.tenant_id),
+        ).filter(
+            User.tenant_id == tenant_id,
+            User.id == user_id,
+            User.is_active.is_(True),
+            ITSMUserAccess.has_itsm_access.is_(True),
+        ).first()
+        if not row:
+            return False
+        _user, access = row
+        raw_role = str(access.itsm_role or "").upper()
+        role = normalize_role(raw_role)
+        now = datetime.now(timezone.utc)
+        if role == "REQUESTER":
+            if service_ids and db.query(ITSMService.id).filter(
+                ITSMService.tenant_id == tenant_id,
+                ITSMService.id.in_(service_ids),
+                ITSMService.alert_recipient_scope == "ALL_REQUESTERS",
+            ).first():
+                return True
+            return bool(service_ids and db.query(ITSMServiceConsumer.id).filter(
+                ITSMServiceConsumer.tenant_id == tenant_id,
+                ITSMServiceConsumer.user_id == user_id,
+                ITSMServiceConsumer.service_id.in_(service_ids),
+                ITSMServiceConsumer.is_active.is_(True),
+                ITSMServiceConsumer.effective_from <= now,
+                or_(
+                    ITSMServiceConsumer.effective_until.is_(None),
+                    ITSMServiceConsumer.effective_until > now,
+                ),
+            ).first())
+        if role == "SERVICE_AGENT":
+            return bool(service_ids and db.query(ITSMTeamMember.id).join(
+                ITSMTeam,
+                (ITSMTeam.id == ITSMTeamMember.team_id)
+                & (ITSMTeam.tenant_id == ITSMTeamMember.tenant_id),
+            ).join(
+                ITSMServiceSupportTeam,
+                (ITSMServiceSupportTeam.team_id == ITSMTeamMember.team_id)
+                & (ITSMServiceSupportTeam.tenant_id == ITSMTeamMember.tenant_id),
+            ).filter(
+                ITSMTeamMember.tenant_id == tenant_id,
+                ITSMTeamMember.user_id == user_id,
+                ITSMTeam.is_active.is_(True),
+                ITSMServiceSupportTeam.service_id.in_(service_ids),
+            ).first())
+        if role == "SERVICE_OWNER":
+            return bool(service_ids and db.query(ITSMService.id).filter(
+                ITSMService.tenant_id == tenant_id,
+                ITSMService.id.in_(service_ids),
+                ITSMService.owner_user_id == user_id,
+            ).first())
+        if role == "PROBLEM_AND_CHANGE_MANAGER":
+            for target_type, target_id in links:
+                if target_type == "PROBLEM" and db.query(ITSMProblemDetail.id).filter(
+                    ITSMProblemDetail.tenant_id == tenant_id,
+                    ITSMProblemDetail.ticket_id == target_id,
+                    ITSMProblemDetail.assigned_investigator_id == user_id,
+                ).first():
+                    return True
+                if target_type == "CHANGE" and db.query(ITSMChangeRequest.id).filter(
+                    ITSMChangeRequest.tenant_id == tenant_id,
+                    ITSMChangeRequest.id == target_id,
+                    ITSMChangeRequest.assigned_to_id == user_id,
+                ).first():
+                    return True
+        return False
+
+    @classmethod
+    def _replace_scope(cls, db: Session, alert: ITSMOutageAlert, payload: AlertDraftRequest, actor_id: UUID) -> None:
+        for collection in (alert.services, alert.configuration_items, alert.audiences, alert.links):
+            collection.clear()
+        # Flush orphan deletes before re-inserting an unchanged service/team
+        # key. Otherwise PostgreSQL can see the replacement INSERT before the
+        # old row's DELETE and reject a valid draft edit as a duplicate.
+        db.flush()
+        for service_id in dict.fromkeys(payload.service_ids):
+            alert.services.append(ITSMOutageAlertService(tenant_id=alert.tenant_id, service_id=service_id))
+        for ci_id in dict.fromkeys(payload.ci_ids):
+            alert.configuration_items.append(ITSMOutageAlertCI(tenant_id=alert.tenant_id, ci_id=ci_id))
+        seen_audiences: set[tuple[str, UUID | None, UUID | None]] = set()
+        for item in payload.audiences:
+            key = (item.audience_type, item.team_id, item.user_id)
+            if key not in seen_audiences:
+                alert.audiences.append(ITSMOutageAlertAudience(
+                    tenant_id=alert.tenant_id,
+                    audience_type=item.audience_type,
+                    team_id=item.team_id,
+                    user_id=item.user_id,
+                ))
+                seen_audiences.add(key)
+        for item in payload.links:
+            alert.links.append(ITSMOutageAlertLink(tenant_id=alert.tenant_id, target_type=item.target_type, target_id=item.target_id, created_by_id=actor_id))
+
+    @classmethod
+    def create_draft(cls, db: Session, tenant_id: UUID, actor_id: UUID, payload: AlertDraftRequest) -> ITSMOutageAlert:
+        cls._validate_payload(db, tenant_id, actor_id, payload, "OUTAGE_ALERT:CREATE")
+        cls.require_permission(db, tenant_id, actor_id, "OUTAGE_ALERT:READ", set(payload.service_ids))
+        alert = ITSMOutageAlert(
+            tenant_id=tenant_id, alert_number=cls._next_number(db, tenant_id), status="DRAFT",
+            created_by_id=actor_id, updated_by_id=actor_id,
+            **payload.model_dump(exclude={"service_ids", "ci_ids", "audiences", "links"}),
+        )
+        db.add(alert)
+        db.flush()
+        cls._replace_scope(db, alert, payload, actor_id)
+        cls._audit(db, alert, actor_id, "draft.created")
+        db.commit()
+        return cls.get_alert(db, tenant_id, alert.id)
+
+    @classmethod
+    def update_draft(cls, db: Session, tenant_id: UUID, actor_id: UUID, alert_id: UUID, payload: AlertDraftRequest) -> ITSMOutageAlert:
+        alert = cls.get_alert(db, tenant_id, alert_id)
+        cls.require_alert_permission(db, tenant_id, actor_id, "OUTAGE_ALERT:EDIT", alert)
+        if alert.status != "DRAFT":
+            raise HTTPException(status_code=409, detail="Only drafts can be edited")
+        cls._validate_payload(db, tenant_id, actor_id, payload, "OUTAGE_ALERT:EDIT")
+        cls.require_permission(db, tenant_id, actor_id, "OUTAGE_ALERT:READ", set(payload.service_ids))
+        old_links = {(row.target_type, row.target_id) for row in alert.links}
+        new_links = {(row.target_type, row.target_id) for row in payload.links}
+        if old_links != new_links:
+            cls.require_permission(db, tenant_id, actor_id, "OUTAGE_ALERT:LINK", set(payload.service_ids))
+        for key, value in payload.model_dump(exclude={"service_ids", "ci_ids", "audiences", "links"}).items():
+            setattr(alert, key, value)
+        alert.updated_by_id = actor_id
+        alert.updated_at = datetime.now(timezone.utc)
+        cls._replace_scope(db, alert, payload, actor_id)
+        cls._audit(db, alert, actor_id, "draft.updated")
+        db.commit()
+        return cls.get_alert(db, tenant_id, alert.id)
+
+    @staticmethod
+    def _latest_publication_at(alert: ITSMOutageAlert) -> datetime | None:
+        return alert.publications[-1].published_at if alert.publications else None
+
+    @classmethod
+    def _content(
+        cls,
+        alert: ITSMOutageAlert,
+        *,
+        latest_publication_at: datetime | None = None,
+    ) -> dict[str, Any]:
+        def json_datetime(value: datetime | None) -> str | None:
+            return value.isoformat() if value is not None else None
+
+        if latest_publication_at is None:
+            latest_publication_at = cls._latest_publication_at(alert)
+
+        return {
+            "alert_number": alert.alert_number, "title": alert.title, "alert_type": alert.alert_type,
+            "severity": alert.severity, "intent": alert.intent, "status": alert.status,
+            "public_status": alert.public_status,
+            "public_summary": alert.public_summary, "impact_summary": alert.impact_summary,
+            "recommended_action": alert.recommended_action, "service_agent_guidance": alert.service_agent_guidance,
+            "internal_notes": alert.internal_notes, "service_agent_handling": alert.service_agent_handling,
+            "affected_services": [{"id": str(item.service_id), "name": item.service.name} for item in alert.services],
+            "configuration_items": [{"id": str(item.ci_id), "name": item.configuration_item.name} for item in alert.configuration_items],
+            "audiences": [{
+                "type": item.audience_type,
+                "team_id": str(item.team_id) if item.team_id else None,
+                "user_id": str(item.user_id) if item.user_id else None,
+            } for item in alert.audiences],
+            "links": [{"type": item.target_type, "id": str(item.target_id)} for item in alert.links],
+            "authorized_links": [{"type": item.target_type, "id": str(item.target_id)} for item in alert.links],
+            "outage_started_at": json_datetime(alert.outage_started_at), "next_update_at": json_datetime(alert.next_update_at),
+            "published_at": json_datetime(alert.published_at),
+            "latest_publication_at": json_datetime(latest_publication_at),
+            "recovered_at": json_datetime(alert.recovered_at),
+            "created_by_id": str(alert.created_by_id), "updated_by_id": str(alert.updated_by_id),
+            "created_at": json_datetime(alert.created_at), "updated_at": json_datetime(alert.updated_at),
+        }
+
+    @staticmethod
+    def _publication_public_status(
+        alert: ITSMOutageAlert,
+        publication_type: str,
+        requested_status: str | None,
+    ) -> str:
+        if publication_type == "RECOVERY":
+            if requested_status not in {None, "RECOVERED"}:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Publish Recovery requires the Recovered public status",
+                )
+            return "RECOVERED"
+        if requested_status == "RECOVERED":
+            raise HTTPException(
+                status_code=422,
+                detail="Recovered status can only be published through Publish Recovery",
+            )
+        return requested_status or alert.public_status or "INVESTIGATING"
+
+    @classmethod
+    def _project_current_recipient_snapshot(
+        cls,
+        alert: ITSMOutageAlert,
+        snapshot: dict[str, Any],
+        role: str,
+    ) -> dict[str, Any]:
+        content = dict(snapshot)
+        # Older immutable snapshots predate these derived public fields. Add
+        # current public evidence to the response without rewriting history.
+        content.setdefault("public_status", alert.public_status)
+        latest = cls._latest_publication_at(alert)
+        if latest is not None:
+            content.setdefault("latest_publication_at", latest.isoformat())
+        return project_alert(content, role)
+
+    @classmethod
+    def resolve_recipients(cls, db: Session, alert: ITSMOutageAlert) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+        service_ids = [item.service_id for item in alert.services]
+        resolved: dict[UUID, dict[str, Any]] = {}
+        exclusions: list[dict[str, Any]] = []
+
+        def include(rows: list[tuple[User, ITSMUserAccess]], audience_type: str, reason: str) -> None:
+            for user, access in rows:
+                role = str(access.itsm_role).upper()
+                if role not in RECIPIENT_ROLES:
+                    exclusions.append({"audience_type": audience_type, "reason": "Role is not eligible for business alert delivery", "count": 1})
+                    continue
+                current = resolved.get(user.id)
+                membership = {"audience_type": audience_type, "reason": reason}
+                candidate = {
+                    "user_id": user.id,
+                    "role": role,
+                    "audience_type": audience_type,
+                    "reason": reason,
+                    "audience_memberships": [membership],
+                }
+                if current:
+                    if membership not in current["audience_memberships"]:
+                        current["audience_memberships"].append(membership)
+                    if cls._projection_rank(role) > cls._projection_rank(current["role"]):
+                        current.update({
+                            "role": role,
+                            "audience_type": audience_type,
+                            "reason": reason,
+                        })
+                else:
+                    resolved[user.id] = candidate
+
+        for audience in alert.audiences:
+            rows: list[tuple[User, ITSMUserAccess]] = []
+            reason = ""
+            empty_reason: str | None = None
+            if audience.audience_type == "SERVICE_USERS":
+                has_company_wide_service = db.query(ITSMService.id).filter(
+                    ITSMService.tenant_id == alert.tenant_id,
+                    ITSMService.id.in_(service_ids),
+                    ITSMService.alert_recipient_scope == "ALL_REQUESTERS",
+                ).first() is not None
+                requester_query = db.query(User, ITSMUserAccess).join(
+                    ITSMUserAccess,
+                    (ITSMUserAccess.user_id == User.id)
+                    & (ITSMUserAccess.tenant_id == User.tenant_id),
+                ).filter(
+                    User.tenant_id == alert.tenant_id,
+                    User.is_active.is_(True),
+                    ITSMUserAccess.has_itsm_access.is_(True),
+                    ITSMUserAccess.itsm_role == "REQUESTER",
+                )
+                if has_company_wide_service:
+                    rows = requester_query.all()
+                    reason = "Active Requester for a company-wide affected service"
+                    empty_reason = "No active Requester is available in this tenant"
+                else:
+                    now = datetime.now(timezone.utc)
+                    rows = requester_query.join(
+                        ITSMServiceConsumer,
+                        (ITSMServiceConsumer.user_id == User.id)
+                        & (ITSMServiceConsumer.tenant_id == User.tenant_id),
+                    ).filter(
+                        ITSMServiceConsumer.service_id.in_(service_ids),
+                        ITSMServiceConsumer.is_active.is_(True),
+                        ITSMServiceConsumer.effective_from <= now,
+                        or_(
+                            ITSMServiceConsumer.effective_until.is_(None),
+                            ITSMServiceConsumer.effective_until > now,
+                        ),
+                    ).all()
+                    reason = "Authorized user of an affected service"
+                    empty_reason = "No active Requester has an entitlement to the affected services"
+            elif audience.audience_type == "SERVICE_AGENTS":
+                rows = db.query(User, ITSMUserAccess).join(ITSMUserAccess, (ITSMUserAccess.user_id == User.id) & (ITSMUserAccess.tenant_id == User.tenant_id)).join(
+                    ITSMTeamMember, (ITSMTeamMember.user_id == User.id) & (ITSMTeamMember.tenant_id == User.tenant_id)
+                ).join(
+                    ITSMTeam, (ITSMTeam.id == ITSMTeamMember.team_id) & (ITSMTeam.tenant_id == User.tenant_id)
+                ).join(ITSMServiceSupportTeam, (ITSMServiceSupportTeam.team_id == ITSMTeamMember.team_id) & (ITSMServiceSupportTeam.tenant_id == User.tenant_id)).filter(
+                    User.tenant_id == alert.tenant_id, User.is_active.is_(True), ITSMUserAccess.has_itsm_access.is_(True),
+                    ITSMUserAccess.itsm_role == "SERVICE_AGENT", ITSMTeam.is_active.is_(True),
+                    ITSMServiceSupportTeam.service_id.in_(service_ids),
+                ).all()
+                reason = "Support team is assigned to an affected service"
+            elif audience.audience_type == "PROBLEM_MANAGERS":
+                problem_ids = [
+                    link.target_id for link in alert.links
+                    if link.target_type == "PROBLEM"
+                ]
+                if problem_ids:
+                    rows = db.query(User, ITSMUserAccess).join(
+                        ITSMUserAccess,
+                        (ITSMUserAccess.user_id == User.id)
+                        & (ITSMUserAccess.tenant_id == User.tenant_id),
+                    ).join(
+                        ITSMProblemDetail,
+                        (ITSMProblemDetail.assigned_investigator_id == User.id)
+                        & (ITSMProblemDetail.tenant_id == User.tenant_id),
+                    ).filter(
+                        User.tenant_id == alert.tenant_id,
+                        User.is_active.is_(True),
+                        ITSMUserAccess.has_itsm_access.is_(True),
+                        ITSMUserAccess.itsm_role == "PROCESS_CHANGE_MANAGER",
+                        ITSMProblemDetail.ticket_id.in_(problem_ids),
+                    ).all()
+                reason = "Assigned investigator for a linked Problem"
+            elif audience.audience_type == "CHANGE_MANAGERS":
+                change_ids = [
+                    link.target_id for link in alert.links
+                    if link.target_type == "CHANGE"
+                ]
+                if change_ids:
+                    rows = db.query(User, ITSMUserAccess).join(
+                        ITSMUserAccess,
+                        (ITSMUserAccess.user_id == User.id)
+                        & (ITSMUserAccess.tenant_id == User.tenant_id),
+                    ).join(
+                        ITSMChangeRequest,
+                        (ITSMChangeRequest.assigned_to_id == User.id)
+                        & (ITSMChangeRequest.tenant_id == User.tenant_id),
+                    ).filter(
+                        User.tenant_id == alert.tenant_id,
+                        User.is_active.is_(True),
+                        ITSMUserAccess.has_itsm_access.is_(True),
+                        ITSMUserAccess.itsm_role == "PROCESS_CHANGE_MANAGER",
+                        ITSMChangeRequest.id.in_(change_ids),
+                    ).all()
+                reason = "Assigned manager for a linked Change"
+            elif audience.audience_type == "SELECTED_TEAM" and audience.team_id:
+                rows = db.query(User, ITSMUserAccess).join(ITSMUserAccess, (ITSMUserAccess.user_id == User.id) & (ITSMUserAccess.tenant_id == User.tenant_id)).join(
+                    ITSMTeamMember, (ITSMTeamMember.user_id == User.id) & (ITSMTeamMember.tenant_id == User.tenant_id)
+                ).join(
+                    ITSMTeam, (ITSMTeam.id == ITSMTeamMember.team_id) & (ITSMTeam.tenant_id == User.tenant_id)
+                ).filter(
+                    User.tenant_id == alert.tenant_id, User.is_active.is_(True),
+                    ITSMUserAccess.has_itsm_access.is_(True), ITSMTeam.is_active.is_(True),
+                    ITSMTeamMember.team_id == audience.team_id,
+                ).all()
+                reason = f"Member of selected team {audience.team.name if audience.team else ''}".strip()
+            elif audience.audience_type == "SERVICE_OWNERS":
+                owner_ids = [row.owner_user_id for row in db.query(ITSMService).filter(ITSMService.tenant_id == alert.tenant_id, ITSMService.id.in_(service_ids), ITSMService.owner_user_id.isnot(None)).all()]
+                if owner_ids:
+                    rows = db.query(User, ITSMUserAccess).join(ITSMUserAccess, (ITSMUserAccess.user_id == User.id) & (ITSMUserAccess.tenant_id == User.tenant_id)).filter(
+                        User.tenant_id == alert.tenant_id,
+                        User.id.in_(owner_ids),
+                        User.is_active.is_(True),
+                        ITSMUserAccess.has_itsm_access.is_(True),
+                        ITSMUserAccess.itsm_role == "CATALOG_MANAGER",
+                    ).all()
+                reason = "Owner of an affected service"
+            elif audience.audience_type == "SPECIFIC_USER" and audience.user_id:
+                if cls._specific_user_is_eligible(
+                    db,
+                    alert.tenant_id,
+                    audience.user_id,
+                    set(service_ids),
+                    [(link.target_type, link.target_id) for link in alert.links],
+                ):
+                    rows = db.query(User, ITSMUserAccess).join(
+                        ITSMUserAccess,
+                        (ITSMUserAccess.user_id == User.id)
+                        & (ITSMUserAccess.tenant_id == User.tenant_id),
+                    ).filter(
+                        User.tenant_id == alert.tenant_id,
+                        User.id == audience.user_id,
+                        User.is_active.is_(True),
+                        ITSMUserAccess.has_itsm_access.is_(True),
+                    ).all()
+                reason = "Specifically selected and independently eligible for this alert scope"
+            include(rows, audience.audience_type, reason)
+            if not rows:
+                exclusions.append({"audience_type": audience.audience_type, "reason": empty_reason or cls._empty_reason(audience.audience_type), "count": 0})
+
+        content = cls._content(alert)
+        recipients = []
+        for item in resolved.values():
+            projection = project_alert(content, item["role"])
+            authorized_links = cls._authorized_links_for_recipient(
+                db,
+                alert,
+                item["user_id"],
+                item["role"],
+            )
+            if "authorized_links" in projection:
+                projection["authorized_links"] = authorized_links
+            has_authorized_incident = any(link["type"] == "INCIDENT" for link in authorized_links)
+            actions = allowed_actions_for(
+                item["role"],
+                intent=alert.intent,
+                handling=alert.service_agent_handling,
+                has_incident_link=has_authorized_incident,
+            )
+            recipients.append({**item, "projection_type": projection_type_for_role(item["role"]), "content": projection, "allowed_actions": actions})
+        return sorted(recipients, key=lambda row: (row["audience_type"], str(row["user_id"]))), exclusions
+
+    @classmethod
+    def _authorized_links_for_recipient(
+        cls,
+        db: Session,
+        alert: ITSMOutageAlert,
+        user_id: UUID,
+        role: str,
+    ) -> list[dict[str, str]]:
+        """Return only related records the recipient can independently read."""
+        normalized = normalize_role(role)
+        authorized: list[dict[str, str]] = []
+        for link in alert.links:
+            allowed = False
+            if normalized == "SERVICE_AGENT" and link.target_type in {"INCIDENT", "MAJOR_INCIDENT"}:
+                if link.target_type == "INCIDENT":
+                    ticket = db.query(ITSMTicket).filter(
+                        ITSMTicket.tenant_id == alert.tenant_id,
+                        ITSMTicket.id == link.target_id,
+                        ITSMTicket.ticket_type == "INCIDENT",
+                    ).first()
+                else:
+                    ticket = db.query(ITSMTicket).join(
+                        ITSMMajorIncident,
+                        (ITSMMajorIncident.ticket_id == ITSMTicket.id)
+                        & (ITSMMajorIncident.tenant_id == ITSMTicket.tenant_id),
+                    ).filter(
+                        ITSMTicket.tenant_id == alert.tenant_id,
+                        ITSMMajorIncident.id == link.target_id,
+                    ).first()
+                allowed = bool(
+                    ticket
+                    and IncidentService.check_incident_agent_access(
+                        db,
+                        alert.tenant_id,
+                        ticket,
+                        user_id,
+                    )
+                )
+            elif normalized == "PROBLEM_AND_CHANGE_MANAGER":
+                if link.target_type == "PROBLEM":
+                    allowed = bool(
+                        db.query(ITSMProblemDetail.id)
+                        .filter(
+                            ITSMProblemDetail.tenant_id == alert.tenant_id,
+                            ITSMProblemDetail.ticket_id == link.target_id,
+                            ITSMProblemDetail.assigned_investigator_id == user_id,
+                        )
+                        .first()
+                    )
+                elif link.target_type == "CHANGE":
+                    allowed = bool(
+                        db.query(ITSMChangeRequest.id)
+                        .filter(
+                            ITSMChangeRequest.tenant_id == alert.tenant_id,
+                            ITSMChangeRequest.id == link.target_id,
+                            ITSMChangeRequest.assigned_to_id == user_id,
+                        )
+                        .first()
+                    )
+            elif normalized == "SERVICE_OWNER":
+                target_service_id = cls._linked_record_service_id(db, alert, link)
+                allowed = bool(
+                    target_service_id
+                    and db.query(ITSMService.id).filter(
+                        ITSMService.tenant_id == alert.tenant_id,
+                        ITSMService.id == target_service_id,
+                        ITSMService.owner_user_id == user_id,
+                    ).first()
+                )
+            if allowed:
+                authorized.append({"type": link.target_type, "id": str(link.target_id)})
+        return authorized
+
+    @staticmethod
+    def _linked_record_service_id(
+        db: Session,
+        alert: ITSMOutageAlert,
+        link: ITSMOutageAlertLink,
+    ) -> UUID | None:
+        if link.target_type in {"INCIDENT", "PROBLEM"}:
+            row = db.query(ITSMTicket.service_id).filter(
+                ITSMTicket.tenant_id == alert.tenant_id,
+                ITSMTicket.id == link.target_id,
+                ITSMTicket.ticket_type == link.target_type,
+            ).first()
+        elif link.target_type == "MAJOR_INCIDENT":
+            row = db.query(ITSMTicket.service_id).join(
+                ITSMMajorIncident,
+                (ITSMMajorIncident.ticket_id == ITSMTicket.id)
+                & (ITSMMajorIncident.tenant_id == ITSMTicket.tenant_id),
+            ).filter(
+                ITSMTicket.tenant_id == alert.tenant_id,
+                ITSMMajorIncident.id == link.target_id,
+            ).first()
+        elif link.target_type == "CHANGE":
+            row = db.query(ITSMChangeRequest.service_id).filter(
+                ITSMChangeRequest.tenant_id == alert.tenant_id,
+                ITSMChangeRequest.id == link.target_id,
+            ).first()
+        else:
+            row = None
+        return row.service_id if row else None
+
+    @staticmethod
+    def _projection_rank(role: str) -> int:
+        return {"REQUESTER": 1, "CATALOG_MANAGER": 2, "PROCESS_CHANGE_MANAGER": 2, "PROBLEM_CHANGE_MANAGER": 2, "SERVICE_AGENT": 3}.get(role, 0)
+
+    @staticmethod
+    def _empty_reason(audience_type: str) -> str:
+        return {
+            "SERVICE_USERS": "No active Requester is linked to the affected services",
+            "SERVICE_AGENTS": "No active Service Agent belongs to a support team for the affected services",
+            "PROBLEM_MANAGERS": "No active Problem Manager is assigned to a linked Problem",
+            "CHANGE_MANAGERS": "No active Change Manager is assigned to a linked Change",
+            "SELECTED_TEAM": "The selected team has no active eligible ITSM members",
+            "SERVICE_OWNERS": "The affected services have no active eligible owner",
+            "SPECIFIC_USER": "The selected user is no longer eligible for the affected services or linked records",
+        }.get(audience_type, "No eligible recipients")
+
+    @classmethod
+    def _preview_token(cls, alert: ITSMOutageAlert, recipients: list[dict[str, Any]]) -> str:
+        alert_content = cls._content(alert)
+        for server_managed in (
+            "updated_by_id", "updated_at", "published_at",
+            "latest_publication_at", "recovered_at",
+        ):
+            alert_content.pop(server_managed, None)
+        canonical = {
+            "alert": alert_content,
+            "recipients": [{
+                "user_id": str(r["user_id"]),
+                "audience_memberships": r["audience_memberships"],
+                "projection": r["content"],
+                "actions": r["allowed_actions"],
+            } for r in recipients],
+        }
+        return hashlib.sha256(json.dumps(canonical, sort_keys=True, default=str, separators=(",", ":")).encode()).hexdigest()
+
+    @classmethod
+    def preview(cls, db: Session, tenant_id: UUID, actor_id: UUID, alert_id: UUID, changes: Any | None = None) -> dict[str, Any]:
+        alert = cls.get_alert(db, tenant_id, alert_id)
+        cls.require_alert_permission(db, tenant_id, actor_id, "OUTAGE_ALERT:PREVIEW", alert)
+        if alert.status not in {"DRAFT", "ACTIVE"}:
+            raise HTTPException(status_code=409, detail="This alert cannot be previewed in its current state")
+        if not alert.audiences:
+            raise HTTPException(status_code=422, detail="Select at least one audience before preview")
+        cls._validate_publishable(alert)
+        publication_type = getattr(changes, "publication_type", None) or ("INITIAL" if alert.status == "DRAFT" else "UPDATE")
+        requested_public_status = getattr(changes, "public_status", None) if changes is not None else None
+        public_status = cls._publication_public_status(alert, publication_type, requested_public_status)
+        original: dict[str, Any] = {"status": alert.status, "public_status": alert.public_status}
+        provided_fields = getattr(changes, "model_fields_set", set()) if changes is not None else set()
+        nullable_fields = {"recommended_action", "service_agent_guidance", "internal_notes", "next_update_at"}
+        for field in ("public_summary", "impact_summary", "recommended_action", "service_agent_guidance", "internal_notes", "severity", "next_update_at"):
+            value = getattr(changes, field, None) if changes is not None else None
+            original[field] = getattr(alert, field)
+            if value is not None or (field in nullable_fields and field in provided_fields):
+                setattr(alert, field, value)
+        alert.public_status = public_status
+        if publication_type == "INITIAL":
+            alert.status = "ACTIVE"
+        elif publication_type == "RECOVERY":
+            alert.status = "RECOVERED"
+        try:
+            # Preview temporarily applies unsaved publication content. Prevent
+            # relationship lookups in the resolver from auto-flushing those
+            # temporary values into the canonical draft.
+            with db.no_autoflush:
+                recipients, exclusions = cls.resolve_recipients(db, alert)
+                grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+                for row in recipients:
+                    for membership in row["audience_memberships"]:
+                        grouped[membership["audience_type"]].append(row)
+                groups = [{
+                    "audience_type": audience_type, "recipient_count": len(rows),
+                    "included_because": next(
+                        membership["reason"]
+                        for membership in rows[0]["audience_memberships"]
+                        if membership["audience_type"] == audience_type
+                    ),
+                    "projection_fields": projection_fields(rows[0]["role"]),
+                    "allowed_actions": sorted({action for row in rows for action in row["allowed_actions"]}),
+                } for audience_type, rows in grouped.items()]
+                token = cls._preview_token(alert, recipients)
+        finally:
+            for field, value in original.items():
+                setattr(alert, field, value)
+        return {"alert_id": alert.id, "preview_token": token, "total_recipients": len(recipients), "groups": groups, "exclusions": exclusions}
+
+    @classmethod
+    def publish(cls, db: Session, tenant_id: UUID, actor_id: UUID, alert_id: UUID, payload: AlertPublicationRequest, publication_type: str) -> ITSMOutageAlertPublication:
+        permission = {
+            "INITIAL": "OUTAGE_ALERT:PUBLISH",
+            "UPDATE": "OUTAGE_ALERT:UPDATE",
+            "RECOVERY": "OUTAGE_ALERT:RECOVER",
+        }.get(publication_type)
+        if permission is None:
+            raise HTTPException(status_code=422, detail="Unsupported publication type")
+        alert = cls._query(db, tenant_id).filter(
+            ITSMOutageAlert.id == alert_id,
+        ).with_for_update().first()
+        if not alert:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert not found")
+        cls.require_alert_permission(db, tenant_id, actor_id, permission, alert)
+        if db.get_bind().dialect.name == "postgresql":
+            db.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+                {"key": f"{tenant_id}:outage-alert:{payload.idempotency_key}"},
+            )
+        existing = db.query(ITSMOutageAlertPublication).filter(ITSMOutageAlertPublication.tenant_id == tenant_id, ITSMOutageAlertPublication.idempotency_key == payload.idempotency_key).first()
+        if existing:
+            if existing.alert_id != alert_id or existing.publication_type != publication_type:
+                raise HTTPException(status_code=409, detail="Idempotency key is already used for another operation")
+            return existing
+        required = "DRAFT" if publication_type == "INITIAL" else "ACTIVE"
+        if alert.status != required:
+            raise HTTPException(status_code=409, detail=f"{publication_type.title()} is not valid while alert is {alert.status}")
+        alert.public_status = cls._publication_public_status(
+            alert,
+            publication_type,
+            payload.public_status,
+        )
+        nullable_fields = {"recommended_action", "service_agent_guidance", "internal_notes", "next_update_at"}
+        for field in ("public_summary", "impact_summary", "recommended_action", "service_agent_guidance", "internal_notes", "severity", "next_update_at"):
+            value = getattr(payload, field)
+            if value is not None or (field in nullable_fields and field in payload.model_fields_set):
+                setattr(alert, field, value)
+        alert.updated_by_id = actor_id
+        original_status = alert.status
+        if publication_type == "INITIAL":
+            alert.status = "ACTIVE"
+        elif publication_type == "RECOVERY":
+            alert.status = "RECOVERED"
+        recipients, exclusions = cls.resolve_recipients(db, alert)
+        if not recipients:
+            detail = exclusions[0]["reason"] if exclusions else "No authorized recipients match the selected audience and scope"
+            raise HTTPException(status_code=422, detail=detail)
+        token = cls._preview_token(alert, recipients)
+        if token != payload.preview_token:
+            alert.status = original_status
+            raise HTTPException(status_code=409, detail="Alert, audience, or recipient eligibility changed. Preview again before publishing")
+        version = (db.query(func.max(ITSMOutageAlertPublication.version)).filter(ITSMOutageAlertPublication.alert_id == alert.id).scalar() or 0) + 1
+        now = datetime.now(timezone.utc)
+        alert.updated_at = now
+        if publication_type == "INITIAL":
+            alert.published_at = now
+        elif publication_type == "RECOVERY":
+            alert.recovered_at = now
+        publication = ITSMOutageAlertPublication(
+            tenant_id=tenant_id, alert_id=alert.id, version=version, publication_type=publication_type,
+            content_snapshot=cls._content(alert, latest_publication_at=now),
+            audience_snapshot=[{
+                "type": a.audience_type,
+                "team_id": str(a.team_id) if a.team_id else None,
+                "user_id": str(a.user_id) if a.user_id else None,
+            } for a in alert.audiences],
+            recipient_count=len(recipients), idempotency_key=payload.idempotency_key,
+            published_by_id=actor_id, published_at=now,
+        )
+        db.add(publication)
+        db.flush()
+        for resolved in recipients:
+            # resolve_recipients is the single projection authority for both
+            # preview and delivery.  Re-projecting the canonical Alert here
+            # would discard its per-recipient related-record authorization
+            # and could persist identifiers the recipient cannot read.
+            final_projection = {
+                **resolved["content"],
+                "latest_publication_at": now.isoformat(),
+            }
+            notification_severity = str(final_projection.get("severity") or "info").lower()
+            public_status_label = str(final_projection.get("public_status") or "Service update").replace("_", " ").title()
+            notification = add_notification(
+                db, tenant_id=tenant_id, user_id=resolved["user_id"], type="itsm_outage_alert",
+                severity="critical" if notification_severity == "critical" else "warning" if notification_severity == "high" else "info",
+                title=f"{public_status_label}: " + str(final_projection.get("title") or "Service alert"),
+                body=str(final_projection.get("public_summary") or "")[:1000], link=f"/itsm/outage-alerts/{alert.id}",
+            )
+            db.flush()
+            db.add(ITSMOutageAlertRecipient(
+                tenant_id=tenant_id, publication_id=publication.id, user_id=resolved["user_id"],
+                audience_type=resolved["audience_type"], projection_type=resolved["projection_type"],
+                inclusion_reason=resolved["reason"],
+                audience_memberships=resolved["audience_memberships"],
+                allowed_actions=resolved["allowed_actions"],
+                content_snapshot=final_projection, notification_id=notification.id,
+                delivery_status="AVAILABLE", attempt_count=1, available_at=now,
+            ))
+        alert.current_publication_id = publication.id
+        cls._audit(db, alert, actor_id, f"publication.{publication_type.lower()}", [f"version={version}", f"recipient_count={len(recipients)}"])
+        db.commit()
+        db.refresh(publication)
+        return publication
+
+    @classmethod
+    def cancel_draft(cls, db: Session, tenant_id: UUID, actor_id: UUID, alert_id: UUID) -> ITSMOutageAlert:
+        alert = cls.get_alert(db, tenant_id, alert_id)
+        cls.require_alert_permission(db, tenant_id, actor_id, "OUTAGE_ALERT:CANCEL", alert)
+        if alert.status != "DRAFT":
+            raise HTTPException(status_code=409, detail="Only an unpublished draft can be cancelled")
+        alert.status, alert.cancelled_at, alert.updated_by_id = "CANCELLED", datetime.now(timezone.utc), actor_id
+        cls._audit(db, alert, actor_id, "draft.cancelled")
+        db.commit()
+        return alert
+
+    @classmethod
+    def _has_alert_permission(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        user_id: UUID,
+        permission: str,
+        alert: ITSMOutageAlert,
+    ) -> bool:
+        grants = db.query(ITSMOutageAlertGrant.service_id).filter(
+            ITSMOutageAlertGrant.tenant_id == tenant_id,
+            ITSMOutageAlertGrant.user_id == user_id,
+            ITSMOutageAlertGrant.permission == permission,
+        ).all()
+        if not grants:
+            return False
+        if any(row.service_id is None for row in grants):
+            return True
+        service_ids = cls._service_ids(alert)
+        return bool(service_ids) and service_ids.issubset({row.service_id for row in grants})
+
+    @classmethod
+    def _manager_actions(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        user_id: UUID,
+        alert: ITSMOutageAlert,
+    ) -> list[str]:
+        actions = ["VIEW"] if cls._has_alert_permission(db, tenant_id, user_id, "OUTAGE_ALERT:READ", alert) else []
+        for action, permission in ACTION_PERMISSIONS.items():
+            if action != "VIEW" and cls._has_alert_permission(db, tenant_id, user_id, permission, alert):
+                actions.append(action)
+        return actions
+
+    @classmethod
+    def _current_recipient(
+        cls,
+        db: Session,
+        alert: ITSMOutageAlert,
+        user_id: UUID,
+    ) -> dict[str, Any] | None:
+        """Intersect the current delivery snapshot with current eligibility.
+
+        Recipient snapshots are audit evidence, not a durable access grant. A
+        caller must still be eligible for the alert now and must have been a
+        recipient of the alert's current publication. The immutable snapshot
+        is returned so read paths cannot expand historical content by
+        re-projecting the canonical publication under a newly acquired role.
+        """
+        if alert.current_publication_id is None:
+            return None
+        snapshot = db.query(ITSMOutageAlertRecipient).filter(
+            ITSMOutageAlertRecipient.tenant_id == alert.tenant_id,
+            ITSMOutageAlertRecipient.publication_id == alert.current_publication_id,
+            ITSMOutageAlertRecipient.user_id == user_id,
+        ).first()
+        if not snapshot:
+            return None
+        recipients, _ = cls.resolve_recipients(db, alert)
+        current = next((row for row in recipients if row["user_id"] == user_id), None)
+        if current is None:
+            return None
+        return {
+            **current,
+            "content_snapshot": snapshot.content_snapshot,
+            "snapshot_actions": snapshot.allowed_actions,
+        }
+
+    @classmethod
+    def list_visible(cls, db: Session, tenant_id: UUID, user_id: UUID, requested_status: str | None = None, linked_type: str | None = None, linked_id: UUID | None = None) -> list[dict[str, Any]]:
+        role = cls.role_for(db, tenant_id, user_id)
+        query = cls._query(db, tenant_id)
+        if requested_status:
+            query = query.filter(ITSMOutageAlert.status == requested_status.upper())
+        if linked_type and linked_id:
+            linked_alert_ids = db.query(ITSMOutageAlertLink.alert_id).filter(
+                ITSMOutageAlertLink.tenant_id == tenant_id,
+                ITSMOutageAlertLink.target_type == linked_type.upper(),
+                ITSMOutageAlertLink.target_id == linked_id,
+            )
+            query = query.filter(ITSMOutageAlert.id.in_(linked_alert_ids))
+        normalized = normalize_role(role)
+        if not can_manage(role) and normalized != "AUDITOR":
+            visible_ids = db.query(ITSMOutageAlertPublication.alert_id).join(ITSMOutageAlertRecipient).filter(
+                ITSMOutageAlertPublication.tenant_id == tenant_id, ITSMOutageAlertRecipient.user_id == user_id
+            ).distinct()
+            query = query.filter(ITSMOutageAlert.id.in_(visible_ids))
+        alerts = query.order_by(ITSMOutageAlert.updated_at.desc(), ITSMOutageAlert.id.desc()).all()
+        if can_manage(role):
+            alerts = [
+                alert for alert in alerts
+                if cls._has_alert_permission(db, tenant_id, user_id, "OUTAGE_ALERT:READ", alert)
+            ]
+        elif normalized != "AUDITOR":
+            alerts = [alert for alert in alerts if cls._current_recipient(db, alert, user_id)]
+        summaries = []
+        for alert in alerts:
+            if can_manage(role) or normalized == "AUDITOR":
+                summaries.append(cls.summary(alert, role))
+                continue
+            recipient = cls._current_recipient(db, alert, user_id)
+            if recipient:
+                content = cls._project_current_recipient_snapshot(
+                    alert, recipient["content_snapshot"], role
+                )
+                summaries.append(cls.summary(alert, role, content=content))
+        return summaries
+
+    @classmethod
+    def detail(cls, db: Session, tenant_id: UUID, user_id: UUID, alert_id: UUID) -> dict[str, Any]:
+        role = cls.role_for(db, tenant_id, user_id)
+        alert = cls.get_alert(db, tenant_id, alert_id)
+        normalized = normalize_role(role)
+        if can_manage(role):
+            cls.require_alert_permission(db, tenant_id, user_id, "OUTAGE_ALERT:READ", alert)
+            content = project_alert(cls._content(alert), role)
+            actions = cls._manager_actions(db, tenant_id, user_id, alert)
+            projection = projection_type_for_role(role)
+            publications = [{"id": str(p.id), "version": p.version, "type": p.publication_type, "published_at": p.published_at, "publisher_id": str(p.published_by_id), "recipient_count": p.recipient_count, "content": project_alert(p.content_snapshot, role)} for p in alert.publications]
+        elif normalized == "AUDITOR":
+            content = project_alert(cls._content(alert), role)
+            actions = allowed_actions_for(role, intent=alert.intent, handling=alert.service_agent_handling, has_incident_link=any(link.target_type == "INCIDENT" for link in alert.links))
+            projection = projection_type_for_role(role)
+            publications = [{"id": str(p.id), "version": p.version, "type": p.publication_type, "published_at": p.published_at, "publisher_id": str(p.published_by_id), "recipient_count": p.recipient_count, "content": project_alert(p.content_snapshot, role)} for p in alert.publications]
+        else:
+            current_recipient = cls._current_recipient(db, alert, user_id)
+            if not current_recipient:
+                raise HTTPException(status_code=404, detail="Alert not found")
+            content = cls._project_current_recipient_snapshot(
+                alert, current_recipient["content_snapshot"], role
+            )
+            current_actions = allowed_actions_for(
+                role,
+                intent=alert.intent,
+                handling=alert.service_agent_handling,
+                has_incident_link=any(link.target_type == "INCIDENT" for link in alert.links),
+            )
+            actions = sorted(set(current_recipient["snapshot_actions"]) & set(current_actions))
+            projection = projection_type_for_role(role)
+            publications = []
+            for publication in alert.publications:
+                historic = next((row for row in publication.recipients if row.user_id == user_id), None)
+                if historic:
+                    publications.append({
+                        "version": publication.version,
+                        "type": publication.publication_type,
+                        "published_at": publication.published_at,
+                        "content": project_alert(historic.content_snapshot, role),
+                    })
+        delivery = None
+        if can_manage(role) or normalized == "AUDITOR":
+            counts: dict[str, int] = defaultdict(int)
+            for pub in alert.publications:
+                for row in pub.recipients:
+                    counts[row.delivery_status] += 1
+            delivery = dict(counts)
+        return {
+            "id": alert.id, "alert_number": alert.alert_number, "status": alert.status,
+            "projection_type": projection, "content": content, "allowed_actions": actions,
+            "affected_services": content.get("affected_services", []),
+            "links": content.get("links", []) if can_manage(role) or normalized == "AUDITOR" else content.get("authorized_links", []),
+            "publications": publications, "delivery_summary": delivery,
+        }
+
+    @classmethod
+    def summary(
+        cls,
+        alert: ITSMOutageAlert,
+        role: str,
+        *,
+        content: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        content = content if content is not None else project_alert(cls._content(alert), role)
+        return {
+            "id": alert.id,
+            "alert_number": content.get("alert_number", alert.alert_number),
+            "title": content.get("title"),
+            "alert_type": content.get("alert_type"),
+            "severity": content.get("severity"),
+            "intent": content.get("intent"),
+            "status": content.get("status", alert.status),
+            "public_status": content.get("public_status"),
+            "affected_services": content.get("affected_services", []),
+            "updated_at": content.get("updated_at", alert.updated_at),
+            "published_at": content.get("published_at"),
+            "latest_publication_at": content.get("latest_publication_at"),
+            "recovered_at": content.get("recovered_at"),
+        }
+
+    @classmethod
+    def acknowledge(cls, db: Session, tenant_id: UUID, user_id: UUID, alert_id: UUID) -> None:
+        cls.role_for(db, tenant_id, user_id)
+        alert = cls.get_alert(db, tenant_id, alert_id)
+        current = cls._current_recipient(db, alert, user_id)
+        recipient = db.query(ITSMOutageAlertRecipient).filter(
+            ITSMOutageAlertRecipient.tenant_id == tenant_id,
+            ITSMOutageAlertRecipient.user_id == user_id,
+            ITSMOutageAlertRecipient.publication_id == alert.current_publication_id,
+        ).first()
+        current_actions = (
+            set(current["allowed_actions"]) & set(current["snapshot_actions"])
+            if current
+            else set()
+        )
+        if not recipient or "ACKNOWLEDGE" not in current_actions:
+            raise HTTPException(status_code=403, detail="Acknowledgement is not permitted")
+        if not recipient.acknowledged_at:
+            now = datetime.now(timezone.utc)
+            recipient.acknowledged_at = now
+            recipient.read_at = recipient.read_at or now
+            if recipient.notification is not None:
+                recipient.notification.read_at = recipient.notification.read_at or now
+            cls._audit(db, alert, user_id, "recipient.acknowledged")
+            db.commit()
+
+    @staticmethod
+    def _audit(db: Session, alert: ITSMOutageAlert, actor_id: UUID, action: str, extra: list[str] | None = None) -> None:
+        db.execute(text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"), {"tenant_id": str(alert.tenant_id)})
+        append_audit_event(db, {
+            "id": str(uuid4()), "tenant_id": str(alert.tenant_id), "timestamp": datetime.now(timezone.utc),
+            "actor_id": str(actor_id), "actor_type": "user", "action": f"itsm.outage_alert.{action}",
+            "request_id": str(alert.id), "provider": "itsm", "reason": action,
+            "response_status": 200, "frameworks_affected": ["ITIL"],
+            "execution_trace": [f"alert_id={alert.id}", f"alert_number={alert.alert_number}", f"status={alert.status}"] + (extra or []),
+        })

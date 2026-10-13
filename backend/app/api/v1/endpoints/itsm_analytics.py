@@ -18,6 +18,7 @@ from app.schemas.itsm_analytics import (
     FCRKPIResponse,
     MTTAKPIResponse,
     MTTRKPIResponse,
+    OperationalKPIDashboardResponse,
     ReopenRateKPIResponse,
     RepeatIncidentsKPIResponse,
     SLAPerformanceKPIResponse,
@@ -51,6 +52,30 @@ def get_all_kpis(
     """Retrieve all 10 ANA-002 Core KPIs in a unified summary."""
     service = _get_service(request, db)
     return service.compute_all_kpis(start_time=start_time, end_time=end_time)
+
+
+@router.get("/kpis/operational-dashboard", response_model=OperationalKPIDashboardResponse)
+def get_operational_kpi_dashboard(
+    request: Request,
+    start_time: Optional[datetime] = Query(None, description="Start of reporting period (UTC ISO)"),
+    end_time: Optional[datetime] = Query(None, description="End of reporting period/as-of time (UTC ISO)"),
+    service_id: Optional[UUID] = Query(None, description="Affected service ID"),
+    priority: Optional[str] = Query(None, description="Incident priority"),
+    status_filter: Optional[str] = Query(None, alias="status", description="Incident lifecycle status"),
+    drilldown_limit: int = Query(50, ge=1, le=100),
+    db: Session = Depends(get_tenant_db),
+    _incident_manager: None = require_itsm_roles(["INCIDENT_MANAGER"]),
+) -> OperationalKPIDashboardResponse:
+    """Return the Incident Manager four-KPI dashboard with matching tenant-scoped records."""
+    service = _get_service(request, db)
+    return service.compute_operational_dashboard(
+        start_time=start_time,
+        end_time=end_time,
+        service_id=service_id,
+        priority=priority,
+        status=status_filter,
+        drilldown_limit=drilldown_limit,
+    )
 
 
 @router.get("/kpis/mtta", response_model=MTTAKPIResponse)

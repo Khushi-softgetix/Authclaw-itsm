@@ -315,6 +315,7 @@ class IncidentResponse(BaseModel):
     resolved_at: Optional[datetime] = None
     closed_at: Optional[datetime] = None
     closed_by: Optional[UUID] = None
+    version: int = 1
     created_at: datetime
     updated_at: datetime
 

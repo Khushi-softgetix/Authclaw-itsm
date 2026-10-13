@@ -59,6 +59,72 @@ from app.schemas.itsm_incidents import IncidentCreateRequest, IncidentUpdateRequ
 
 
 class IncidentReadinessRegressionTest(unittest.TestCase):
+    def test_concurrency_header_parser_requires_a_positive_version(self):
+        from app.api.v1.endpoints.itsm_incidents import _required_incident_version
+        from fastapi import HTTPException
+
+        with self.assertRaises(HTTPException) as missing:
+            _required_incident_version(None)
+        self.assertEqual(missing.exception.status_code, 428)
+        self.assertEqual(_required_incident_version('W/"7"'), 7)
+
+    def test_incident_audit_summary_redacts_free_text(self):
+        summary = IncidentService._audit_summary({
+            "status": "IN_PROGRESS",
+            "description": "customer secret evidence",
+        })
+        self.assertEqual(summary["status"], "IN_PROGRESS")
+        self.assertNotIn("customer secret evidence", str(summary))
+        self.assertEqual(summary["description"]["changed"], True)
+
+    def test_required_incident_audit_failure_rolls_back_transaction(self):
+        ticket = SimpleNamespace(
+            id=uuid4(), ticket_number="INC-AUDIT", status="NEW", priority="P3", version=1,
+        )
+        db = MagicMock()
+        db.execute.return_value = None
+        with patch(
+            "app.services.itsm_incident_service.append_audit_event",
+            side_effect=RuntimeError("audit unavailable"),
+        ):
+            with self.assertRaises(RuntimeError):
+                IncidentService._emit_audit_event(
+                    db, uuid4(), ticket, "updated", uuid4(), operation_id="request-1"
+                )
+        db.rollback.assert_called_once()
+
+    def test_idempotency_key_cannot_be_replayed_by_another_actor(self):
+        from fastapi import HTTPException
+
+        tenant_id = uuid4()
+        original_actor = uuid4()
+        other_actor = uuid4()
+        incident_id = uuid4()
+        payload = {"status": "IN_PROGRESS"}
+        existing = SimpleNamespace(
+            actor_id=original_actor,
+            operation="incident.status.change",
+            request_hash=IncidentService.operation_request_hash(
+                "incident.status.change", payload, incident_id
+            ),
+            completed_at=datetime.now(timezone.utc),
+            incident_id=uuid4(),
+        )
+        db = MagicMock()
+        db.query.return_value.filter.return_value.first.return_value = existing
+
+        with self.assertRaises(HTTPException) as denied:
+            IncidentService.claim_idempotent_operation(
+                db,
+                tenant_id,
+                other_actor,
+                "shared-key",
+                "incident.status.change",
+                payload,
+                incident_id,
+            )
+        self.assertEqual(denied.exception.status_code, 409)
+
     def calendar(self):
         return SimpleNamespace(
             timezone="UTC", holidays=[],
@@ -243,6 +309,69 @@ class ITSMIncidentTestCase(unittest.TestCase):
             )
         return team_id
 
+    @staticmethod
+    def mutation_headers(headers, version):
+        """Return request headers for a mutation of the current incident version."""
+        return {**headers, "If-Match": str(version)}
+
+    def test_28_idempotency_and_optimistic_concurrency(self):
+        tenant_id, _, api_key = self.create_fixture_tenant("p0_reliability")
+        create_headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Idempotency-Key": "create-p0-incident",
+        }
+        payload = {"title": "P0 concurrency", "description": "Reliable lifecycle mutation"}
+
+        first = self.client.post("/v1/itsm/incidents", json=payload, headers=create_headers)
+        self.assertEqual(first.status_code, 201, first.text)
+        replay = self.client.post("/v1/itsm/incidents", json=payload, headers=create_headers)
+        self.assertEqual(replay.status_code, 201, replay.text)
+        self.assertEqual(replay.json()["id"], first.json()["id"])
+
+        incident_id = first.json()["id"]
+        version = first.json()["version"]
+        mutation_headers = {
+            "Authorization": f"Bearer {api_key}",
+            "If-Match": str(version),
+            "Idempotency-Key": "status-p0-incident",
+        }
+        updated = self.client.post(
+            f"/v1/itsm/incidents/{incident_id}/status",
+            json={"status": "IN_PROGRESS"},
+            headers=mutation_headers,
+        )
+        self.assertEqual(updated.status_code, 200, updated.text)
+        self.assertEqual(updated.json()["version"], version + 1)
+
+        repeated = self.client.post(
+            f"/v1/itsm/incidents/{incident_id}/status",
+            json={"status": "IN_PROGRESS"},
+            headers=mutation_headers,
+        )
+        self.assertEqual(repeated.status_code, 200, repeated.text)
+        self.assertEqual(repeated.json()["version"], version + 1)
+
+        stale = self.client.patch(
+            f"/v1/itsm/incidents/{incident_id}",
+            json={"impact": "HIGH"},
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "If-Match": str(version),
+                "Idempotency-Key": "stale-p0-incident",
+            },
+        )
+        self.assertEqual(stale.status_code, 409, stale.text)
+
+        with self.migrator_engine.connect() as conn:
+            incident_count = conn.execute(
+                text(
+                    "SELECT count(*) FROM public.itsm_tickets "
+                    "WHERE tenant_id=:tenant AND title='P0 concurrency'"
+                ),
+                {"tenant": tenant_id},
+            ).scalar_one()
+        self.assertEqual(incident_count, 1)
+
     # 1. Create incident
     def test_01_create_incident(self):
         tenant_id, user_id, api_key = self.create_fixture_tenant("create")
@@ -290,7 +419,8 @@ class ITSMIncidentTestCase(unittest.TestCase):
             headers=headers,
         )
         self.assertEqual(create_res.status_code, 201)
-        incident_id = create_res.json()["id"]
+        incident = create_res.json()
+        incident_id = incident["id"]
 
         get_res = self.client.get(f"/v1/itsm/incidents/{incident_id}", headers=headers)
         self.assertEqual(get_res.status_code, 200)
@@ -352,12 +482,13 @@ class ITSMIncidentTestCase(unittest.TestCase):
             json={"title": "Original Title", "description": "Original description", "impact": "LOW"},
             headers=headers,
         )
-        incident_id = create_res.json()["id"]
+        incident = create_res.json()
+        incident_id = incident["id"]
 
         patch_res = self.client.patch(
             f"/v1/itsm/incidents/{incident_id}",
             json={"title": "Updated Title", "impact": "CRITICAL"},
-            headers=headers,
+            headers=self.mutation_headers(headers, incident["version"]),
         )
         self.assertEqual(patch_res.status_code, 200)
         data = patch_res.json()
@@ -393,13 +524,15 @@ class ITSMIncidentTestCase(unittest.TestCase):
             json={"title": "Unassigned incident", "description": "Needs triage"},
             headers=headers,
         )
-        incident_id = create_res.json()["id"]
-        self.assertEqual(create_res.json()["status"], "NEW")
+        incident = create_res.json()
+        incident_id = incident["id"]
+        version = incident["version"]
+        self.assertEqual(incident["status"], "NEW")
 
         rejected_group = self.client.post(
             f"/v1/itsm/incidents/{incident_id}/assign",
             json={"assignment_group": "SRE OnCall"},
-            headers=headers,
+            headers=self.mutation_headers(headers, version),
         )
         self.assertEqual(rejected_group.status_code, 400, rejected_group.text)
         self.create_team(tenant_id, "SRE OnCall")
@@ -407,10 +540,11 @@ class ITSMIncidentTestCase(unittest.TestCase):
         assign_res = self.client.post(
             f"/v1/itsm/incidents/{incident_id}/assign",
             json={"assignee_id": str(assignee_id), "assignment_group": "SRE OnCall"},
-            headers=headers,
+            headers=self.mutation_headers(headers, version),
         )
         self.assertEqual(assign_res.status_code, 200)
         data = assign_res.json()
+        version = data["version"]
         self.assertEqual(data["assignee_id"], str(assignee_id))
         self.assertEqual(data["assignment_group"], "SRE OnCall")
         self.assertEqual(data["status"], "ASSIGNED")  # Advanced from NEW to ASSIGNED
@@ -418,15 +552,16 @@ class ITSMIncidentTestCase(unittest.TestCase):
         assignee_only = self.client.post(
             f"/v1/itsm/incidents/{incident_id}/assign",
             json={"assignee_id": str(assignee_id)},
-            headers=headers,
+            headers=self.mutation_headers(headers, version),
         )
         self.assertEqual(assignee_only.status_code, 200, assignee_only.text)
         self.assertEqual(assignee_only.json()["assignment_group"], "SRE OnCall")
+        version = assignee_only.json()["version"]
 
         cleared = self.client.post(
             f"/v1/itsm/incidents/{incident_id}/assign",
             json={"assignee_id": None, "assignment_group": None},
-            headers=headers,
+            headers=self.mutation_headers(headers, version),
         )
         self.assertEqual(cleared.status_code, 200, cleared.text)
         self.assertIsNone(cleared.json()["assignee_id"])
@@ -442,40 +577,46 @@ class ITSMIncidentTestCase(unittest.TestCase):
             json={"title": "Lifecycle test", "description": "Valid flow", "assignee_id": str(user_id)},
             headers=headers,
         )
-        incident_id = create_res.json()["id"]
-        self.assertEqual(create_res.json()["status"], "ASSIGNED")
+        incident = create_res.json()
+        incident_id = incident["id"]
+        version = incident["version"]
+        self.assertEqual(incident["status"], "ASSIGNED")
 
         # ASSIGNED -> IN_PROGRESS
-        res = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "IN_PROGRESS"}, headers=headers)
+        res = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "IN_PROGRESS"}, headers=self.mutation_headers(headers, version))
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["status"], "IN_PROGRESS")
+        version = res.json()["version"]
 
         # IN_PROGRESS -> PENDING (with reason)
         res = self.client.post(
             f"/v1/itsm/incidents/{incident_id}/status",
             json={"status": "PENDING", "status_reason": "Waiting on upstream vendor response"},
-            headers=headers,
+            headers=self.mutation_headers(headers, version),
         )
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["status"], "PENDING")
+        version = res.json()["version"]
 
         # PENDING -> IN_PROGRESS
-        res = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "IN_PROGRESS"}, headers=headers)
+        res = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "IN_PROGRESS"}, headers=self.mutation_headers(headers, version))
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["status"], "IN_PROGRESS")
+        version = res.json()["version"]
 
         # IN_PROGRESS -> RESOLVED (with resolution details)
         res = self.client.post(
             f"/v1/itsm/incidents/{incident_id}/status",
             json={"status": "RESOLVED", "resolution_code": "FIXED", "resolution_summary": "Restarted pods and flushed cache"},
-            headers=headers,
+            headers=self.mutation_headers(headers, version),
         )
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["status"], "RESOLVED")
         self.assertIsNotNone(res.json()["resolved_at"])
+        version = res.json()["version"]
 
         # RESOLVED -> CLOSED
-        res = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "CLOSED"}, headers=headers)
+        res = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "CLOSED"}, headers=self.mutation_headers(headers, version))
         self.assertEqual(res.status_code, 200)
         self.assertEqual(res.json()["status"], "CLOSED")
         self.assertIsNotNone(res.json()["closed_at"])
@@ -490,17 +631,19 @@ class ITSMIncidentTestCase(unittest.TestCase):
             json={"title": "Invalid transition test", "description": "Check guardrails"},
             headers=headers,
         )
-        incident_id = create_res.json()["id"]
+        incident = create_res.json()
+        incident_id = incident["id"]
+        version = incident["version"]
 
         # NEW -> CLOSED directly is disallowed
-        res = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "CLOSED"}, headers=headers)
+        res = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "CLOSED"}, headers=self.mutation_headers(headers, version))
         self.assertEqual(res.status_code, 409)
 
         # Move to RESOLVED without resolution_code -> 400
         res = self.client.post(
             f"/v1/itsm/incidents/{incident_id}/status",
             json={"status": "RESOLVED"},
-            headers=headers,
+            headers=self.mutation_headers(headers, version),
         )
         self.assertEqual(res.status_code, 409)  # Not allowed from NEW anyway
 
@@ -726,7 +869,9 @@ class ITSMIncidentTestCase(unittest.TestCase):
         self.assertIn(str(user_id), {item["id"] for item in participants.json()})
         created = self.client.post("/v1/itsm/incidents", json={"title": "Payments outage", "description": "Payment processing is unavailable", "priority": "P1", "priority_override_reason": "Payment service unavailable"}, headers=headers)
         self.assertEqual(created.status_code, 201, created.text)
-        incident_id = created.json()["id"]
+        incident = created.json()
+        incident_id = incident["id"]
+        version = incident["version"]
 
         declared = self.client.post(
             f"/v1/itsm/incidents/{incident_id}/major-incident",
@@ -736,7 +881,7 @@ class ITSMIncidentTestCase(unittest.TestCase):
                 "executive_summary": "Customer payments unavailable",
                 "bridge_url": "https://bridge.example.com/payments-war-room",
             },
-            headers=headers,
+            headers=self.mutation_headers(headers, version),
         )
         self.assertEqual(declared.status_code, 201, declared.text)
         self.assertEqual(declared.json()["communication_channel"], "war-room")
@@ -744,15 +889,17 @@ class ITSMIncidentTestCase(unittest.TestCase):
         self.assertEqual(declared.json()["executive_summary"], "Customer payments unavailable")
         self.assertEqual(declared.json()["impacted_business_units"], ["Payments"])
         self.assertEqual(declared.json()["postmortem_status"], "PENDING")
+        version = self.client.get(f"/v1/itsm/incidents/{incident_id}", headers=headers).json()["version"]
 
         updated = self.client.patch(
             f"/v1/itsm/incidents/{incident_id}/major-incident",
             json={"postmortem_status": "IN_PROGRESS", "bridge_url": "https://bridge.example.com/updated"},
-            headers=headers,
+            headers=self.mutation_headers(headers, version),
         )
         self.assertEqual(updated.status_code, 200, updated.text)
         self.assertEqual(updated.json()["postmortem_status"], "IN_PROGRESS")
         self.assertEqual(updated.json()["bridge_url"], "https://bridge.example.com/updated")
+        version = self.client.get(f"/v1/itsm/incidents/{incident_id}", headers=headers).json()["version"]
 
         read_command = self.client.get(
             f"/v1/itsm/incidents/{incident_id}/major-incident",
@@ -769,7 +916,7 @@ class ITSMIncidentTestCase(unittest.TestCase):
         invalid_commander = self.client.patch(
             f"/v1/itsm/incidents/{incident_id}/major-incident",
             json={"incident_commander_id": str(foreign_user_id)},
-            headers=headers,
+            headers=self.mutation_headers(headers, version),
         )
         self.assertEqual(invalid_commander.status_code, 400)
 
@@ -785,7 +932,7 @@ class ITSMIncidentTestCase(unittest.TestCase):
             self.client.post(
                 f"/v1/itsm/incidents/{foreign_incident_id}/major-incident",
                 json={},
-                headers=foreign_headers,
+                headers=self.mutation_headers(foreign_headers, foreign_incident.json()["version"]),
             ).status_code,
             201,
         )
@@ -805,14 +952,19 @@ class ITSMIncidentTestCase(unittest.TestCase):
             {item["id"] for item in participants_after_foreign_tenant},
         )
 
-        self.assertEqual(self.client.post(f"/v1/itsm/incidents/{incident_id}/assign", json={"assignment_group": "Incident Response"}, headers=headers).status_code, 200)
-        self.assertEqual(self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "IN_PROGRESS"}, headers=headers).status_code, 200)
-        resolved = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "RESOLVED", "resolution_code": "PERMANENT_FIX", "resolution_summary": "Payments restored"}, headers=headers)
+        assigned = self.client.post(f"/v1/itsm/incidents/{incident_id}/assign", json={"assignment_group": "Incident Response"}, headers=self.mutation_headers(headers, version))
+        self.assertEqual(assigned.status_code, 200, assigned.text)
+        version = assigned.json()["version"]
+        in_progress = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "IN_PROGRESS"}, headers=self.mutation_headers(headers, version))
+        self.assertEqual(in_progress.status_code, 200, in_progress.text)
+        version = in_progress.json()["version"]
+        resolved = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "RESOLVED", "resolution_code": "PERMANENT_FIX", "resolution_summary": "Payments restored"}, headers=self.mutation_headers(headers, version))
         self.assertEqual(resolved.status_code, 200, resolved.text)
+        version = resolved.json()["version"]
         command_after_restore = self.client.get(f"/v1/itsm/incidents/{incident_id}/major-incident", headers=headers)
         self.assertIsNotNone(command_after_restore.json()["resolved_at"])
 
-        closed = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "CLOSED"}, headers=headers)
+        closed = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "CLOSED"}, headers=self.mutation_headers(headers, version))
         self.assertEqual(closed.status_code, 200, closed.text)
         command_after_close = self.client.get(f"/v1/itsm/incidents/{incident_id}/major-incident", headers=headers)
         self.assertIsNotNone(command_after_close.json()["closed_at"])
@@ -826,11 +978,15 @@ class ITSMIncidentTestCase(unittest.TestCase):
             conn.execute(text("INSERT INTO public.itsm_user_access (id,tenant_id,user_id,itsm_role,has_itsm_access,has_governance_access,created_at,updated_at) VALUES (:id,:tenant,:user,'SERVICE_AGENT',true,false,now(),now())"), {"id": uuid4(), "tenant": tenant_id, "user": agent_id})
         created = self.client.post("/v1/itsm/incidents", json={"title": "Command controls", "description": "Verify actual command permissions"}, headers=headers)
         self.assertEqual(created.status_code, 201, created.text)
-        path = f"/v1/itsm/incidents/{created.json()['id']}/major-incident"
-        invalid = self.client.post(path, json={"incident_commander_id": str(agent_id)}, headers=headers)
+        incident = created.json()
+        incident_id = incident["id"]
+        version = incident["version"]
+        path = f"/v1/itsm/incidents/{incident_id}/major-incident"
+        invalid = self.client.post(path, json={"incident_commander_id": str(agent_id)}, headers=self.mutation_headers(headers, version))
         self.assertEqual(invalid.status_code, 400, invalid.text)
-        declared = self.client.post(path, json={}, headers=headers)
+        declared = self.client.post(path, json={}, headers=self.mutation_headers(headers, version))
         self.assertEqual(declared.status_code, 201, declared.text)
+        version = self.client.get(f"/v1/itsm/incidents/{incident_id}", headers=headers).json()["version"]
         references = self.client.get("/v1/itsm/incidents/operations/reference-data", headers=headers).json()
         self.assertIn(str(agent_id), {item["id"] for item in references["users"]})
         self.assertNotIn(str(agent_id), {item["id"] for item in references["commanders"]})
@@ -843,10 +999,11 @@ class ITSMIncidentTestCase(unittest.TestCase):
             conn.execute(text("INSERT INTO public.api_keys (id,tenant_id,key_hash,name,scopes,is_active,created_by,created_at,updated_at) VALUES (:id,:tenant,:hash,'reviewer-controls',ARRAY['read','write','admin'],true,:user,now(),now())"), {"id": uuid4(), "tenant": tenant_id, "hash": hash_key(other_key), "user": other_manager_id})
         other_headers = {"Authorization": f"Bearer {other_key}"}
 
-        handed_off = self.client.patch(path, json={"incident_commander_id": str(other_manager_id)}, headers=headers)
+        handed_off = self.client.patch(path, json={"incident_commander_id": str(other_manager_id)}, headers=self.mutation_headers(headers, version))
         self.assertEqual(handed_off.status_code, 200, handed_off.text)
+        version = self.client.get(f"/v1/itsm/incidents/{incident_id}", headers=headers).json()["version"]
         self.assertEqual(self.client.get(path, headers=other_headers).status_code, 200)
-        removed = self.client.patch(path, json={"incident_commander_id": None}, headers=headers)
+        removed = self.client.patch(path, json={"incident_commander_id": None}, headers=self.mutation_headers(headers, version))
         self.assertEqual(removed.status_code, 400, removed.text)
 
     def test_21_non_incident_manager_cannot_assign_or_declare_major_incident(self):
@@ -892,10 +1049,11 @@ class ITSMIncidentTestCase(unittest.TestCase):
         breach_id = create("SLA breach", "P3")
         stuck_id = create("Stuck incident", "P3")
         healthy_id = create("Healthy incident", "P3")
+        p1_version = self.client.get(f"/v1/itsm/incidents/{p1_id}", headers=headers).json()["version"]
         assigned = self.client.post(
             f"/v1/itsm/incidents/{p1_id}/assign",
             json={"assignment_group": "Incident Response", "assignee_id": str(user_id)},
-            headers=headers,
+            headers=self.mutation_headers(headers, p1_version),
         )
         self.assertEqual(assigned.status_code, 200, assigned.text)
 
@@ -948,10 +1106,11 @@ class ITSMIncidentTestCase(unittest.TestCase):
         p1_id = create("Payments unavailable", "P1")
         p2_id = create("Checkout degraded", "P2")
         p3_id = create("Printer unavailable", "P3")
+        p1_version = self.client.get(f"/v1/itsm/incidents/{p1_id}", headers=headers).json()["version"]
         assigned = self.client.post(
             f"/v1/itsm/incidents/{p1_id}/assign",
             json={"assignment_group": "Incident Response", "assignee_id": str(user_id)},
-            headers=headers,
+            headers=self.mutation_headers(headers, p1_version),
         )
         self.assertEqual(assigned.status_code, 200, assigned.text)
         other = self.client.post(
@@ -1046,44 +1205,49 @@ class ITSMIncidentTestCase(unittest.TestCase):
 
         created = self.client.post("/v1/itsm/incidents", json={"title": "Payments degraded", "description": "Classification test"}, headers=headers)
         self.assertEqual(created.status_code, 201, created.text)
-        incident_id = created.json()["id"]
+        incident = created.json()
+        incident_id = incident["id"]
+        version = incident["version"]
         if teams_available:
             self.assertEqual(
                 self.client.post(
                     f"/v1/itsm/incidents/{incident_id}/assign",
                     json={"assignment_group": "Invented Team"},
-                    headers=headers,
+                    headers=self.mutation_headers(headers, version),
                 ).status_code,
                 400,
             )
         assigned = self.client.post(
             f"/v1/itsm/incidents/{incident_id}/assign",
             json={"assignment_group": "Payments Support"},
-            headers=headers,
+            headers=self.mutation_headers(headers, version),
         )
         self.assertEqual(assigned.status_code, 200, assigned.text)
+        version = assigned.json()["version"]
         classified = self.client.patch(
             f"/v1/itsm/incidents/{incident_id}",
             json={"service_id": str(service_id), "category_id": str(category_id)},
-            headers=headers,
+            headers=self.mutation_headers(headers, version),
         )
         self.assertEqual(classified.status_code, 200, classified.text)
         self.assertEqual(classified.json()["service_id"], str(service_id))
         self.assertEqual(classified.json()["category_id"], str(category_id))
+        version = classified.json()["version"]
 
         cleared = self.client.patch(
             f"/v1/itsm/incidents/{incident_id}",
             json={"service_id": None, "category_id": None},
-            headers=headers,
+            headers=self.mutation_headers(headers, version),
         )
         self.assertEqual(cleared.status_code, 200, cleared.text)
         self.assertIsNone(cleared.json()["service_id"])
         self.assertIsNone(cleared.json()["category_id"])
+        version = cleared.json()["version"]
 
         declared = self.client.post(
             f"/v1/itsm/incidents/{incident_id}/major-incident",
             json={"executive_summary": "Major service failure"},
-            headers=headers,
+            headers=self.mutation_headers(headers, version),
         )
         self.assertEqual(declared.status_code, 201, declared.text)
         self.assertEqual(declared.json()["executive_summary"], "Major service failure")
@@ -1117,23 +1281,28 @@ class ITSMIncidentTestCase(unittest.TestCase):
         self.assertIsNone(incident["sla_response_met_at"])
 
         incident_id = incident["id"]
-        recalculated = self.client.patch(f"/v1/itsm/incidents/{incident_id}", json={"impact": "LOW", "urgency": "LOW"}, headers=headers)
+        version = incident["version"]
+        recalculated = self.client.patch(f"/v1/itsm/incidents/{incident_id}", json={"impact": "LOW", "urgency": "LOW"}, headers=self.mutation_headers(headers, version))
         self.assertEqual(recalculated.status_code, 200, recalculated.text)
         self.assertEqual(recalculated.json()["priority"], "P4")
-        denied_override = self.client.patch(f"/v1/itsm/incidents/{incident_id}", json={"priority": "P1"}, headers=headers)
+        version = recalculated.json()["version"]
+        denied_override = self.client.patch(f"/v1/itsm/incidents/{incident_id}", json={"priority": "P1"}, headers=self.mutation_headers(headers, version))
         self.assertEqual(denied_override.status_code, 400, denied_override.text)
-        approved_override = self.client.patch(f"/v1/itsm/incidents/{incident_id}", json={"priority": "P1", "priority_override_reason": "Confirmed organization-wide payment failure"}, headers=headers)
+        approved_override = self.client.patch(f"/v1/itsm/incidents/{incident_id}", json={"priority": "P1", "priority_override_reason": "Confirmed organization-wide payment failure"}, headers=self.mutation_headers(headers, version))
         self.assertEqual(approved_override.status_code, 200, approved_override.text)
+        version = approved_override.json()["version"]
 
-        in_prog_res = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "IN_PROGRESS"}, headers=headers)
+        in_prog_res = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "IN_PROGRESS"}, headers=self.mutation_headers(headers, version))
         self.assertEqual(in_prog_res.status_code, 200, in_prog_res.text)
         self.assertIsNotNone(in_prog_res.json()["sla_response_met_at"])
-        paused = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "PENDING", "status_reason": "PENDING_VENDOR"}, headers=headers)
+        version = in_prog_res.json()["version"]
+        paused = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "PENDING", "status_reason": "PENDING_VENDOR"}, headers=self.mutation_headers(headers, version))
         self.assertEqual(paused.status_code, 200, paused.text)
+        version = paused.json()["version"]
         due_before = datetime.fromisoformat(paused.json()["sla_resolution_due_at"])
         with self.migrator_engine.begin() as conn:
             conn.execute(text("UPDATE public.itsm_tickets SET sla_paused_at=now()-interval '5 minutes' WHERE id=:id AND tenant_id=:tenant"), {"id": incident_id, "tenant": tenant_id})
-        resumed = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "IN_PROGRESS"}, headers=headers)
+        resumed = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", json={"status": "IN_PROGRESS"}, headers=self.mutation_headers(headers, version))
         self.assertEqual(resumed.status_code, 200, resumed.text)
         self.assertGreaterEqual(resumed.json()["sla_accumulated_pause_seconds"], 299)
         self.assertGreater(datetime.fromisoformat(resumed.json()["sla_resolution_due_at"]), due_before)
@@ -1153,7 +1322,9 @@ class ITSMIncidentTestCase(unittest.TestCase):
             "title": "Reopen regression", "description": "Preserve evidence and resume SLA",
         })
         self.assertEqual(created.status_code, 201, created.text)
-        incident_id = created.json()["id"]
+        incident = created.json()
+        incident_id = incident["id"]
+        version = incident["version"]
         rejected = self.client.patch(f"/v1/itsm/incidents/{incident_id}",
                                      headers=headers, json={"impact": "INVALID"})
         self.assertEqual(rejected.status_code, 422, rejected.text)
@@ -1162,8 +1333,13 @@ class ITSMIncidentTestCase(unittest.TestCase):
             {"status": "RESOLVED", "resolution_code": "FIXED", "resolution_summary": "Recovery verified"},
             {"status": "IN_PROGRESS"},
         ):
-            result = self.client.post(f"/v1/itsm/incidents/{incident_id}/status", headers=headers, json=payload)
+            result = self.client.post(
+                f"/v1/itsm/incidents/{incident_id}/status",
+                headers=self.mutation_headers(headers, version),
+                json=payload,
+            )
             self.assertEqual(result.status_code, 200, result.text)
+            version = result.json()["version"]
         with self.migrator_engine.connect() as conn:
             row = conn.execute(text("SELECT resolved_at, sla_resolution_met_at, resolution_summary FROM public.itsm_tickets WHERE id=:id AND tenant_id=:tenant"),
                                {"id": incident_id, "tenant": tenant_id}).one()

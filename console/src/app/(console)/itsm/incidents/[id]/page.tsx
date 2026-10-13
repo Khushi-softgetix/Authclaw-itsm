@@ -891,6 +891,7 @@ export default function IncidentDetailPage() {
         <ReopenTicketModal
           ticketNumber={incident.ticket_number}
           ticketId={incident.id}
+          version={incident.version}
           onClose={() => setShowReopenModal(false)}
           onSuccess={(updated) => {
             setIncident(updated);
@@ -903,6 +904,7 @@ export default function IncidentDetailPage() {
         <CancelTicketModal
           ticketNumber={incident.ticket_number}
           ticketId={incident.id}
+          version={incident.version}
           onClose={() => setShowCancelModal(false)}
           onSuccess={(updated) => {
             setIncident(updated);

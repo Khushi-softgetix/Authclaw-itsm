@@ -9,6 +9,7 @@ import { AlertCircle, RefreshCw } from "lucide-react";
 interface ReopenTicketModalProps {
   ticketNumber: string;
   ticketId: string;
+  version?: number;
   onClose: () => void;
   onSuccess: (updated: any) => void;
   statusEndpoint?: string;
@@ -17,6 +18,7 @@ interface ReopenTicketModalProps {
 export default function ReopenTicketModal({
   ticketNumber,
   ticketId,
+  version,
   onClose,
   onSuccess,
   statusEndpoint,
@@ -42,7 +44,10 @@ export default function ReopenTicketModal({
         status_reason: reason.trim(),
       };
 
-      const res = await fetch(endpoint, jsonRequest("POST", payload));
+      const res = await fetch(
+        endpoint,
+        jsonRequest("POST", payload, version ? { "If-Match": String(version) } : {}),
+      );
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(apiErrorMessage(data, "Failed to reopen ticket"));

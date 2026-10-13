@@ -19,7 +19,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.core.auth import get_tenant_db, require_scopes
+from app.core.auth import deny_itsm_auditor_generic_audit_access, get_tenant_db, require_scopes
 from app.core.evidence_integrity import verify_evidence_integrity
 from app.services import evidence_service
 
@@ -132,6 +132,7 @@ def list_evidence(
     - severity:       critical | high | medium | low | info
     - page / page_size
     """
+    deny_itsm_auditor_generic_audit_access(request, db, "generic-evidence.list")
     tenant_id = str(request.state.tenant_id)
 
     records, total = evidence_service.list_evidence(
@@ -163,6 +164,7 @@ def list_evidence_by_workflow(
     All evidence records for a given workflow, newest first.
     Tenant-isolated — cross-tenant workflow IDs return an empty list.
     """
+    deny_itsm_auditor_generic_audit_access(request, db, "generic-evidence.workflow.read")
     tenant_id = str(request.state.tenant_id)
     records = evidence_service.get_by_workflow(db, tenant_id=tenant_id, workflow_id=workflow_id)
     return [_serialize_record(r, include_links=True) for r in records]
@@ -181,6 +183,7 @@ def list_evidence_by_framework(
     Paginated evidence for a specific compliance framework.
     Framework is case-insensitive (normalised to uppercase internally).
     """
+    deny_itsm_auditor_generic_audit_access(request, db, "generic-evidence.framework.read")
     tenant_id = str(request.state.tenant_id)
 
     valid_frameworks = {"GDPR", "HIPAA", "SOC2"}
@@ -217,6 +220,7 @@ def get_evidence(
     Retrieve a single evidence record with its traceability links.
     Returns 404 if not found or tenant mismatch.
     """
+    deny_itsm_auditor_generic_audit_access(request, db, "generic-evidence.detail.read")
     tenant_id = str(request.state.tenant_id)
 
     record = evidence_service.get_evidence(db, tenant_id=tenant_id, evidence_id=evidence_id)

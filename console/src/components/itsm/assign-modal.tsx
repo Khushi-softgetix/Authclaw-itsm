@@ -8,7 +8,7 @@ import { apiErrorMessage } from "@/lib/errors";
 import { Incident, IncidentReferenceItem, TenantUser } from "@/lib/itsm-types";
 
 interface AssignModalProps {
-  incident: Incident | { id: string; ticket_number?: string | null; assignee_id?: string | null; assignment_group?: string | null };
+  incident: Incident | { id: string; ticket_number?: string | null; assignee_id?: string | null; assignment_group?: string | null; version?: number };
   onClose: () => void;
   onSuccess: (updated: any) => void;
   usersEndpoint?: string;
@@ -243,7 +243,14 @@ export default function AssignModal({ incident, onClose, onSuccess, usersEndpoin
       };
 
       const endpoint = assignEndpoint || `/api/itsm/incidents/${incident.id}/assign`;
-      const res = await fetch(endpoint, jsonRequest("POST", payload));
+      const res = await fetch(
+        endpoint,
+        jsonRequest(
+          "POST",
+          payload,
+          incident.version ? { "If-Match": String(incident.version) } : {},
+        ),
+      );
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(apiErrorMessage(data, assignEndpoint ? "Failed to update assignment" : "Failed to assign incident"));

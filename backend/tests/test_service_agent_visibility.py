@@ -374,7 +374,7 @@ class ServiceAgentVisibilityTestCase(unittest.TestCase):
         # IM assigns incident to Network Team + Rahul
         res_assign = self.client.post(
             f"/v1/itsm/incidents/{inc_id}/assign",
-            headers=im_headers,
+            headers={**im_headers, "If-Match": str(res_get.json()["version"])},
             json={
                 "assignment_group": "Network Team",
                 "assignee_id": str(self.rahul_user_id),

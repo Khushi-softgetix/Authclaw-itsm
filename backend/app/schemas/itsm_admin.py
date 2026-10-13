@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import re
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -105,6 +105,7 @@ class ITSMServiceResponse(BaseModel):
     description: Optional[str] = None
     tier: str
     status: str
+    alert_recipient_scope: Literal["SERVICE_ENTITLEMENTS", "ALL_REQUESTERS"]
     owner_user_id: Optional[UUID] = None
     escalation_team: Optional[str] = None
     created_at: datetime
@@ -120,6 +121,7 @@ class ITSMServiceCreateRequest(BaseModel):
     description: Optional[str] = Field(default=None, max_length=2000)
     tier: str = Field(default="TIER_2")
     status: str = Field(default="OPERATIONAL")
+    alert_recipient_scope: Literal["SERVICE_ENTITLEMENTS", "ALL_REQUESTERS"] = "SERVICE_ENTITLEMENTS"
     escalation_team: Optional[str] = Field(default=None, max_length=100)
 
 
@@ -128,6 +130,7 @@ class ITSMServiceUpdateRequest(BaseModel):
     description: Optional[str] = Field(default=None, max_length=2000)
     tier: Optional[str] = Field(default=None)
     status: Optional[str] = Field(default=None)
+    alert_recipient_scope: Optional[Literal["SERVICE_ENTITLEMENTS", "ALL_REQUESTERS"]] = None
     escalation_team: Optional[str] = Field(default=None, max_length=100)
 
 

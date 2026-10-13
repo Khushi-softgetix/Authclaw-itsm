@@ -35,13 +35,16 @@ export default function IncidentClassificationModal({ incident, references, onCl
     setSaving(true);
     setError(null);
     try {
-      const response = await fetch(`/api/itsm/incidents/${incident.id}`, jsonRequest("PATCH", {
-        service_id: serviceId || null,
-        category_id: categoryId || null,
-        configuration_item_id: configurationItemId || null,
-        impact,
-        urgency,
-      }));
+      const response = await fetch(
+        `/api/itsm/incidents/${incident.id}`,
+        jsonRequest("PATCH", {
+          service_id: serviceId || null,
+          category_id: categoryId || null,
+          configuration_item_id: configurationItemId || null,
+          impact,
+          urgency,
+        }, { "If-Match": String(incident.version) }),
+      );
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(apiErrorMessage(body, "Unable to update incident classification"));
       onSuccess(body);

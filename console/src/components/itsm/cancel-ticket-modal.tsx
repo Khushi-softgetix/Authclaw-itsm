@@ -9,6 +9,7 @@ import { AlertTriangle, Ban } from "lucide-react";
 interface CancelTicketModalProps {
   ticketNumber: string;
   ticketId: string;
+  version?: number;
   onClose: () => void;
   onSuccess: (updated: any) => void;
   statusEndpoint?: string;
@@ -17,6 +18,7 @@ interface CancelTicketModalProps {
 export default function CancelTicketModal({
   ticketNumber,
   ticketId,
+  version,
   onClose,
   onSuccess,
   statusEndpoint,
@@ -42,7 +44,10 @@ export default function CancelTicketModal({
         status_reason: reason.trim(),
       };
 
-      const res = await fetch(endpoint, jsonRequest("POST", payload));
+      const res = await fetch(
+        endpoint,
+        jsonRequest("POST", payload, version ? { "If-Match": String(version) } : {}),
+      );
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(apiErrorMessage(data, "Failed to cancel ticket"));

@@ -38,15 +38,6 @@ const emptyAttentionCopy: Record<AttentionView, { title: string; description: st
   },
 };
 
-const metricStyles = {
-  violet: { icon: "text-[#7C3AED]" },
-  indigo: { icon: "text-[#2563EB]" },
-  rose: { icon: "text-[#E11D48]" },
-  amber: { icon: "text-[#D97706]" },
-  slate: { icon: "text-[#64748B]" },
-  sand: { icon: "text-[#D97706]" },
-} as const;
-
 function formatDuration(seconds?: number | null) {
   if (seconds == null || !Number.isFinite(seconds)) return "Not available";
   const absolute = Math.abs(Math.round(seconds));
@@ -72,6 +63,15 @@ function workloadPriority(left: IncidentWorkloadEntry, right: IncidentWorkloadEn
     || right.open_incidents - left.open_incidents;
 }
 
+const metricStyles = {
+  violet: { icon: "text-[#7C3AED]" },
+  indigo: { icon: "text-[#2563EB]" },
+  rose: { icon: "text-[#E11D48]" },
+  amber: { icon: "text-[#D97706]" },
+  slate: { icon: "text-[#64748B]" },
+  sand: { icon: "text-[#D97706]" },
+} as const;
+
 function MetricCard({ label, value, help, icon: Icon, tone = "violet", active = false, onClick, href }: {
   label: string;
   value: number;
@@ -90,16 +90,16 @@ function MetricCard({ label, value, help, icon: Icon, tone = "violet", active = 
   }`;
   const content = (
     <>
-      <div className="flex items-center justify-between text-[#6B7488] mb-2">
+      <div className="mb-2 flex items-center justify-between text-[#6B7488]">
         <span className="text-xs font-semibold uppercase tracking-wider">{label}</span>
-        <Icon className={`w-4 h-4 shrink-0 ${styles.icon}`} />
+        <Icon className={`h-4 w-4 shrink-0 ${styles.icon}`} />
       </div>
       <div>
         <div className="flex items-center justify-between">
           <div className="text-2xl font-bold text-[#0E1726]">{value}</div>
-          {href ? <ArrowRight className="w-4 h-4 text-[#8C95A8] transition group-hover:translate-x-0.5" /> : null}
+          {href ? <ArrowRight className="h-4 w-4 text-[#8C95A8] transition group-hover:translate-x-0.5" /> : null}
         </div>
-        <p className="text-xs text-[#6B7488] mt-1">{help}</p>
+        <p className="mt-1 text-xs text-[#6B7488]">{help}</p>
       </div>
     </>
   );
@@ -110,7 +110,7 @@ function MetricCard({ label, value, help, icon: Icon, tone = "violet", active = 
 function LoadingState() {
   return (
     <div className="space-y-5" aria-label="Loading Incident Manager operations">
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {Array.from({ length: 8 }).map((_, index) => (
           <div key={index} className="min-h-[120px] animate-pulse rounded-xl border border-[#E6E9F0] bg-white p-5 shadow-sm" />
         ))}
@@ -218,17 +218,18 @@ export default function IncidentManagerPage() {
       </div>
 
       <section aria-label="Operational summary">
-        <div className="mb-3 flex justify-end">
-          <p className="text-[11px] text-[#667085]"><span className="font-semibold text-[#475467]">Focus attention:</span> select a signal to filter the worklist.</p>
+        <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-[11px] text-[#667085]">An incident may match more than one attention reason.</p>
+          <p className="text-[11px] text-[#667085]"><span className="font-semibold text-[#475467]">Focus attention:</span> select a reason to filter the worklist below.</p>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <MetricCard label="Open incidents" value={summary.open_incidents} help="Active incident queue" icon={Gauge} tone="violet" href="/itsm/incident-manager/incidents" />
-          <MetricCard label="Watch list" value={summary.escalation_watch} help="Requires operational review" icon={ShieldAlert} tone="indigo" active={view === "all"} onClick={() => setView("all")} />
-          <MetricCard label="P1 / P2" value={summary.p1_p2} help="High-priority incidents" icon={Flame} tone="rose" active={view === "priority"} onClick={() => setView("priority")} />
-          <MetricCard label="SLA breached" value={summary.sla_breached} help="Past the SLA target" icon={TimerOff} tone="rose" href="/itsm/incident-manager/incidents?attention=SLA_BREACHED" />
-          <MetricCard label="SLA at risk" value={summary.sla_at_risk} help="Approaching the SLA target" icon={Clock3} tone="amber" active={view === "risk"} onClick={() => setView("risk")} />
-          <MetricCard label="Stuck / idle" value={summary.stuck} help="No recent meaningful activity" icon={AlertTriangle} tone="slate" active={view === "stuck"} onClick={() => setView("stuck")} />
-          <MetricCard label="Unassigned" value={summary.unassigned} help="Needs team or owner" icon={UsersRound} tone="sand" href="/itsm/incident-manager/incidents?assignment_group=__UNASSIGNED__&unassigned=true" />
+          <MetricCard label="Watch list" value={summary.escalation_watch} help="All incidents requiring review" icon={ShieldAlert} tone="indigo" active={view === "all"} onClick={() => setView("all")} />
+          <MetricCard label="Critical or high priority" value={summary.p1_p2} help="P1 and P2 incidents" icon={Flame} tone="rose" active={view === "priority"} onClick={() => setView("priority")} />
+          <MetricCard label="Deadline missed" value={summary.sla_breached} help="SLA target has passed" icon={TimerOff} tone="rose" active={view === "breached"} onClick={() => setView("breached")} />
+          <MetricCard label="Deadline approaching" value={summary.sla_at_risk} help="25% or less SLA time remains" icon={Clock3} tone="amber" active={view === "risk"} onClick={() => setView("risk")} />
+          <MetricCard label="No recent activity" value={summary.stuck} help={`${Math.round(dashboard.policy.idle_threshold_seconds / 3600)}+ hours without an update`} icon={AlertTriangle} tone="slate" active={view === "stuck"} onClick={() => setView("stuck")} />
+          <MetricCard label="No owner" value={summary.unassigned} help="Assignment required" icon={UsersRound} tone="sand" href="/itsm/incident-manager/incidents?assignment_group=__UNASSIGNED__&unassigned=true" />
           <MetricCard label="Active majors" value={summary.active_major_incidents} help="Command currently in progress" icon={Radio} tone="violet" href="/itsm/incident-manager/major-incidents" />
         </div>
       </section>

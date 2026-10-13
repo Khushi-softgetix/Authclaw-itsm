@@ -2,16 +2,20 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
+import hashlib
+import json
 import logging
 from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
 from sqlalchemy import case, false, func, inspect, or_, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
 from app.db.models import (
     ITSMConfigurationItem,
+    ITSMIncidentOperation,
     ITSMService,
     ITSMTeam,
     ITSMTeamMember,
@@ -552,6 +556,144 @@ class IncidentService:
         return activity
 
     @staticmethod
+    def operation_request_hash(operation: str, payload: Any, incident_id: UUID | None = None) -> str:
+        if hasattr(payload, "model_dump"):
+            payload = payload.model_dump(mode="json", exclude_unset=True)
+        canonical = json.dumps(
+            {"operation": operation, "incident_id": str(incident_id) if incident_id else None, "payload": payload},
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def claim_idempotent_operation(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        actor_id: UUID,
+        idempotency_key: str | None,
+        operation: str,
+        payload: Any,
+        incident_id: UUID | None = None,
+    ) -> tuple[ITSMIncidentOperation | None, ITSMTicket | None]:
+        """Claim an optional key in the current transaction or replay its result."""
+        if not idempotency_key:
+            return None, None
+        normalized = idempotency_key.strip()
+        if not normalized or len(normalized) > 255:
+            raise HTTPException(status_code=400, detail="Idempotency-Key must contain 1 to 255 characters")
+        request_hash = cls.operation_request_hash(operation, payload, incident_id)
+        existing = db.query(ITSMIncidentOperation).filter(
+            ITSMIncidentOperation.tenant_id == tenant_id,
+            ITSMIncidentOperation.idempotency_key == normalized,
+        ).first()
+        if existing:
+            if (
+                existing.actor_id != actor_id
+                or existing.operation != operation
+                or existing.request_hash != request_hash
+            ):
+                raise HTTPException(status_code=409, detail="Idempotency-Key was already used for a different request")
+            if not existing.completed_at or not existing.incident_id:
+                raise HTTPException(status_code=409, detail="An operation with this Idempotency-Key is still in progress")
+            return existing, cls.get_incident(db, tenant_id, existing.incident_id)
+
+        record = ITSMIncidentOperation(
+            id=uuid4(),
+            tenant_id=tenant_id,
+            actor_id=actor_id,
+            idempotency_key=normalized,
+            operation=operation,
+            request_hash=request_hash,
+            incident_id=incident_id,
+            created_at=datetime.now(timezone.utc),
+        )
+        savepoint = db.begin_nested()
+        try:
+            db.add(record)
+            db.flush()
+            savepoint.commit()
+        except IntegrityError:
+            savepoint.rollback()
+            existing = db.query(ITSMIncidentOperation).filter(
+                ITSMIncidentOperation.tenant_id == tenant_id,
+                ITSMIncidentOperation.idempotency_key == normalized,
+            ).first()
+            if (
+                not existing
+                or existing.actor_id != actor_id
+                or existing.operation != operation
+                or existing.request_hash != request_hash
+            ):
+                raise HTTPException(status_code=409, detail="Idempotency-Key was already used for a different request")
+            if not existing.completed_at or not existing.incident_id:
+                raise HTTPException(status_code=409, detail="An operation with this Idempotency-Key is still in progress")
+            return existing, cls.get_incident(db, tenant_id, existing.incident_id)
+        return record, None
+
+    @staticmethod
+    def complete_idempotent_operation(
+        record: ITSMIncidentOperation | None,
+        incident_id: UUID,
+    ) -> None:
+        if record is not None:
+            record.incident_id = incident_id
+            record.completed_at = datetime.now(timezone.utc)
+
+    @staticmethod
+    def claim_ticket_version(
+        db: Session,
+        ticket: ITSMTicket,
+        expected_version: int | None,
+    ) -> None:
+        """Atomically reserve the expected ticket version inside the mutation transaction."""
+        if expected_version is None:
+            return
+        if expected_version < 1:
+            raise HTTPException(status_code=400, detail="If-Match must contain a positive incident version")
+        updated = db.query(ITSMTicket).filter(
+            ITSMTicket.tenant_id == ticket.tenant_id,
+            ITSMTicket.id == ticket.id,
+            ITSMTicket.version == expected_version,
+        ).update(
+            {ITSMTicket.version: ITSMTicket.version + 1},
+            synchronize_session=False,
+        )
+        if updated != 1:
+            db.rollback()
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Incident changed since it was loaded. Refresh and try again.",
+            )
+        ticket.version = expected_version + 1
+
+    @staticmethod
+    def _audit_summary(values: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not values:
+            return None
+        visible = {
+            "status", "status_reason", "impact", "urgency", "priority",
+            "priority_override_reason", "assignee_id", "assignment_group",
+            "service_id", "configuration_item_id", "category_id", "category",
+            "subcategory", "is_major_incident", "resolution_code",
+            "incident_commander_id", "communication_lead_id", "postmortem_status",
+        }
+        summary: dict[str, Any] = {}
+        for key, value in values.items():
+            if key in visible:
+                summary[key] = value
+            else:
+                serialized = json.dumps(value, sort_keys=True, default=str)
+                summary[key] = {
+                    "changed": True,
+                    "length": len(serialized),
+                    "sha256": hashlib.sha256(serialized.encode("utf-8")).hexdigest(),
+                }
+        return summary
+
+    @staticmethod
     def _emit_audit_event(
         db: Session,
         tenant_id: UUID,
@@ -560,6 +702,9 @@ class IncidentService:
         actor_id: UUID | None,
         reason: str | None = None,
         trace_items: list[str] | None = None,
+        operation_id: str | None = None,
+        before_summary: dict[str, Any] | None = None,
+        after_summary: dict[str, Any] | None = None,
     ) -> None:
         trace = [
             f"ticket_id={ticket.id}",
@@ -569,37 +714,38 @@ class IncidentService:
         ]
         if trace_items:
             trace.extend(trace_items)
+        stable_operation_id = operation_id or f"{ticket.id}:{action}:v{getattr(ticket, 'version', 1)}"
         try:
-            sp = db.begin_nested()
-            try:
-                db.execute(
-                    text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
-                    {"tenant_id": str(tenant_id)},
-                )
-                append_audit_event(
-                    db,
-                    {
-                        "id": str(uuid4()),
-                        "idempotency_key": f"itsm:incident:{ticket.id}:{action}:{datetime.now(timezone.utc).timestamp()}",
-                        "tenant_id": str(tenant_id),
-                        "timestamp": datetime.now(timezone.utc),
-                        "actor_id": str(actor_id) if actor_id else None,
-                        "actor_type": "user",
-                        "action": f"itsm.incident.{action}",
-                        "request_id": str(ticket.id),
-                        "provider": "itsm",
-                        "reason": reason or action,
-                        "response_status": 200,
-                        "frameworks_affected": ["ITIL"],
-                        "execution_trace": trace,
-                    },
-                )
-                sp.commit()
-            except Exception as e:
-                sp.rollback()
-                logger.warning("Audit event emission failed (continuing transaction): %s", e)
-        except Exception as e:
-            logger.warning("Audit event savepoint failed: %s", e)
+            db.execute(
+                text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                {"tenant_id": str(tenant_id)},
+            )
+            append_audit_event(
+                db,
+                {
+                    "id": str(uuid4()),
+                    "idempotency_key": f"itsm:incident:{stable_operation_id}:{action}",
+                    "tenant_id": str(tenant_id),
+                    "timestamp": datetime.now(timezone.utc),
+                    "actor_id": str(actor_id) if actor_id else None,
+                    "actor_type": "user",
+                    "action": f"itsm.incident.{action}",
+                    "request_id": stable_operation_id,
+                    "event_category": "incident_operation",
+                    "target_id": str(ticket.id),
+                    "target_type": "incident",
+                    "before_summary": IncidentService._audit_summary(before_summary),
+                    "after_summary": IncidentService._audit_summary(after_summary),
+                    "provider": "itsm",
+                    "reason": reason or action,
+                    "response_status": 200,
+                    "frameworks_affected": ["ITIL"],
+                    "execution_trace": trace,
+                },
+            )
+        except Exception:
+            db.rollback()
+            raise
 
     @classmethod
     def create_incident(
@@ -608,6 +754,8 @@ class IncidentService:
         tenant_id: UUID,
         actor_id: UUID,
         payload: IncidentCreateRequest,
+        operation_id: str | None = None,
+        operation_record: ITSMIncidentOperation | None = None,
     ) -> ITSMTicket:
         cls._validate_user_in_tenant(db, tenant_id, actor_id, "Requester")
 
@@ -676,6 +824,7 @@ class IncidentService:
         apply_sla_policy(ticket, sla_policy, now)
         db.add(ticket)
         db.flush()
+        cls.complete_idempotent_operation(operation_record, ticket.id)
 
         # Initial activity record
         cls._record_activity(
@@ -696,6 +845,18 @@ class IncidentService:
             action="created",
             actor_id=actor_id,
             reason="Incident created",
+            operation_id=operation_id,
+            after_summary={
+                "status": ticket.status,
+                "impact": ticket.impact,
+                "urgency": ticket.urgency,
+                "priority": ticket.priority,
+                "assignment_group": ticket.assignment_group,
+                "assignee_id": str(ticket.assignee_id) if ticket.assignee_id else None,
+                "service_id": str(ticket.service_id) if ticket.service_id else None,
+                "category": ticket.category,
+                "is_major_incident": ticket.is_major_incident,
+            },
         )
 
         db.commit()
@@ -1119,8 +1280,12 @@ class IncidentService:
         incident_id: UUID,
         actor_id: UUID,
         payload: IncidentUpdateRequest,
+        expected_version: int | None = None,
+        operation_id: str | None = None,
+        operation_record: ITSMIncidentOperation | None = None,
     ) -> ITSMTicket:
         ticket = cls.get_incident(db, tenant_id, incident_id)
+        cls.claim_ticket_version(db, ticket, expected_version)
 
         if ticket.status in {"CLOSED", "CANCELLED"}:
             raise HTTPException(
@@ -1274,7 +1439,11 @@ class IncidentService:
                 action="updated",
                 actor_id=actor_id,
                 trace_items=[f"updated_fields={','.join(changed_fields)}"],
+                operation_id=operation_id,
+                before_summary=old_values,
+                after_summary=new_values,
             )
+            cls.complete_idempotent_operation(operation_record, ticket.id)
             db.commit()
             db.refresh(ticket)
 
@@ -1290,6 +1459,10 @@ class IncidentService:
                     actor_id=actor_id,
                 )
 
+        if not changed_fields:
+            cls.complete_idempotent_operation(operation_record, ticket.id)
+            db.commit()
+            db.refresh(ticket)
         return ticket
 
     @classmethod
@@ -1300,8 +1473,12 @@ class IncidentService:
         incident_id: UUID,
         actor_id: UUID,
         payload: IncidentStatusUpdateRequest,
+        expected_version: int | None = None,
+        operation_id: str | None = None,
+        operation_record: ITSMIncidentOperation | None = None,
     ) -> ITSMTicket:
         ticket = cls.get_incident(db, tenant_id, incident_id)
+        cls.claim_ticket_version(db, ticket, expected_version)
         current_status = ticket.status
         target_status = payload.status.strip().upper()
 
@@ -1312,6 +1489,9 @@ class IncidentService:
             )
 
         if current_status == target_status:
+            cls.complete_idempotent_operation(operation_record, ticket.id)
+            db.commit()
+            db.refresh(ticket)
             return ticket
 
         allowed = ALLOWED_TRANSITIONS.get(current_status, set())
@@ -1417,8 +1597,12 @@ class IncidentService:
             actor_id=actor_id,
             reason=payload.status_reason,
             trace_items=[f"old_status={current_status}", f"new_status={target_status}"],
+            operation_id=operation_id,
+            before_summary={"status": current_status},
+            after_summary=new_val,
         )
 
+        cls.complete_idempotent_operation(operation_record, ticket.id)
         db.commit()
         db.refresh(ticket)
         return ticket
@@ -1431,8 +1615,12 @@ class IncidentService:
         incident_id: UUID,
         actor_id: UUID,
         payload: IncidentAssignRequest,
+        expected_version: int | None = None,
+        operation_id: str | None = None,
+        operation_record: ITSMIncidentOperation | None = None,
     ) -> ITSMTicket:
         ticket = cls.get_incident(db, tenant_id, incident_id)
+        cls.claim_ticket_version(db, ticket, expected_version)
 
         if ticket.status in {"CLOSED", "CANCELLED"}:
             raise HTTPException(
@@ -1477,8 +1665,12 @@ class IncidentService:
             action="assigned",
             actor_id=actor_id,
             trace_items=[f"old_assignee={old_assignee}", f"new_assignee={new_assignee}"],
+            operation_id=operation_id,
+            before_summary={"assignee_id": old_assignee, "assignment_group": old_group},
+            after_summary={"assignee_id": new_assignee, "assignment_group": new_group},
         )
 
+        cls.complete_idempotent_operation(operation_record, ticket.id)
         db.commit()
         db.refresh(ticket)
 
@@ -1496,8 +1688,19 @@ class IncidentService:
         return ticket
 
     @classmethod
-    def declare_major_incident(cls, db: Session, tenant_id: UUID, incident_id: UUID, actor_id: UUID, payload: MajorIncidentDeclareRequest) -> ITSMMajorIncident:
+    def declare_major_incident(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        incident_id: UUID,
+        actor_id: UUID,
+        payload: MajorIncidentDeclareRequest,
+        expected_version: int | None = None,
+        operation_id: str | None = None,
+        operation_record: ITSMIncidentOperation | None = None,
+    ) -> ITSMMajorIncident:
         ticket = cls.get_incident(db, tenant_id, incident_id)
+        cls.claim_ticket_version(db, ticket, expected_version)
         if db.query(ITSMMajorIncident).filter_by(tenant_id=tenant_id, ticket_id=incident_id).first():
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Incident is already declared as major")
         commander_id = payload.incident_commander_id or actor_id
@@ -1522,7 +1725,20 @@ class IncidentService:
         ticket.updated_at = datetime.now(timezone.utc)
         db.add(major)
         cls._record_activity(db, tenant_id, ticket.id, "MAJOR_INCIDENT_DECLARED", "Major incident declared", new_value={"incident_commander_id": str(commander_id)}, actor_id=actor_id)
-        cls._emit_audit_event(db, tenant_id, ticket, "major_incident_declared", actor_id)
+        cls._emit_audit_event(
+            db,
+            tenant_id,
+            ticket,
+            "major_incident_declared",
+            actor_id,
+            operation_id=operation_id,
+            before_summary={"is_major_incident": False},
+            after_summary={
+                "is_major_incident": True,
+                "incident_commander_id": str(commander_id),
+            },
+        )
+        cls.complete_idempotent_operation(operation_record, ticket.id)
         db.commit(); db.refresh(major)
         return major
 
@@ -1535,8 +1751,28 @@ class IncidentService:
         return major
 
     @classmethod
-    def update_major_incident(cls, db: Session, tenant_id: UUID, incident_id: UUID, actor_id: UUID, payload: MajorIncidentUpdateRequest) -> ITSMMajorIncident:
+    def update_major_incident(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        incident_id: UUID,
+        actor_id: UUID,
+        payload: MajorIncidentUpdateRequest,
+        expected_version: int | None = None,
+        operation_id: str | None = None,
+        operation_record: ITSMIncidentOperation | None = None,
+    ) -> ITSMMajorIncident:
         major = cls.get_major_incident(db, tenant_id, incident_id)
+        ticket = cls.get_incident(db, tenant_id, incident_id)
+        cls.claim_ticket_version(db, ticket, expected_version)
+        before_values = {
+            field: getattr(major, field)
+            for field in (
+                "incident_commander_id", "bridge_url", "communication_channel",
+                "executive_summary", "impacted_business_units",
+                "customer_impact_description", "postmortem_status", "postmortem_url",
+            )
+        }
         changes = payload.model_dump(exclude_unset=True)
         if "incident_commander_id" in changes and changes["incident_commander_id"] is None:
             raise HTTPException(status_code=400, detail="A declared major incident must retain an Incident Manager as commander")
@@ -1556,10 +1792,22 @@ class IncidentService:
             if field in changes:
                 setattr(major, field, changes[field])
         if changes:
-            ticket = cls.get_incident(db, tenant_id, incident_id)
             ticket.updated_at = datetime.now(timezone.utc)
             cls._record_activity(db, tenant_id, ticket.id, "MAJOR_INCIDENT_UPDATED", "Major incident command details updated", new_value=payload.model_dump(mode="json", exclude_unset=True), actor_id=actor_id)
-            cls._emit_audit_event(db, tenant_id, ticket, "major_incident_updated", actor_id)
+            cls._emit_audit_event(
+                db,
+                tenant_id,
+                ticket,
+                "major_incident_updated",
+                actor_id,
+                operation_id=operation_id,
+                before_summary={field: before_values[field] for field in changes if field in before_values},
+                after_summary={field: changes[field] for field in changes if field in valid_fields},
+            )
+            cls.complete_idempotent_operation(operation_record, ticket.id)
+            db.commit(); db.refresh(major)
+        else:
+            cls.complete_idempotent_operation(operation_record, ticket.id)
             db.commit(); db.refresh(major)
         return major
 
@@ -1592,6 +1840,7 @@ class IncidentService:
         incident_id: UUID,
         actor_id: UUID,
         payload: IncidentActivityCreateRequest,
+        operation_id: str | None = None,
     ) -> ITSMTicketActivity:
         ticket = cls.get_incident(db, tenant_id, incident_id)
 
@@ -1617,6 +1866,12 @@ class IncidentService:
             action="comment_added",
             actor_id=actor_id,
             trace_items=[f"activity_type={activity.activity_type}", f"is_internal={payload.is_internal}"],
+            operation_id=operation_id,
+            after_summary={
+                "activity_type": activity.activity_type,
+                "is_internal": payload.is_internal,
+                "content": payload.content,
+            },
         )
 
         db.commit()

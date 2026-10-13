@@ -246,6 +246,14 @@ class ServiceAgentIncidentDetailTestCase(unittest.TestCase):
     def tearDownClass(cls):
         cls.migrator_engine.dispose()
 
+    def mutation_headers(self, headers, ticket_id):
+        current = self.client.get(
+            f"/v1/itsm/incidents/{ticket_id}?agent_view=true",
+            headers=headers,
+        )
+        self.assertEqual(current.status_code, 200, current.text)
+        return {**headers, "If-Match": str(current.json()["version"])}
+
     # 1. SERVICE_AGENT can retrieve an incident
     def test_01_service_agent_can_retrieve_incident(self):
         headers = {"Authorization": f"Bearer {self.agent_key}"}
@@ -451,7 +459,11 @@ class ServiceAgentIncidentDetailTestCase(unittest.TestCase):
             "status": "IN_PROGRESS",
             "status_reason": "Beginning active troubleshooting of SSO tokens",
         }
-        res = self.client.post(f"/v1/itsm/incidents/{self.ticket_id}/status", json=payload, headers=headers)
+        res = self.client.post(
+            f"/v1/itsm/incidents/{self.ticket_id}/status",
+            json=payload,
+            headers=self.mutation_headers(headers, self.ticket_id),
+        )
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertEqual(data["status"], "IN_PROGRESS")
@@ -472,7 +484,7 @@ class ServiceAgentIncidentDetailTestCase(unittest.TestCase):
         res_progress = self.client.post(
             f"/v1/itsm/incidents/{self.ticket_id}/status",
             json={"status": "IN_PROGRESS", "status_reason": "Investigating"},
-            headers=headers,
+            headers=self.mutation_headers(headers, self.ticket_id),
         )
         self.assertIn(res_progress.status_code, [200, 409])
 
@@ -481,7 +493,11 @@ class ServiceAgentIncidentDetailTestCase(unittest.TestCase):
             "resolution_code": "PERMANENT_FIX",
             "resolution_summary": "Replaced faulty router interface module and verified traffic flow.",
         }
-        res = self.client.post(f"/v1/itsm/incidents/{self.ticket_id}/status", json=resolve_payload, headers=headers)
+        res = self.client.post(
+            f"/v1/itsm/incidents/{self.ticket_id}/status",
+            json=resolve_payload,
+            headers=self.mutation_headers(headers, self.ticket_id),
+        )
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertEqual(data["status"], "RESOLVED")
@@ -509,17 +525,18 @@ class ServiceAgentIncidentDetailTestCase(unittest.TestCase):
         self.assertEqual(ticket_res.status_code, 201)
         tid = ticket_res.json()["id"]
 
-        self.client.post(
+        progressed = self.client.post(
             f"/v1/itsm/incidents/{tid}/status",
             json={"status": "IN_PROGRESS"},
-            headers=headers,
+            headers=self.mutation_headers(headers, tid),
         )
+        self.assertEqual(progressed.status_code, 200, progressed.text)
 
         # Missing code
         res1 = self.client.post(
             f"/v1/itsm/incidents/{tid}/status",
             json={"status": "RESOLVED", "resolution_summary": "Summary only"},
-            headers=headers,
+            headers=self.mutation_headers(headers, tid),
         )
         self.assertEqual(res1.status_code, 400)
 
@@ -527,7 +544,7 @@ class ServiceAgentIncidentDetailTestCase(unittest.TestCase):
         res2 = self.client.post(
             f"/v1/itsm/incidents/{tid}/status",
             json={"status": "RESOLVED", "resolution_code": "PERMANENT_FIX"},
-            headers=headers,
+            headers=self.mutation_headers(headers, tid),
         )
         self.assertEqual(res2.status_code, 400)
 
@@ -588,11 +605,16 @@ class ServiceAgentIncidentDetailTestCase(unittest.TestCase):
         self.assertEqual(ticket_res.status_code, 201)
         tid = ticket_res.json()["id"]
 
-        self.client.post(f"/v1/itsm/incidents/{tid}/status", json={"status": "IN_PROGRESS"}, headers=headers)
+        progressed = self.client.post(
+            f"/v1/itsm/incidents/{tid}/status",
+            json={"status": "IN_PROGRESS"},
+            headers=self.mutation_headers(headers, tid),
+        )
+        self.assertEqual(progressed.status_code, 200, progressed.text)
         res_res = self.client.post(
             f"/v1/itsm/incidents/{tid}/status",
             json={"status": "RESOLVED", "resolution_code": "WORKAROUND_APPLIED", "resolution_summary": "Temp bypass applied"},
-            headers=headers,
+            headers=self.mutation_headers(headers, tid),
         )
         self.assertEqual(res_res.status_code, 200)
         self.assertIsNotNone(res_res.json()["resolved_at"])
@@ -601,7 +623,11 @@ class ServiceAgentIncidentDetailTestCase(unittest.TestCase):
             "status": "IN_PROGRESS",
             "status_reason": "Customer reported recurrent symptom",
         }
-        res_reopen = self.client.post(f"/v1/itsm/incidents/{tid}/status", json=reopen_payload, headers=headers)
+        res_reopen = self.client.post(
+            f"/v1/itsm/incidents/{tid}/status",
+            json=reopen_payload,
+            headers=self.mutation_headers(headers, tid),
+        )
         self.assertEqual(res_reopen.status_code, 200)
         data = res_reopen.json()
         self.assertEqual(data["status"], "IN_PROGRESS")
@@ -626,15 +652,25 @@ class ServiceAgentIncidentDetailTestCase(unittest.TestCase):
         self.assertEqual(ticket_res.status_code, 201)
         tid = ticket_res.json()["id"]
 
-        self.client.post(f"/v1/itsm/incidents/{tid}/status", json={"status": "IN_PROGRESS"}, headers=headers)
-        self.client.post(
+        progressed = self.client.post(
+            f"/v1/itsm/incidents/{tid}/status",
+            json={"status": "IN_PROGRESS"},
+            headers=self.mutation_headers(headers, tid),
+        )
+        self.assertEqual(progressed.status_code, 200, progressed.text)
+        resolved = self.client.post(
             f"/v1/itsm/incidents/{tid}/status",
             json={"status": "RESOLVED", "resolution_code": "PERMANENT_FIX", "resolution_summary": "Firmware patch applied"},
-            headers=headers,
+            headers=self.mutation_headers(headers, tid),
         )
+        self.assertEqual(resolved.status_code, 200, resolved.text)
 
         close_payload = {"status": "CLOSED"}
-        res_close = self.client.post(f"/v1/itsm/incidents/{tid}/status", json=close_payload, headers=headers)
+        res_close = self.client.post(
+            f"/v1/itsm/incidents/{tid}/status",
+            json=close_payload,
+            headers=self.mutation_headers(headers, tid),
+        )
         self.assertEqual(res_close.status_code, 200)
         data = res_close.json()
         self.assertEqual(data["status"], "CLOSED")

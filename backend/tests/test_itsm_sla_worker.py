@@ -514,6 +514,33 @@ class TestSLAEscalationWorker(unittest.TestCase):
             self.assertEqual(self.db.query(Notification).count(), notifs_run_1)
             self.assertEqual(self.db.query(ITSMTicketActivity).count(), activities_run_1)
 
+    def test_phase4_required_audit_failure_rolls_back_escalation_state(self):
+        """A required audit append failure cannot leave a marked escalation behind."""
+        ticket = self._create_ticket(tenant_id=self.tenant_a)
+        now = self.created_at + timedelta(hours=3)
+
+        with patch(
+            "app.services.itsm_sla_worker.append_audit_event",
+            side_effect=RuntimeError("audit unavailable"),
+        ):
+            result = process_tenant_escalations(
+                self.db,
+                tenant_id=self.tenant_a,
+                now=now,
+            )
+
+        self.assertEqual(result["failed_tickets"], 1)
+        self.assertEqual(result["warnings_escalated"], 0)
+        self.db.expire_all()
+        reloaded = self.db.query(ITSMTicket).filter(ITSMTicket.id == ticket.id).one()
+        self.assertIsNone(reloaded.sla_warning_escalated_at)
+        self.assertEqual(
+            self.db.query(ITSMTicketActivity)
+            .filter(ITSMTicketActivity.ticket_id == ticket.id)
+            .count(),
+            0,
+        )
+
     def test_phase4_breach_after_warning_escalates_each_stage_once(self):
         """Phase 4.4: A ticket transitioning from warning to breach fires each stage once."""
         mgr = self._create_user(self.tenant_a, "progression_mgr@tenant-a.com")

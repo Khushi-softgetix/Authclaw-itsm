@@ -19,7 +19,7 @@ func ValidateDatabaseSecurity() error {
 	var secure bool
 	err := DB.QueryRow(`
 		SELECT
-			EXISTS (SELECT 1 FROM public.alembic_version WHERE version_num IN ('046', '050', '051', '052'))
+			EXISTS (SELECT 1 FROM public.alembic_version WHERE version_num IN ('046', '050', '051', '052', '053', '054', '055', '056', '057', '058', '059'))
 			AND EXISTS (
 				SELECT 1
 				FROM pg_proc p

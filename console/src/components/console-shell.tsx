@@ -32,6 +32,7 @@ import {
   X,
 } from "lucide-react";
 import NotificationBell from "@/components/notification-bell";
+import OutageAlertBanner from "@/components/itsm/outage-alert-banner";
 
 interface NavItem {
   name: string;
@@ -107,6 +108,7 @@ const auditorNavigation: NavItem[] = [
   { name: "Overview", href: "/itsm/dashboard/auditor?section=overview", icon: LayoutDashboard, roles: readRoles },
   { name: "Audit Log", href: "/itsm/dashboard/auditor?section=audit-log", icon: ScrollText, roles: readRoles },
   { name: "Evidence", href: "/itsm/dashboard/auditor?section=evidence", icon: FolderSearch, roles: readRoles },
+  { name: "Outage Evidence", href: "/itsm/dashboard/auditor/outage-alerts", icon: Bell, roles: readRoles },
   { name: "Reports", href: "/itsm/dashboard/auditor?section=reports", icon: BarChart3, roles: readRoles },
   { name: "Exports", href: "/itsm/dashboard/auditor?section=exports", icon: Download, roles: readRoles },
 ];
@@ -181,6 +183,8 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
       ? "My Work"
       : pathname === "/itsm/dashboard/auditor"
       ? auditorNavigation.find((item) => item.href.includes(`section=${auditorSection}`))?.name || "Overview"
+      : pathname.startsWith("/itsm/dashboard/auditor/outage-alerts")
+      ? "Outage Evidence"
       : pathname.startsWith("/itsm/dashboard")
       ? "Dashboard"
       : pathname === "/itsm/incidents/new"
@@ -440,7 +444,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
             </div>
           </header>
 
-          <main className="flex-1 overflow-auto px-4 py-6 sm:px-6 md:px-8 md:py-8 xl:px-10">{children}</main>
+          <main className="flex-1 overflow-auto px-4 py-6 sm:px-6 md:px-8 md:py-8 xl:px-10"><OutageAlertBanner />{children}</main>
         </div>
       </div>
     </div>

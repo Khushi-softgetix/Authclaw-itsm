@@ -195,9 +195,15 @@ export async function proxyBackendJson(
 ) {
   try {
     const body = await request.json();
+    const forwardedHeaders = new Headers();
+    for (const name of ["Idempotency-Key", "If-Match", "X-Request-ID"]) {
+      const value = request.headers.get(name);
+      if (value) forwardedHeaders.set(name, value);
+    }
     return proxyBackend(path, {
       method,
       body: JSON.stringify(body),
+      headers: forwardedHeaders,
     }, status);
   } catch (error: unknown) {
     return handleApiError(error);

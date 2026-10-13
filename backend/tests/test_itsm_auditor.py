@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 from app.api.v1.endpoints import (
     audit as audit_api,
+    evidence as generic_evidence,
     itsm_audit,
     itsm_incidents,
     itsm_knowledge,
@@ -147,6 +148,63 @@ def test_auditor_cannot_read_incident_activity_history():
         )
 
     assert exc.value.status_code == 403
+
+
+def test_auditor_cannot_bypass_redacted_api_through_generic_evidence(monkeypatch):
+    """Generic evidence can contain platform-sensitive payloads; ITSM Auditors use their dedicated API."""
+    request = _request()
+    db = MagicMock()
+    db.execute.return_value.first.return_value = SimpleNamespace(
+        itsm_role="AUDITOR",
+        has_itsm_access=True,
+    )
+    queried = []
+    monkeypatch.setattr(
+        generic_evidence.evidence_service,
+        "list_evidence",
+        lambda *_args, **_kwargs: queried.append(True) or ([], 0),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        generic_evidence.list_evidence(
+            request=request,
+            framework=None,
+            evidence_type=None,
+            severity=None,
+            page=1,
+            page_size=20,
+            db=db,
+        )
+
+    assert exc.value.status_code == 403
+    assert queried == []
+
+
+def test_non_auditor_generic_evidence_access_is_not_changed(monkeypatch):
+    request = _request()
+    db = MagicMock()
+    db.execute.return_value.first.return_value = SimpleNamespace(
+        itsm_role="INCIDENT_MANAGER",
+        has_itsm_access=True,
+    )
+    monkeypatch.setattr(
+        generic_evidence.evidence_service,
+        "list_evidence",
+        lambda *_args, **_kwargs: ([], 0),
+    )
+
+    response = generic_evidence.list_evidence(
+        request=request,
+        framework=None,
+        evidence_type=None,
+        severity=None,
+        page=1,
+        page_size=20,
+        db=db,
+    )
+
+    assert response.total == 0
+    assert response.items == []
 
 
 def test_auditor_restricted_read_is_denied_and_audited(monkeypatch):

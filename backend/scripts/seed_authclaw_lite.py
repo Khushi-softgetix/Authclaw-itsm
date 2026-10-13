@@ -567,7 +567,7 @@ def main() -> None:
             conn.execute(
                 text("""
                 INSERT INTO itsm_configuration_items (id, tenant_id, service_id, name, ci_type, environment, status, attributes, created_at, updated_at)
-                VALUES (:id, :tenant_id, :service_id, :name, :ci_type, :environment, :status, :attributes::jsonb, NOW(), NOW())
+                VALUES (:id, :tenant_id, :service_id, :name, :ci_type, :environment, :status, CAST(:attributes AS jsonb), NOW(), NOW())
                 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, status = EXCLUDED.status, service_id = EXCLUDED.service_id
                 """),
                 {

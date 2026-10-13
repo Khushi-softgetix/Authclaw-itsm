@@ -115,6 +115,47 @@ class SLAPerformanceKPIResponse(BaseModel):
     )
 
 
+class OperationalKPIIncidentRecord(BaseModel):
+    """Tenant-scoped incident record that contributed to an operational KPI."""
+    id: UUID
+    ticket_number: str
+    title: str
+    priority: str
+    status: str
+    service_id: Optional[UUID] = None
+    created_at: datetime
+    measured_at: Optional[datetime] = None
+    duration_seconds: Optional[float] = None
+    sla_dimension: Optional[str] = None
+    sla_outcome: Optional[str] = None
+    age_bucket: Optional[str] = None
+
+
+class SLAAdherenceDimensionResponse(BaseModel):
+    """Compliance result for one persisted SLA commitment type."""
+    dimension: str
+    total_with_commitment: int
+    evaluated_count: int
+    met_count: int
+    breached_count: int
+    pending_count: int
+    unavailable_count: int
+    compliance_rate_pct: Optional[float] = None
+
+
+class OperationalKPIDashboardResponse(BaseModel):
+    """Incident Manager projection of the existing KPI library with drill-down records."""
+    date_range: KPIDateRange
+    filters: Dict[str, Optional[str]]
+    mtta: MTTAKPIResponse
+    mttr: MTTRKPIResponse
+    backlog_age: BacklogAgeKPIResponse
+    sla_response: SLAAdherenceDimensionResponse
+    sla_resolution: SLAAdherenceDimensionResponse
+    drilldowns: Dict[str, List[OperationalKPIIncidentRecord]]
+    drilldown_limit: int
+
+
 class CSATKPIResponse(BaseModel):
     """Customer Satisfaction (CSAT) KPI."""
     metric: str = "CSAT"

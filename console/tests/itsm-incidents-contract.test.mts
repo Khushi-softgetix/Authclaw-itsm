@@ -9,12 +9,14 @@ import {
   itsmStatusConfig,
 } from "../src/lib/itsm-format.ts";
 
-test("Commander and approval selection use backend-authorized Incident Managers", () => {
+test("Major Incident keeps command ownership and delegates public communication to Outage & Alerts", () => {
   const page = readFileSync(new URL("../src/app/(console)/itsm/incident-manager/major-incidents/page.tsx", import.meta.url), "utf8");
   assert.match(page, /const commanders = references.commanders \|\| \[\]/);
   assert.match(page, /commanders.map/);
-  assert.match(page, /users=\{commanders\}/);
-  assert.match(page, /not verified delivery/);
+  assert.match(page, /Related Outage &amp; Alert/);
+  assert.match(page, /linked_type=MAJOR_INCIDENT/);
+  assert.match(page, /Public service communication is managed in Outage &amp; Alerts/);
+  assert.doesNotMatch(page, /function CommunicationLog/);
   assert.match(page, /delete payload.postmortem_url/);
 });
 
@@ -65,19 +67,16 @@ test("ITSM status config handles all approved lifecycle statuses", () => {
   }
 });
 
-test("Major Incident command workspace records evidence-based communications without claiming delivery", () => {
+test("Major Incident command workspace preserves command work while public delivery uses Outage & Alerts", () => {
   const commandPage = readFileSync(
     new URL("../src/app/(console)/itsm/incident-manager/major-incidents/page.tsx", import.meta.url),
     "utf8",
   );
-  const types = readFileSync(new URL("../src/lib/itsm-types.ts", import.meta.url), "utf8");
-
-  assert.match(commandPage, /Evidence-based communications/);
-  assert.match(commandPage, /does not send notifications/);
-  assert.match(commandPage, /Record communication/);
-  assert.match(commandPage, /Communication approver/);
-  assert.match(types, /"DRAFT" \| "APPROVED" \| "COMMUNICATED"/);
-  assert.doesNotMatch(types, /"DELIVERED"/);
+  assert.match(commandPage, /Command & coordination/);
+  assert.match(commandPage, /Restoration checkpoints/);
+  assert.match(commandPage, /Related Outage &amp; Alert/);
+  assert.match(commandPage, /Create \/ link alert/);
+  assert.doesNotMatch(commandPage, /Record communication/);
 });
 
 test("Incident Manager coordination uses tenant reference data for classification, assignment, and Major Incident scope", () => {
@@ -132,6 +131,10 @@ test("Incident Manager navigation and overview expose the approved control-cente
   assert.match(overview, /summary\.active_major_incidents/);
   assert.match(overview, /assignment_group=__UNASSIGNED__&unassigned=true/);
   assert.match(overview, /Focus attention/);
+  assert.match(overview, /Critical or high priority/);
+  assert.match(overview, /Deadline missed/);
+  assert.match(overview, /Deadline approaching/);
+  assert.match(overview, /No recent activity/);
   assert.match(overview, />Attention reason</);
   assert.match(overview, />Ownership</);
   assert.match(overview, /aria-label=\{`Review \$\{item\.ticket_number\}: \$\{item\.title\}`\}/);
@@ -253,6 +256,17 @@ test("Major Incident selection cannot render or save a stale command record", ()
   assert.match(page, /url\.searchParams\.delete\("incident"\)/);
   assert.match(page, /record\?\.ticket_id===selectedId \? record : null/);
   assert.match(page, /saved\.ticket_id===selected\.id/);
+});
+
+test("Incident mutations carry idempotency and optimistic concurrency headers", () => {
+  const clientFetch = readFileSync(new URL("../src/lib/client-fetch.ts", import.meta.url), "utf8");
+  const apiClient = readFileSync(new URL("../src/lib/api-client.ts", import.meta.url), "utf8");
+  const drawer = readFileSync(new URL("../src/components/itsm/incident-oversight-drawer.tsx", import.meta.url), "utf8");
+  const commandPage = readFileSync(new URL("../src/app/(console)/itsm/incident-manager/major-incidents/page.tsx", import.meta.url), "utf8");
+  assert.match(clientFetch, /"Idempotency-Key": mutationKey/);
+  assert.match(apiClient, /"Idempotency-Key", "If-Match", "X-Request-ID"/);
+  assert.match(drawer, /"If-Match": String\(incident\.version\)/);
+  assert.match(commandPage, /"If-Match":String\(incident\.version\)/);
 });
 
 test("Incident Manager optional UX keeps queue requests focused and mobile-friendly", () => {

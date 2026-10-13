@@ -172,6 +172,10 @@ class TestITSMIncidentNotifications(unittest.TestCase):
     def tearDownClass(cls):
         cls.engine.dispose()
 
+    @staticmethod
+    def mutation_headers(headers, incident):
+        return {**headers, "If-Match": str(incident["version"])}
+
     def _get_notifications(self, api_key: str) -> list[dict]:
         res = self.client.get("/v1/notifications", headers={"Authorization": f"Bearer {api_key}"})
         self.assertEqual(res.status_code, 200, res.text)
@@ -253,14 +257,15 @@ class TestITSMIncidentNotifications(unittest.TestCase):
             },
         )
         self.assertEqual(create_res.status_code, 201, create_res.text)
-        ticket_id = create_res.json()["id"]
-        ticket_number = create_res.json()["ticket_number"]
+        incident = create_res.json()
+        ticket_id = incident["id"]
+        ticket_number = incident["ticket_number"]
 
         # Assign to Team A ('IT Support')
         im_headers = {"Authorization": f"Bearer {self.im_key}"}
         assign_res = self.client.post(
             f"/v1/itsm/incidents/{ticket_id}/assign",
-            headers=im_headers,
+            headers=self.mutation_headers(im_headers, incident),
             json={"assignment_group": "IT Support"},
         )
         self.assertEqual(assign_res.status_code, 200, assign_res.text)
@@ -296,14 +301,15 @@ class TestITSMIncidentNotifications(unittest.TestCase):
             },
         )
         self.assertEqual(create_res.status_code, 201, create_res.text)
-        ticket_id = create_res.json()["id"]
-        ticket_number = create_res.json()["ticket_number"]
+        incident = create_res.json()
+        ticket_id = incident["id"]
+        ticket_number = incident["ticket_number"]
 
         # Assign directly to Rahul (no team change)
         im_headers = {"Authorization": f"Bearer {self.im_key}"}
         assign_res = self.client.post(
             f"/v1/itsm/incidents/{ticket_id}/assign",
-            headers=im_headers,
+            headers=self.mutation_headers(im_headers, incident),
             json={"assignee_id": str(self.agent_a1_user_id)},
         )
         self.assertEqual(assign_res.status_code, 200, assign_res.text)
@@ -344,13 +350,14 @@ class TestITSMIncidentNotifications(unittest.TestCase):
             },
         )
         self.assertEqual(create_res.status_code, 201, create_res.text)
-        ticket_id = create_res.json()["id"]
-        ticket_number = create_res.json()["ticket_number"]
+        incident = create_res.json()
+        ticket_id = incident["id"]
+        ticket_number = incident["ticket_number"]
 
         im_headers = {"Authorization": f"Bearer {self.im_key}"}
         assign_res = self.client.post(
             f"/v1/itsm/incidents/{ticket_id}/assign",
-            headers=im_headers,
+            headers=self.mutation_headers(im_headers, incident),
             json={"assignment_group": "IT Support", "assignee_id": str(self.agent_a1_user_id)},
         )
         self.assertEqual(assign_res.status_code, 200, assign_res.text)
@@ -392,16 +399,18 @@ class TestITSMIncidentNotifications(unittest.TestCase):
             },
         )
         self.assertEqual(create_res.status_code, 201, create_res.text)
-        ticket_id = create_res.json()["id"]
-        ticket_number = create_res.json()["ticket_number"]
+        incident = create_res.json()
+        ticket_id = incident["id"]
+        ticket_number = incident["ticket_number"]
 
         im_headers = {"Authorization": f"Bearer {self.im_key}"}
         # Initial assignment: Team A + Rahul
-        self.client.post(
+        initial_assignment = self.client.post(
             f"/v1/itsm/incidents/{ticket_id}/assign",
-            headers=im_headers,
+            headers=self.mutation_headers(im_headers, incident),
             json={"assignment_group": "IT Support", "assignee_id": str(self.agent_a1_user_id)},
         )
+        self.assertEqual(initial_assignment.status_code, 200, initial_assignment.text)
 
         # Baseline notification counts for Team A
         rahul_before = len([n for n in self._get_notifications(self.agent_a1_key) if n["link"] == f"/itsm/incidents/{ticket_id}"])
@@ -410,7 +419,7 @@ class TestITSMIncidentNotifications(unittest.TestCase):
         # Reassign to Team B ('DevOps Team') and Neha
         reassign_res = self.client.post(
             f"/v1/itsm/incidents/{ticket_id}/assign",
-            headers=im_headers,
+            headers=self.mutation_headers(im_headers, initial_assignment.json()),
             json={"assignment_group": "DevOps Team", "assignee_id": str(self.agent_b1_user_id)},
         )
         self.assertEqual(reassign_res.status_code, 200, reassign_res.text)
@@ -437,7 +446,7 @@ class TestITSMIncidentNotifications(unittest.TestCase):
 
         repeat_res = self.client.post(
             f"/v1/itsm/incidents/{ticket_id}/assign",
-            headers=im_headers,
+            headers=self.mutation_headers(im_headers, reassign_res.json()),
             json={"assignment_group": "DevOps Team", "assignee_id": str(self.agent_b1_user_id)},
         )
         self.assertEqual(repeat_res.status_code, 200)
@@ -464,15 +473,17 @@ class TestITSMIncidentNotifications(unittest.TestCase):
             },
         )
         self.assertEqual(create_res.status_code, 201, create_res.text)
-        ticket_id = create_res.json()["id"]
+        incident = create_res.json()
+        ticket_id = incident["id"]
 
         # Assign to 'IT Support' (which exists in both Tenant A and Tenant B)
         im_headers = {"Authorization": f"Bearer {self.im_key}"}
-        self.client.post(
+        assigned = self.client.post(
             f"/v1/itsm/incidents/{ticket_id}/assign",
-            headers=im_headers,
+            headers=self.mutation_headers(im_headers, incident),
             json={"assignment_group": "IT Support"},
         )
+        self.assertEqual(assigned.status_code, 200, assigned.text)
 
         # Tenant B agent queries their notifications -> MUST be completely empty of Tenant A items
         tb_notifs = self._get_notifications(self.tenant_b_agent_key)
@@ -498,14 +509,16 @@ class TestITSMIncidentNotifications(unittest.TestCase):
             },
         )
         self.assertEqual(create_res.status_code, 201, create_res.text)
-        ticket_id = create_res.json()["id"]
+        incident = create_res.json()
+        ticket_id = incident["id"]
 
         im_headers = {"Authorization": f"Bearer {self.im_key}"}
-        self.client.post(
+        assigned = self.client.post(
             f"/v1/itsm/incidents/{ticket_id}/assign",
-            headers=im_headers,
+            headers=self.mutation_headers(im_headers, incident),
             json={"assignee_id": str(self.agent_a1_user_id)},
         )
+        self.assertEqual(assigned.status_code, 200, assigned.text)
 
         rahul_headers = {"Authorization": f"Bearer {self.agent_a1_key}"}
         res_list = self.client.get("/v1/notifications", headers=rahul_headers)
@@ -548,14 +561,16 @@ class TestITSMIncidentNotifications(unittest.TestCase):
             },
         )
         self.assertEqual(create_res.status_code, 201, create_res.text)
-        ticket_id = create_res.json()["id"]
+        incident = create_res.json()
+        ticket_id = incident["id"]
 
         im_headers = {"Authorization": f"Bearer {self.im_key}"}
-        self.client.post(
+        assigned = self.client.post(
             f"/v1/itsm/incidents/{ticket_id}/assign",
-            headers=im_headers,
+            headers=self.mutation_headers(im_headers, incident),
             json={"assignee_id": str(self.agent_a1_user_id)},
         )
+        self.assertEqual(assigned.status_code, 200, assigned.text)
 
         rahul_notifs = [n for n in self._get_notifications(self.agent_a1_key) if n["link"] == f"/itsm/incidents/{ticket_id}"]
         self.assertEqual(len(rahul_notifs), 1)

@@ -151,6 +151,66 @@ jobs:
             tests/test_acl19_continuous_evidence.py tests/test_acl25_abuse_privacy_retention.py \
             tests/test_compliance_scoring.py tests/test_migration_038.py tests/test_audit_transport_contract.py
 
+  outage-alert-security:
+    name: Outage Alert PostgreSQL Security
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: authclaw
+          POSTGRES_PASSWORD: authclaw
+          POSTGRES_DB: authclaw
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U authclaw -d authclaw"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+      - name: Install backend test dependencies
+        run: |
+          python -m venv .ci-outage
+          .ci-outage/bin/python -m pip install --require-hashes -r backend/requirements-test.txt
+      - name: Prepare database security roles
+        working-directory: backend
+        env:
+          BOOTSTRAP_DATABASE_URL: postgresql+psycopg://authclaw:authclaw@127.0.0.1:5432/authclaw
+          POSTGRES_DB: authclaw
+        run: ../.ci-outage/bin/python scripts/bootstrap_database_security.py prepare
+      - name: Apply backend migrations
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://authclaw_migrator:authclaw_migrator@127.0.0.1:5432/authclaw
+        run: ../.ci-outage/bin/alembic upgrade head
+      - name: Finalize backend grants and RLS
+        working-directory: backend
+        env:
+          BOOTSTRAP_DATABASE_URL: postgresql+psycopg://authclaw:authclaw@127.0.0.1:5432/authclaw
+          POSTGRES_DB: authclaw
+        run: ../.ci-outage/bin/python scripts/bootstrap_database_security.py finalize-backend
+      - name: Run mandatory Outage Alert security tests
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://authclaw_app:authclaw_app@127.0.0.1:5432/authclaw
+          OWNER_DATABASE_URL: postgresql+psycopg://authclaw:authclaw@127.0.0.1:5432/authclaw
+          API_KEY_HASH_SECRET: ci-outage-api-key-hash-secret
+          ENVELOPE_KEY: YXV0aGNsYXctbG9jYWwtZmVybmV0LWtleS1jaGFuZ2U=
+        run: >-
+          ../.ci-outage/bin/python -m pytest -p no:cacheprovider -q
+          tests/test_itsm_outage_alert_policy.py
+          tests/test_itsm_outage_alert_security_integration.py
+          tests/test_migration_chain.py
+
   audit:
     name: Audit Consumer Tests
     needs: changes
@@ -354,7 +414,7 @@ jobs:
   checks:
     name: ACL-14 Required Checks
     if: always()
-    needs: [changes, policy, security, backend, audit, agent, sdk, gateway, console, compose, terraform, codeql]
+    needs: [changes, policy, security, backend, outage-alert-security, audit, agent, sdk, gateway, console, compose, terraform, codeql]
     runs-on: ubuntu-latest
     steps:
       - name: Verify all required jobs

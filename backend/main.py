@@ -115,6 +115,7 @@ from app.api.v1.endpoints.itsm_audit import router as itsm_audit_router
 from app.api.v1.endpoints.itsm_approvals import router as itsm_approvals_router
 from app.api.v1.endpoints.itsm_macros import router as itsm_macros_router
 from app.api.v1.endpoints.itsm_analytics import router as itsm_analytics_router
+from app.api.v1.endpoints.itsm_outage_alerts import router as itsm_outage_alerts_router
 
 app.include_router(tenants_router, prefix="/v1/tenants", tags=["tenants"])
 app.include_router(gateways_router, prefix="/v1/gateways", tags=["gateways"])
@@ -147,6 +148,8 @@ app.include_router(data_subject_requests_router, prefix="/v1/data-subject-reques
 # Phase 4 — ITSM Incident Management & Administration
 app.include_router(itsm_incidents_router, prefix="/v1/itsm/incidents", tags=["itsm-incidents"])
 app.include_router(itsm_incidents_router, prefix="/api/itsm/incidents", tags=["itsm-incidents"], include_in_schema=False)
+app.include_router(itsm_outage_alerts_router, prefix="/v1/itsm/outage-alerts", tags=["itsm-outage-alerts"])
+app.include_router(itsm_outage_alerts_router, prefix="/api/itsm/outage-alerts", tags=["itsm-outage-alerts"], include_in_schema=False)
 app.include_router(itsm_admin_router, prefix="/v1/itsm/admin", tags=["itsm-admin"])
 app.include_router(itsm_admin_router, prefix="/api/itsm/admin", tags=["itsm-admin"], include_in_schema=False)
 app.include_router(itsm_knowledge_router, prefix="/v1/itsm/knowledge", tags=["itsm-knowledge"])

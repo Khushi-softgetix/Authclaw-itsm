@@ -109,7 +109,11 @@ export default function StatusModal({ incident, onClose, onSuccess, initialStatu
       }
 
       const endpoint = statusEndpoint || `/api/itsm/incidents/${incident.id}/status`;
-      const res = await fetch(endpoint, jsonRequest("POST", payload));
+      const version = "version" in incident ? incident.version : undefined;
+      const res = await fetch(
+        endpoint,
+        jsonRequest("POST", payload, version ? { "If-Match": String(version) } : {}),
+      );
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(apiErrorMessage(data, "Failed to update incident status"));

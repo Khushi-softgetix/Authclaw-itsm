@@ -846,6 +846,88 @@ class TestITSMKPILibrary(unittest.TestCase):
         self.assertEqual(summary.change_success.metric, "CHANGE_SUCCESS")
         self.assertEqual(summary.repeat_incidents.metric, "REPEAT_INCIDENTS")
 
+    def test_operational_dashboard_uses_real_events_filters_and_tenant_scope(self):
+        """Dashboard figures and drill-downs must be derived from the same filtered records."""
+        as_of = self.base_time + timedelta(days=40)
+        common = {
+            "tenant_id": self.tenant_a,
+            "ticket_type": "INCIDENT",
+            "description": "Deterministic dashboard fixture",
+            "requester_id": self.requester_id,
+            "service_id": self.service_id_1,
+            "priority": "P1",
+        }
+        acknowledged_open = ITSMTicket(
+            id=uuid4(), ticket_number="INC-OP-1", title="Acknowledged open", status="IN_PROGRESS",
+            created_at=as_of - timedelta(days=1), sla_response_met_at=as_of - timedelta(days=1, minutes=-10),
+            sla_response_due_at=as_of - timedelta(days=1, minutes=-30), sla_resolution_due_at=as_of + timedelta(days=1),
+            **common,
+        )
+        resolved_met = ITSMTicket(
+            id=uuid4(), ticket_number="INC-OP-2", title="Resolved in SLA", status="RESOLVED",
+            created_at=as_of - timedelta(days=5), sla_response_met_at=as_of - timedelta(days=5, minutes=-20),
+            sla_response_due_at=as_of - timedelta(days=5, minutes=-30),
+            resolved_at=as_of - timedelta(days=4), sla_resolution_met_at=as_of - timedelta(days=4),
+            sla_resolution_due_at=as_of - timedelta(days=3), **common,
+        )
+        overdue_open = ITSMTicket(
+            id=uuid4(), ticket_number="INC-OP-3", title="Unacknowledged overdue", status="NEW",
+            created_at=as_of - timedelta(days=10), sla_response_due_at=as_of - timedelta(days=8),
+            sla_resolution_due_at=as_of + timedelta(days=2), **common,
+        )
+        other_service = ITSMTicket(
+            id=uuid4(), tenant_id=self.tenant_a, ticket_number="INC-OP-4", ticket_type="INCIDENT",
+            title="Other service", description="Must be filtered out", requester_id=self.requester_id,
+            service_id=self.service_id_2, priority="P1", status="NEW", created_at=as_of - timedelta(days=31),
+        )
+        other_tenant = ITSMTicket(
+            id=uuid4(), tenant_id=self.tenant_b, ticket_number="INC-OP-5", ticket_type="INCIDENT",
+            title="Other tenant", description="Must not leak", requester_id=self.requester_id,
+            service_id=self.service_id_1, priority="P1", status="NEW", created_at=as_of - timedelta(days=2),
+        )
+        self.db.add_all([acknowledged_open, resolved_met, overdue_open, other_service, other_tenant])
+        self.db.commit()
+
+        dashboard = self.service.compute_operational_dashboard(
+            start_time=as_of - timedelta(days=30), end_time=as_of,
+            service_id=self.service_id_1, priority="P1",
+        )
+
+        self.assertEqual(dashboard.mtta.count, 2)
+        self.assertEqual(dashboard.mtta.unacknowledged_count, 1)
+        self.assertEqual(dashboard.mtta.mean_seconds, 900.0)
+        self.assertEqual(dashboard.mttr.count, 1)
+        self.assertEqual(dashboard.mttr.mean_seconds, 86400.0)
+        self.assertEqual(dashboard.backlog_age.total_open, 2)
+        self.assertEqual(dashboard.backlog_age.distribution["days_1_to_7"], 1)
+        self.assertEqual(dashboard.backlog_age.distribution["days_8_to_30"], 1)
+        self.assertEqual(dashboard.sla_response.met_count, 2)
+        self.assertEqual(dashboard.sla_response.breached_count, 1)
+        self.assertEqual(dashboard.sla_response.compliance_rate_pct, round(2 / 3 * 100, 2))
+        self.assertEqual(dashboard.sla_resolution.met_count, 1)
+        self.assertEqual(dashboard.sla_resolution.pending_count, 2)
+        self.assertEqual(dashboard.sla_resolution.compliance_rate_pct, 100.0)
+        self.assertEqual({record.ticket_number for record in dashboard.drilldowns["mtta"]}, {"INC-OP-1", "INC-OP-2"})
+        self.assertEqual({record.ticket_number for record in dashboard.drilldowns["backlog"]}, {"INC-OP-1", "INC-OP-3"})
+        self.assertNotIn("INC-OP-5", {record.ticket_number for values in dashboard.drilldowns.values() for record in values})
+
+    def test_operational_sla_without_an_evaluable_commitment_has_no_compliance_rate(self):
+        """Missing SLA outcomes must never become a fabricated 100 percent result."""
+        ticket = ITSMTicket(
+            id=uuid4(), tenant_id=self.tenant_a, ticket_number="INC-OP-NO-SLA", ticket_type="INCIDENT",
+            title="No SLA", description="No deadline was attached", requester_id=self.requester_id,
+            status="IN_PROGRESS", created_at=self.base_time,
+        )
+        self.db.add(ticket)
+        self.db.commit()
+        dashboard = self.service.compute_operational_dashboard(
+            start_time=self.base_time - timedelta(hours=1), end_time=self.base_time + timedelta(hours=1),
+        )
+        self.assertEqual(dashboard.sla_response.total_with_commitment, 0)
+        self.assertIsNone(dashboard.sla_response.compliance_rate_pct)
+        self.assertEqual(dashboard.sla_resolution.total_with_commitment, 0)
+        self.assertIsNone(dashboard.sla_resolution.compliance_rate_pct)
+
 
 class TestITSMAnalyticsAPI(unittest.TestCase):
     """Test suite testing the HTTP endpoints and RBAC security."""

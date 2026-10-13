@@ -72,7 +72,14 @@ export default function IncidentOversightDrawer({ incidentId, operations, onClos
     if (!incident || priority === incident.priority) return;
     setPrioritySaving(true); setError(null);
     try {
-      const response = await fetch(`/api/itsm/incidents/${incident.id}`, jsonRequest("PATCH", { priority, priority_override_reason: priorityReason.trim() || undefined }));
+      const response = await fetch(
+        `/api/itsm/incidents/${incident.id}`,
+        jsonRequest(
+          "PATCH",
+          { priority, priority_override_reason: priorityReason.trim() || undefined },
+          { "If-Match": String(incident.version) },
+        ),
+      );
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(apiErrorMessage(body, "Unable to update incident priority"));
       setPriorityReason(""); changed(body);

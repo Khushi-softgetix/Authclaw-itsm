@@ -1653,6 +1653,7 @@ def create_itsm_service(
         description=payload.description.strip() if payload.description else None,
         tier=payload.tier.strip().upper(),
         status=payload.status.strip().upper(),
+        alert_recipient_scope=payload.alert_recipient_scope,
         escalation_team=payload.escalation_team.strip() if payload.escalation_team else None,
         created_at=now,
         updated_at=now,
@@ -1705,6 +1706,9 @@ def update_itsm_service(
     if payload.status is not None:
         service.status = payload.status.strip().upper()
 
+    if payload.alert_recipient_scope is not None:
+        service.alert_recipient_scope = payload.alert_recipient_scope
+
     if payload.escalation_team is not None:
         service.escalation_team = payload.escalation_team.strip() if payload.escalation_team else None
 
@@ -1713,11 +1717,12 @@ def update_itsm_service(
     db.refresh(service)
 
     logger.info(
-        "[ITSM_ADMIN_AUDIT] action=service_updated tenant_id=%s admin_user_id=%s service_id=%s status=%s",
+        "[ITSM_ADMIN_AUDIT] action=service_updated tenant_id=%s admin_user_id=%s service_id=%s status=%s alert_recipient_scope=%s",
         tenant_id,
         request.state.user_id,
         service.id,
         service.status,
+        service.alert_recipient_scope,
     )
 
     return service

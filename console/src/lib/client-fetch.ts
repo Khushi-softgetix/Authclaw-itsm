@@ -8,10 +8,21 @@ type FetchJsonOptions = RequestInit & {
   redirectUnauthorized?: boolean;
 };
 
-export function jsonRequest(method: "POST" | "PATCH" | "PUT" | "DELETE", body?: unknown): RequestInit {
+export function jsonRequest(
+  method: "POST" | "PATCH" | "PUT" | "DELETE",
+  body?: unknown,
+  headers: Record<string, string> = {},
+): RequestInit {
+  const mutationKey = typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   return {
     method,
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "Idempotency-Key": mutationKey,
+      ...headers,
+    },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   };
 }

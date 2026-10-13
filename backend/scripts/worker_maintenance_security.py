@@ -46,6 +46,12 @@ def finalize(conn, migrator, runtime):
     conn.execute(text(f"GRANT SELECT, INSERT ON public.audit_log_metadata TO {OWNER}"))
     conn.execute(text(f"GRANT INSERT ON public.audit_outbox TO {OWNER}"))
     conn.execute(text(f"GRANT USAGE ON SEQUENCE public.audit_outbox_id_seq TO {OWNER}"))
+    conn.execute(
+        text(
+            f"GRANT SELECT(tenant_id, status, sla_response_due_at, sla_resolution_due_at, "
+            f"sla_warning_escalated_at, sla_breach_escalated_at) ON public.itsm_tickets TO {OWNER}"
+        )
+    )
     # Canonical append reads the audit chain; the function caller never receives it.
     for table in ("ephemeral_worker_tokens", "audit_log_metadata", "audit_outbox"):
         conn.execute(
@@ -56,6 +62,12 @@ def finalize(conn, migrator, runtime):
                 f"CREATE POLICY worker_maintenance_access ON public.{table} TO {OWNER} USING (true) WITH CHECK (true)"
             )
         )
+    conn.execute(text("DROP POLICY IF EXISTS worker_maintenance_access ON public.itsm_tickets"))
+    conn.execute(
+        text(
+            f"CREATE POLICY worker_maintenance_access ON public.itsm_tickets TO {OWNER} USING (true)"
+        )
+    )
     for signature in conn.execute(
         text(
             "SELECT oid::regprocedure::text FROM pg_proc WHERE pronamespace='public'::regnamespace AND proname IN ('append_audit_event_v2','gen_random_uuid','digest')"
@@ -83,6 +95,6 @@ def finalize(conn, migrator, runtime):
     conn.execute(text(f"GRANT USAGE ON SCHEMA worker_maintenance TO {app}"))
     conn.execute(
         text(
-            f"GRANT EXECUTE ON FUNCTION worker_maintenance.expire_tokens(integer), worker_maintenance.cleanup_health(), worker_maintenance.issuance_ready() TO {app}"
+            f"GRANT EXECUTE ON FUNCTION worker_maintenance.expire_tokens(integer), worker_maintenance.cleanup_health(), worker_maintenance.issuance_ready(), worker_maintenance.sla_candidate_tenants() TO {app}"
         )
     )

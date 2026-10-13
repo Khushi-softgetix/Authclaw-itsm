@@ -25,6 +25,7 @@ test("maps approved BFF routes and rejects broader proxy access", () => {
   assert.deepEqual(resolveBffRoute("DELETE", "api-keys/k-1"), { backendPath: "/v1/api-keys/k-1", body: "none", status: 204 });
   assert.equal(resolveBffRoute("DELETE", "access-requests/AR-123"), null);
   assert.deepEqual(resolveBffRoute("GET", "itsm/incidents"), { backendPath: "/v1/itsm/incidents", body: "none", status: undefined });
+  assert.deepEqual(resolveBffRoute("GET", "itsm/analytics/kpis/operational-dashboard"), { backendPath: "/v1/itsm/analytics/kpis/operational-dashboard", body: "none", status: undefined });
   assert.deepEqual(resolveBffRoute("GET", "itsm/audit/events"), { backendPath: "/v1/itsm/audit/events", body: "none", status: undefined });
   assert.deepEqual(resolveBffRoute("GET", "itsm/audit/events/7f3355ea-2dc5-4a58-83de-a841a4f57fea"), { backendPath: "/v1/itsm/audit/events/7f3355ea-2dc5-4a58-83de-a841a4f57fea", body: "none", status: undefined });
   assert.deepEqual(resolveBffRoute("GET", "itsm/audit/overview"), { backendPath: "/v1/itsm/audit/overview", body: "none", status: undefined });

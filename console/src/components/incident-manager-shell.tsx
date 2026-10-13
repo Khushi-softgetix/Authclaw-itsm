@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Building,
+  BarChart3,
   ChevronDown,
   ClipboardCheck,
   LayoutDashboard,
@@ -12,6 +13,7 @@ import {
   LogOut,
   Menu,
   Radio,
+  Siren,
   ShieldAlert,
   X,
 } from "lucide-react";
@@ -38,14 +40,20 @@ export default function IncidentManagerShell({
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
   const navItems = [
     { href: "/itsm/incident-manager", label: "Overview", icon: LayoutDashboard, exact: true },
+    { href: "/itsm/incident-manager/kpis", label: "Operational KPIs", icon: BarChart3 },
     { href: "/itsm/incident-manager/incidents", label: "Incidents", icon: ListFilter },
     { href: "/itsm/incident-manager/major-incidents", label: "Major Incidents", icon: Radio },
+    { href: "/itsm/incident-manager/outage-alerts", label: "Outage & Alerts", icon: Siren },
     { href: "/itsm/incident-manager/approvals", label: "Service Request Approvals", icon: ClipboardCheck },
   ];
 
   const currentPage =
     pathname === "/itsm/incident-manager"
       ? "Overview"
+      : pathname.startsWith("/itsm/incident-manager/kpis")
+        ? "Operational KPIs"
+      : pathname.startsWith("/itsm/incident-manager/outage-alerts")
+        ? "Outage & Alerts"
       : pathname.startsWith("/itsm/incident-manager/major-incidents")
         ? "Major Incidents"
         : pathname.startsWith("/itsm/incident-manager/incidents")

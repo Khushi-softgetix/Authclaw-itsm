@@ -42,8 +42,11 @@ from app.schemas.itsm_analytics import (
     KPIDateRange,
     MTTAKPIResponse,
     MTTRKPIResponse,
+    OperationalKPIDashboardResponse,
+    OperationalKPIIncidentRecord,
     ReopenRateKPIResponse,
     RepeatIncidentsKPIResponse,
+    SLAAdherenceDimensionResponse,
     SLAPerformanceKPIResponse,
 )
 from app.services.itsm_sla_service import compute_sla_details
@@ -82,6 +85,33 @@ class ITSMKPIService:
         query = query.filter(column <= end_time)
         return query
 
+    def _apply_incident_filters(self, query, service_id=None, priority: Optional[str] = None, status: Optional[str] = None):
+        """Apply optional dashboard filters after the non-negotiable tenant scope."""
+        if service_id is not None:
+            query = query.filter(ITSMTicket.service_id == service_id)
+        if priority:
+            query = query.filter(ITSMTicket.priority == priority.strip().upper())
+        if status:
+            query = query.filter(ITSMTicket.status == status.strip().upper())
+        return query
+
+    def _acknowledgement_at(self, ticket: ITSMTicket) -> Optional[datetime]:
+        """Return the persisted response marker or the first qualifying agent activity."""
+        acknowledged_at = _utc(ticket.sla_response_met_at)
+        if acknowledged_at:
+            return acknowledged_at
+        first_activity = (
+            self.db.query(ITSMTicketActivity.created_at)
+            .filter(
+                ITSMTicketActivity.tenant_id == self.tenant_id,
+                ITSMTicketActivity.ticket_id == ticket.id,
+                ITSMTicketActivity.activity_type.in_(["AGENT_NOTE", "STATUS_CHANGE", "COMMENT", "ASSIGNMENT"]),
+            )
+            .order_by(ITSMTicketActivity.created_at.asc())
+            .first()
+        )
+        return _utc(first_activity[0]) if first_activity and first_activity[0] else None
+
     # -------------------------------------------------------------------------
     # 1. MTTA: Mean Time to Acknowledge
     # -------------------------------------------------------------------------
@@ -89,6 +119,9 @@ class ITSMKPIService:
         self,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
+        service_id=None,
+        priority: Optional[str] = None,
+        status: Optional[str] = None,
     ) -> MTTAKPIResponse:
         """Formula: sum(T_ack - T_create) / count(acknowledged_tickets)
 
@@ -102,6 +135,7 @@ class ITSMKPIService:
             ITSMTicket.tenant_id == self.tenant_id,
             ITSMTicket.ticket_type == "INCIDENT",
         )
+        query = self._apply_incident_filters(query, service_id, priority, status)
         query = self._apply_date_filter(query, ITSMTicket.created_at, start_time, end_time)
         tickets = query.all()
 
@@ -110,22 +144,7 @@ class ITSMKPIService:
 
         for ticket in tickets:
             t_create = _utc(ticket.created_at)
-            t_ack = _utc(ticket.sla_response_met_at)
-
-            # If sla_response_met_at is not recorded, check earliest non-creation activity
-            if not t_ack:
-                first_act = (
-                    self.db.query(ITSMTicketActivity.created_at)
-                    .filter(
-                        ITSMTicketActivity.tenant_id == self.tenant_id,
-                        ITSMTicketActivity.ticket_id == ticket.id,
-                        ITSMTicketActivity.activity_type.in_(["AGENT_NOTE", "STATUS_CHANGE", "COMMENT", "ASSIGNMENT"]),
-                    )
-                    .order_by(ITSMTicketActivity.created_at.asc())
-                    .first()
-                )
-                if first_act and first_act[0]:
-                    t_ack = _utc(first_act[0])
+            t_ack = self._acknowledgement_at(ticket)
 
             if t_ack and t_create and t_ack >= t_create:
                 elapsed = (t_ack - t_create).total_seconds()
@@ -171,6 +190,9 @@ class ITSMKPIService:
         self,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
+        service_id=None,
+        priority: Optional[str] = None,
+        status: Optional[str] = None,
     ) -> MTTRKPIResponse:
         """Formula: sum(T_resolve - T_create) / count(resolved_tickets)
 
@@ -184,6 +206,7 @@ class ITSMKPIService:
             ITSMTicket.ticket_type == "INCIDENT",
             ITSMTicket.status.in_(["RESOLVED", "CLOSED"]),
         )
+        query = self._apply_incident_filters(query, service_id, priority, status)
         # Filter by resolution time window
         resolve_col = func.coalesce(ITSMTicket.resolved_at, ITSMTicket.closed_at)
         query = self._apply_date_filter(query, resolve_col, start_time, end_time)
@@ -371,6 +394,9 @@ class ITSMKPIService:
         self,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
+        service_id=None,
+        priority: Optional[str] = None,
+        status: Optional[str] = None,
     ) -> BacklogAgeKPIResponse:
         """Formula: sum(T_now - T_create) / count(open_tickets)
 
@@ -386,6 +412,7 @@ class ITSMKPIService:
             ~ITSMTicket.status.in_(["RESOLVED", "CLOSED", "CANCELLED"]),
             ITSMTicket.created_at <= now,
         )
+        query = self._apply_incident_filters(query, service_id, priority, status)
         if start_time is not None:
             query = query.filter(ITSMTicket.created_at >= start_time)
 
@@ -436,6 +463,199 @@ class ITSMKPIService:
             median_age_seconds=med_sec,
             median_age_days=round(med_sec / DAY_SEC, 2),
             distribution=distribution,
+        )
+
+    def _drilldown_record(
+        self,
+        ticket: ITSMTicket,
+        *,
+        measured_at: Optional[datetime] = None,
+        duration_seconds: Optional[float] = None,
+        sla_dimension: Optional[str] = None,
+        sla_outcome: Optional[str] = None,
+        age_bucket: Optional[str] = None,
+    ) -> OperationalKPIIncidentRecord:
+        return OperationalKPIIncidentRecord(
+            id=ticket.id,
+            ticket_number=ticket.ticket_number,
+            title=ticket.title,
+            priority=ticket.priority,
+            status=ticket.status,
+            service_id=ticket.service_id,
+            created_at=_utc(ticket.created_at),
+            measured_at=_utc(measured_at),
+            duration_seconds=round(duration_seconds, 2) if duration_seconds is not None else None,
+            sla_dimension=sla_dimension,
+            sla_outcome=sla_outcome,
+            age_bucket=age_bucket,
+        )
+
+    def _sla_adherence_dimension(
+        self,
+        tickets: List[ITSMTicket],
+        dimension: str,
+        now: datetime,
+        drilldown_limit: int,
+    ) -> tuple[SLAAdherenceDimensionResponse, List[OperationalKPIIncidentRecord]]:
+        """Evaluate one SLA deadline type without treating missing outcomes as compliant."""
+        due_field = f"sla_{dimension.lower()}_due_at"
+        met_field = f"sla_{dimension.lower()}_met_at"
+        total_with_commitment = met_count = breached_count = pending_count = unavailable_count = 0
+        records: List[OperationalKPIIncidentRecord] = []
+
+        for ticket in tickets:
+            due_at = _utc(getattr(ticket, due_field, None))
+            if not due_at:
+                continue
+            total_with_commitment += 1
+            if dimension == "RESPONSE":
+                completed_at = _utc(getattr(ticket, met_field, None)) or self._acknowledgement_at(ticket)
+            else:
+                completed_at = (
+                    _utc(getattr(ticket, met_field, None))
+                    or _utc(ticket.resolved_at)
+                    or _utc(ticket.closed_at)
+                )
+
+            if completed_at and completed_at < _utc(ticket.created_at):
+                completed_at = None
+                unavailable_count += 1
+                outcome = "UNAVAILABLE"
+            elif completed_at:
+                outcome = "MET" if completed_at <= due_at else "BREACHED"
+                if outcome == "MET":
+                    met_count += 1
+                else:
+                    breached_count += 1
+            elif ticket.sla_paused_at or ticket.sla_status == "PAUSED":
+                pending_count += 1
+                outcome = "PENDING"
+            elif now > due_at:
+                breached_count += 1
+                outcome = "BREACHED"
+            else:
+                pending_count += 1
+                outcome = "PENDING"
+
+            if len(records) < drilldown_limit:
+                records.append(self._drilldown_record(
+                    ticket,
+                    measured_at=completed_at or due_at,
+                    sla_dimension=dimension,
+                    sla_outcome=outcome,
+                ))
+
+        evaluated_count = met_count + breached_count
+        compliance_rate = round((met_count / evaluated_count) * 100.0, 2) if evaluated_count else None
+        return SLAAdherenceDimensionResponse(
+            dimension=dimension,
+            total_with_commitment=total_with_commitment,
+            evaluated_count=evaluated_count,
+            met_count=met_count,
+            breached_count=breached_count,
+            pending_count=pending_count,
+            unavailable_count=unavailable_count,
+            compliance_rate_pct=compliance_rate,
+        ), records
+
+    def compute_operational_dashboard(
+        self,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        service_id=None,
+        priority: Optional[str] = None,
+        status: Optional[str] = None,
+        drilldown_limit: int = 50,
+    ) -> OperationalKPIDashboardResponse:
+        """Return the Incident Manager's four KPI cards and their exact source records."""
+        now = _utc(end_time or datetime.now(timezone.utc))
+        start = _utc(start_time)
+        drilldown_limit = max(1, min(drilldown_limit, 100))
+
+        mtta = self.compute_mtta(start, now, service_id, priority, status)
+        mttr = self.compute_mttr(start, now, service_id, priority, status)
+        # Backlog is deliberately an as-of-now view; no historical snapshot table exists.
+        backlog_age = self.compute_backlog_age(None, now, service_id, priority, status)
+
+        period_query = self.db.query(ITSMTicket).filter(
+            ITSMTicket.tenant_id == self.tenant_id,
+            ITSMTicket.ticket_type == "INCIDENT",
+        )
+        period_query = self._apply_incident_filters(period_query, service_id, priority, status)
+        period_tickets = self._apply_date_filter(period_query, ITSMTicket.created_at, start, now).all()
+
+        mtta_records: List[OperationalKPIIncidentRecord] = []
+        for ticket in period_tickets:
+            acknowledged_at = self._acknowledgement_at(ticket)
+            created_at = _utc(ticket.created_at)
+            if acknowledged_at and created_at and acknowledged_at >= created_at and len(mtta_records) < drilldown_limit:
+                mtta_records.append(self._drilldown_record(
+                    ticket,
+                    measured_at=acknowledged_at,
+                    duration_seconds=(acknowledged_at - created_at).total_seconds(),
+                ))
+
+        resolution_column = func.coalesce(ITSMTicket.resolved_at, ITSMTicket.closed_at)
+        mttr_query = self.db.query(ITSMTicket).filter(
+            ITSMTicket.tenant_id == self.tenant_id,
+            ITSMTicket.ticket_type == "INCIDENT",
+            ITSMTicket.status.in_(["RESOLVED", "CLOSED"]),
+        )
+        mttr_query = self._apply_incident_filters(mttr_query, service_id, priority, status)
+        mttr_tickets = self._apply_date_filter(mttr_query, resolution_column, start, now).all()
+        mttr_records: List[OperationalKPIIncidentRecord] = []
+        for ticket in mttr_tickets:
+            resolved_at = _utc(ticket.resolved_at) or _utc(ticket.closed_at)
+            created_at = _utc(ticket.created_at)
+            if resolved_at and created_at and resolved_at >= created_at and len(mttr_records) < drilldown_limit:
+                mttr_records.append(self._drilldown_record(
+                    ticket,
+                    measured_at=resolved_at,
+                    duration_seconds=(resolved_at - created_at).total_seconds(),
+                ))
+
+        backlog_query = self.db.query(ITSMTicket).filter(
+            ITSMTicket.tenant_id == self.tenant_id,
+            ITSMTicket.ticket_type == "INCIDENT",
+            ~ITSMTicket.status.in_(list(TERMINAL_STATUSES)),
+            ITSMTicket.created_at <= now,
+        )
+        backlog_tickets = self._apply_incident_filters(backlog_query, service_id, priority, status).all()
+        backlog_records: List[OperationalKPIIncidentRecord] = []
+        for ticket in backlog_tickets[:drilldown_limit]:
+            age_seconds = max(0.0, (now - _utc(ticket.created_at)).total_seconds())
+            if age_seconds < 86400:
+                bucket = "under_24h"
+            elif age_seconds <= 7 * 86400:
+                bucket = "days_1_to_7"
+            elif age_seconds <= 30 * 86400:
+                bucket = "days_8_to_30"
+            else:
+                bucket = "over_30d"
+            backlog_records.append(self._drilldown_record(ticket, duration_seconds=age_seconds, age_bucket=bucket))
+
+        sla_response, response_records = self._sla_adherence_dimension(period_tickets, "RESPONSE", now, drilldown_limit)
+        sla_resolution, resolution_records = self._sla_adherence_dimension(period_tickets, "RESOLUTION", now, drilldown_limit)
+        return OperationalKPIDashboardResponse(
+            date_range=KPIDateRange(start_time=start, end_time=now, evaluated_at=datetime.now(timezone.utc)),
+            filters={
+                "service_id": str(service_id) if service_id else None,
+                "priority": priority.strip().upper() if priority else None,
+                "status": status.strip().upper() if status else None,
+            },
+            mtta=mtta,
+            mttr=mttr,
+            backlog_age=backlog_age,
+            sla_response=sla_response,
+            sla_resolution=sla_resolution,
+            drilldowns={
+                "mtta": mtta_records,
+                "mttr": mttr_records,
+                "sla_response": response_records,
+                "sla_resolution": resolution_records,
+                "backlog": backlog_records,
+            },
+            drilldown_limit=drilldown_limit,
         )
 
     # -------------------------------------------------------------------------

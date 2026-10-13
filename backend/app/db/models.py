@@ -1122,6 +1122,9 @@ class ITSMService(Base):
     description = Column(Text, nullable=True)
     tier = Column(String(20), nullable=False, default="TIER_2")
     status = Column(String(32), nullable=False, default="OPERATIONAL")
+    alert_recipient_scope = Column(
+        String(32), nullable=False, default="SERVICE_ENTITLEMENTS"
+    )
     owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     escalation_team = Column(String(100), nullable=True)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
@@ -1132,6 +1135,10 @@ class ITSMService(Base):
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "slug", name="uq_itsm_services_tenant_slug"),
+        CheckConstraint(
+            "alert_recipient_scope IN ('SERVICE_ENTITLEMENTS','ALL_REQUESTERS')",
+            name="ck_itsm_service_alert_recipient_scope",
+        ),
         Index("idx_itsm_services_tenant", "tenant_id"),
         Index("idx_itsm_services_tenant_tier", "tenant_id", "tier"),
         Index("idx_itsm_services_tenant_status", "tenant_id", "status"),
@@ -1241,22 +1248,9 @@ class ITSMTicket(Base):
     sla_status = Column(String(20), nullable=False, default="WITHIN_SLA")
     sla_paused_at = Column(DateTime(timezone=True), nullable=True)
     sla_accumulated_pause_seconds = Column(Integer, nullable=False, default=0)
-
-    @property
-    def sla_warning_escalated_at(self):
-        return getattr(self, "_sla_warning_escalated_at", None)
-
-    @sla_warning_escalated_at.setter
-    def sla_warning_escalated_at(self, value):
-        self._sla_warning_escalated_at = value
-
-    @property
-    def sla_breach_escalated_at(self):
-        return getattr(self, "_sla_breach_escalated_at", None)
-
-    @sla_breach_escalated_at.setter
-    def sla_breach_escalated_at(self, value):
-        self._sla_breach_escalated_at = value
+    sla_warning_escalated_at = Column(DateTime(timezone=True), nullable=True)
+    sla_breach_escalated_at = Column(DateTime(timezone=True), nullable=True)
+    version = Column(Integer, nullable=False, default=1)
 
     resolution_code = Column(String(50), nullable=True)
     resolution_summary = Column(Text, nullable=True)
@@ -1316,6 +1310,31 @@ class ITSMTicket(Base):
         Index("idx_itsm_tickets_tenant_priority", "tenant_id", "priority"),
         Index("idx_itsm_tickets_tenant_assignee", "tenant_id", "assignee_id"),
         Index("idx_itsm_tickets_tenant_created", "tenant_id", "created_at"),
+    )
+
+
+class ITSMIncidentOperation(Base):
+    """Tenant-scoped idempotency record for incident mutations."""
+
+    __tablename__ = "itsm_incident_operations"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    idempotency_key = Column(String(255), nullable=False)
+    operation = Column(String(64), nullable=False)
+    request_hash = Column(String(64), nullable=False)
+    incident_id = Column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="SET NULL"), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    tenant = relationship("Tenant")
+    actor = relationship("User")
+    incident = relationship("ITSMTicket")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_itsm_incident_operation_key"),
+        Index("idx_itsm_incident_operation_incident", "tenant_id", "incident_id", "created_at"),
     )
 
 
@@ -2087,4 +2106,283 @@ class ITSMTeamMember(Base):
         UniqueConstraint("team_id", "user_id", name="uq_itsm_team_members_team_user"),
         Index("idx_itsm_team_members_lookup", "tenant_id", "team_id"),
         Index("idx_itsm_team_members_user", "tenant_id", "user_id"),
+    )
+
+
+class ITSMServiceConsumer(Base):
+    """Tenant-scoped entitlement connecting a requester to a service."""
+    __tablename__ = "itsm_service_consumers"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    source = Column(String(50), nullable=False, default="ADMIN")
+    effective_from = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    effective_until = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    service = relationship("ITSMService")
+    user = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "service_id", "user_id", name="uq_itsm_service_consumer"),
+        Index("idx_itsm_service_consumers_scope", "tenant_id", "service_id", "is_active"),
+    )
+
+
+class ITSMServiceSupportTeam(Base):
+    """Operational team authorized to support a tenant service."""
+    __tablename__ = "itsm_service_support_teams"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="CASCADE"), nullable=False)
+    team_id = Column(UUID(as_uuid=True), ForeignKey("itsm_teams.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    service = relationship("ITSMService")
+    team = relationship("ITSMTeam")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "service_id", "team_id", name="uq_itsm_service_support_team"),
+        Index("idx_itsm_service_support_scope", "tenant_id", "service_id"),
+    )
+
+
+class ITSMOutageAlertGrant(Base):
+    """Explicit alert action permission, optionally limited to one service."""
+    __tablename__ = "itsm_outage_alert_grants"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    permission = Column(String(64), nullable=False)
+    service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="CASCADE"), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    user = relationship("User")
+    service = relationship("ITSMService")
+
+    __table_args__ = (
+        CheckConstraint(
+            "permission IN ('OUTAGE_ALERT:READ','OUTAGE_ALERT:CREATE','OUTAGE_ALERT:EDIT',"
+            "'OUTAGE_ALERT:PREVIEW','OUTAGE_ALERT:PUBLISH','OUTAGE_ALERT:UPDATE',"
+            "'OUTAGE_ALERT:RECOVER','OUTAGE_ALERT:CANCEL','OUTAGE_ALERT:LINK')",
+            name="ck_itsm_outage_alert_grant_permission",
+        ),
+        Index("idx_itsm_outage_alert_grant_lookup", "tenant_id", "user_id", "permission", "service_id"),
+    )
+
+
+class ITSMOutageAlert(Base):
+    """Canonical outage communication record; publications are immutable snapshots."""
+    __tablename__ = "itsm_outage_alerts"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    alert_number = Column(String(32), nullable=False)
+    title = Column(String(255), nullable=False)
+    alert_type = Column(String(32), nullable=False)
+    severity = Column(String(20), nullable=False)
+    intent = Column(String(32), nullable=False)
+    status = Column(String(32), nullable=False, default="DRAFT")
+    public_status = Column(String(32), nullable=False, default="INVESTIGATING")
+    public_summary = Column(Text, nullable=False)
+    impact_summary = Column(Text, nullable=False)
+    recommended_action = Column(Text, nullable=True)
+    service_agent_guidance = Column(Text, nullable=True)
+    internal_notes = Column(Text, nullable=True)
+    service_agent_handling = Column(String(20), nullable=False, default="ALERT_ONLY")
+    outage_started_at = Column(DateTime(timezone=True), nullable=True)
+    next_update_at = Column(DateTime(timezone=True), nullable=True)
+    published_at = Column(DateTime(timezone=True), nullable=True)
+    recovered_at = Column(DateTime(timezone=True), nullable=True)
+    cancelled_at = Column(DateTime(timezone=True), nullable=True)
+    current_publication_id = Column(UUID(as_uuid=True), ForeignKey("itsm_outage_alert_publications.id", ondelete="SET NULL"), nullable=True)
+    created_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    updated_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    created_by = relationship("User", foreign_keys=[created_by_id])
+    updated_by = relationship("User", foreign_keys=[updated_by_id])
+    services = relationship("ITSMOutageAlertService", back_populates="alert", cascade="all, delete-orphan")
+    configuration_items = relationship("ITSMOutageAlertCI", back_populates="alert", cascade="all, delete-orphan")
+    links = relationship("ITSMOutageAlertLink", back_populates="alert", cascade="all, delete-orphan")
+    audiences = relationship("ITSMOutageAlertAudience", back_populates="alert", cascade="all, delete-orphan")
+    publications = relationship(
+        "ITSMOutageAlertPublication",
+        back_populates="alert",
+        cascade="all, delete-orphan",
+        foreign_keys="ITSMOutageAlertPublication.alert_id",
+        order_by="ITSMOutageAlertPublication.version",
+    )
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_itsm_outage_alert_tenant_id"),
+        UniqueConstraint("tenant_id", "alert_number", name="uq_itsm_outage_alert_number"),
+        CheckConstraint("alert_type IN ('OUTAGE','DEGRADATION','MAINTENANCE','INFORMATION')", name="ck_outage_alert_type"),
+        CheckConstraint("severity IN ('CRITICAL','HIGH','MEDIUM','LOW')", name="ck_outage_alert_severity"),
+        CheckConstraint("intent IN ('INFORM','ACTION_REQUIRED','INVESTIGATE','RESOLVE')", name="ck_outage_alert_intent"),
+        CheckConstraint("status IN ('DRAFT','ACTIVE','RECOVERED','CANCELLED')", name="ck_outage_alert_status"),
+        CheckConstraint(
+            "public_status IN ('INVESTIGATING','IDENTIFIED','MONITORING','RECOVERED')",
+            name="ck_outage_alert_public_status",
+        ),
+        CheckConstraint("service_agent_handling IN ('ALERT_ONLY','SOLVE')", name="ck_outage_alert_agent_handling"),
+        Index("idx_itsm_outage_alert_status", "tenant_id", "status", "updated_at"),
+        Index("idx_itsm_outage_alert_creator", "tenant_id", "created_by_id"),
+    )
+
+
+class ITSMOutageAlertService(Base):
+    __tablename__ = "itsm_outage_alert_services"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    alert_id = Column(UUID(as_uuid=True), ForeignKey("itsm_outage_alerts.id", ondelete="CASCADE"), nullable=False)
+    service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="RESTRICT"), nullable=False)
+
+    alert = relationship("ITSMOutageAlert", back_populates="services", foreign_keys=[alert_id])
+    service = relationship("ITSMService")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "alert_id", "service_id", name="uq_itsm_outage_alert_service"),
+        Index("idx_itsm_outage_alert_services", "tenant_id", "service_id", "alert_id"),
+    )
+
+
+class ITSMOutageAlertCI(Base):
+    __tablename__ = "itsm_outage_alert_cis"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    alert_id = Column(UUID(as_uuid=True), ForeignKey("itsm_outage_alerts.id", ondelete="CASCADE"), nullable=False)
+    ci_id = Column(UUID(as_uuid=True), ForeignKey("itsm_configuration_items.id", ondelete="RESTRICT"), nullable=False)
+
+    alert = relationship("ITSMOutageAlert", back_populates="configuration_items", foreign_keys=[alert_id])
+    configuration_item = relationship("ITSMConfigurationItem")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "alert_id", "ci_id", name="uq_itsm_outage_alert_ci"),
+    )
+
+
+class ITSMOutageAlertLink(Base):
+    __tablename__ = "itsm_outage_alert_links"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    alert_id = Column(UUID(as_uuid=True), ForeignKey("itsm_outage_alerts.id", ondelete="CASCADE"), nullable=False)
+    target_type = Column(String(32), nullable=False)
+    target_id = Column(UUID(as_uuid=True), nullable=False)
+    created_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    alert = relationship("ITSMOutageAlert", back_populates="links", foreign_keys=[alert_id])
+    created_by = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "alert_id", "target_type", "target_id", name="uq_itsm_outage_alert_link"),
+        CheckConstraint("target_type IN ('INCIDENT','MAJOR_INCIDENT','PROBLEM','CHANGE')", name="ck_outage_alert_link_type"),
+        Index("idx_itsm_outage_alert_link_target", "tenant_id", "target_type", "target_id"),
+    )
+
+
+class ITSMOutageAlertAudience(Base):
+    __tablename__ = "itsm_outage_alert_audiences"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    alert_id = Column(UUID(as_uuid=True), ForeignKey("itsm_outage_alerts.id", ondelete="CASCADE"), nullable=False)
+    audience_type = Column(String(32), nullable=False)
+    team_id = Column(UUID(as_uuid=True), ForeignKey("itsm_teams.id", ondelete="CASCADE"), nullable=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    alert = relationship("ITSMOutageAlert", back_populates="audiences", foreign_keys=[alert_id])
+    team = relationship("ITSMTeam")
+    user = relationship("User")
+
+    __table_args__ = (
+        CheckConstraint(
+            "audience_type IN ('SERVICE_USERS','SERVICE_AGENTS','PROBLEM_MANAGERS',"
+            "'CHANGE_MANAGERS','SELECTED_TEAM','SERVICE_OWNERS','SPECIFIC_USER')",
+            name="ck_outage_alert_audience_type",
+        ),
+        CheckConstraint(
+            "(audience_type = 'SELECTED_TEAM' AND team_id IS NOT NULL AND user_id IS NULL) OR "
+            "(audience_type = 'SPECIFIC_USER' AND user_id IS NOT NULL AND team_id IS NULL) OR "
+            "(audience_type NOT IN ('SELECTED_TEAM','SPECIFIC_USER') AND team_id IS NULL AND user_id IS NULL)",
+            name="ck_outage_alert_audience_scope_shape",
+        ),
+        Index("idx_itsm_outage_alert_audience", "tenant_id", "alert_id", "audience_type"),
+        Index("idx_itsm_outage_alert_audience_user", "tenant_id", "user_id"),
+    )
+
+
+class ITSMOutageAlertPublication(Base):
+    __tablename__ = "itsm_outage_alert_publications"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    alert_id = Column(UUID(as_uuid=True), ForeignKey("itsm_outage_alerts.id", ondelete="CASCADE"), nullable=False)
+    version = Column(Integer, nullable=False)
+    publication_type = Column(String(20), nullable=False)
+    content_snapshot = Column(JSONB, nullable=False)
+    audience_snapshot = Column(JSONB, nullable=False)
+    recipient_count = Column(Integer, nullable=False, default=0)
+    idempotency_key = Column(String(255), nullable=False)
+    published_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    published_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    alert = relationship("ITSMOutageAlert", back_populates="publications", foreign_keys=[alert_id])
+    published_by = relationship("User")
+    recipients = relationship("ITSMOutageAlertRecipient", back_populates="publication", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "id", name="uq_itsm_outage_alert_publication_tenant_id"),
+        UniqueConstraint("tenant_id", "alert_id", "version", name="uq_itsm_outage_alert_publication_version"),
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_itsm_outage_alert_publication_idempotency"),
+        CheckConstraint("publication_type IN ('INITIAL','UPDATE','RECOVERY')", name="ck_outage_alert_publication_type"),
+        Index("idx_itsm_outage_alert_publications", "tenant_id", "alert_id", "version"),
+    )
+
+
+class ITSMOutageAlertRecipient(Base):
+    __tablename__ = "itsm_outage_alert_recipients"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    publication_id = Column(UUID(as_uuid=True), ForeignKey("itsm_outage_alert_publications.id", ondelete="CASCADE"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    audience_type = Column(String(32), nullable=False)
+    projection_type = Column(String(32), nullable=False)
+    inclusion_reason = Column(String(255), nullable=False)
+    audience_memberships = Column(JSONB, nullable=False, default=list)
+    allowed_actions = Column(JSONB, nullable=False, default=list)
+    content_snapshot = Column(JSONB, nullable=False)
+    notification_id = Column(UUID(as_uuid=True), ForeignKey("notifications.id", ondelete="SET NULL"), nullable=True)
+    delivery_status = Column(String(20), nullable=False, default="QUEUED")
+    attempt_count = Column(Integer, nullable=False, default=0)
+    last_error = Column(Text, nullable=True)
+    available_at = Column(DateTime(timezone=True), nullable=True)
+    read_at = Column(DateTime(timezone=True), nullable=True)
+    acknowledged_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    publication = relationship("ITSMOutageAlertPublication", back_populates="recipients")
+    user = relationship("User")
+    notification = relationship("Notification")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "publication_id", "user_id", name="uq_itsm_outage_alert_recipient"),
+        CheckConstraint("delivery_status IN ('QUEUED','AVAILABLE','FAILED','RETRYING','PERMANENTLY_FAILED')", name="ck_outage_alert_delivery_status"),
+        Index("idx_itsm_outage_alert_recipient_user", "tenant_id", "user_id", "created_at"),
     )

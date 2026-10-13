@@ -50,7 +50,10 @@ export default function EditModal({ incident, onClose, onSuccess }: EditModalPro
         is_major_incident: isMajorIncident,
       };
 
-      const res = await fetch(`/api/itsm/incidents/${incident.id}`, jsonRequest("PATCH", payload));
+      const res = await fetch(
+        `/api/itsm/incidents/${incident.id}`,
+        jsonRequest("PATCH", payload, { "If-Match": String(incident.version) }),
+      );
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error(apiErrorMessage(data, "Failed to update incident"));

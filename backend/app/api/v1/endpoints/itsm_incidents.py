@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response, status
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -46,6 +46,26 @@ from app.services.itsm_incident_operations import (
 )
 
 router = APIRouter()
+
+
+def _operation_id(request: Request, idempotency_key: str | None) -> str:
+    return (idempotency_key or request.headers.get("x-request-id") or str(uuid4())).strip()
+
+
+def _required_incident_version(if_match: str | None) -> int:
+    if not if_match:
+        raise HTTPException(status_code=428, detail="If-Match incident version is required")
+    value = if_match.strip()
+    if value.startswith("W/"):
+        value = value[2:]
+    value = value.strip('"')
+    try:
+        version = int(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="If-Match must contain the incident version") from exc
+    if version < 1:
+        raise HTTPException(status_code=400, detail="If-Match must contain a positive incident version")
+    return version
 
 
 @router.get("/operations/saved-views", response_model=list[IncidentSavedViewResponse])
@@ -207,6 +227,7 @@ def create_incident(
     request: Request,
     db: Session = Depends(get_tenant_db),
     tenant_id: str = Depends(get_current_tenant),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
 ):
     actor_id = UUID(str(request.state.user_id))
     t_id = UUID(tenant_id)
@@ -239,11 +260,20 @@ def create_incident(
     else:
         payload.urgency = "MEDIUM"
 
+    operation_id = _operation_id(request, idempotency_key)
+    operation, replay = IncidentService.claim_idempotent_operation(
+        db, t_id, actor_id, idempotency_key, "incident.create", payload
+    )
+    if replay is not None:
+        return replay
+
     res = IncidentService.create_incident(
         db=db,
         tenant_id=t_id,
         actor_id=actor_id,
         payload=payload,
+        operation_id=operation_id,
+        operation_record=operation,
     )
     try:
         from app.services.notifications import create_notification
@@ -434,6 +464,8 @@ def update_incident(
     request: Request,
     db: Session = Depends(get_tenant_db),
     tenant_id: str = Depends(get_current_tenant),
+    if_match: Optional[str] = Header(default=None, alias="If-Match"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
 ):
     actor_id = UUID(str(request.state.user_id))
     t_id = UUID(tenant_id)
@@ -462,12 +494,23 @@ def update_incident(
     ):
         ensure_itsm_role(request, db, ["INCIDENT_MANAGER"])
 
+    expected_version = _required_incident_version(if_match)
+    operation_id = _operation_id(request, idempotency_key)
+    operation, replay = IncidentService.claim_idempotent_operation(
+        db, t_id, actor_id, idempotency_key, "incident.update", payload, incident_id
+    )
+    if replay is not None:
+        return replay
+
     return IncidentService.update_incident(
         db=db,
         tenant_id=t_id,
         incident_id=incident_id,
         actor_id=actor_id,
         payload=payload,
+        expected_version=expected_version,
+        operation_id=operation_id,
+        operation_record=operation,
     )
 
 
@@ -483,6 +526,8 @@ def change_incident_status(
     request: Request,
     db: Session = Depends(get_tenant_db),
     tenant_id: str = Depends(get_current_tenant),
+    if_match: Optional[str] = Header(default=None, alias="If-Match"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
 ):
     actor_id = UUID(str(request.state.user_id))
     t_id = UUID(tenant_id)
@@ -559,12 +604,23 @@ def change_incident_status(
                 detail="Access denied: Incident is not assigned to you or your team",
             )
 
+    expected_version = _required_incident_version(if_match)
+    operation_id = _operation_id(request, idempotency_key)
+    operation, replay = IncidentService.claim_idempotent_operation(
+        db, t_id, actor_id, idempotency_key, "incident.status.change", payload, incident_id
+    )
+    if replay is not None:
+        return replay
+
     return IncidentService.change_status(
         db=db,
         tenant_id=t_id,
         incident_id=incident_id,
         actor_id=actor_id,
         payload=payload,
+        expected_version=expected_version,
+        operation_id=operation_id,
+        operation_record=operation,
     )
 
 
@@ -581,6 +637,8 @@ def assign_incident(
     db: Session = Depends(get_tenant_db),
     tenant_id: str = Depends(get_current_tenant),
     _incident_manager: None = require_itsm_roles(["INCIDENT_MANAGER"]),
+    if_match: Optional[str] = Header(default=None, alias="If-Match"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
 ):
     actor_id = UUID(str(request.state.user_id))
     t_id = UUID(tenant_id)
@@ -592,18 +650,52 @@ def assign_incident(
             detail="Requesters are not permitted to assign incidents",
         )
 
+    expected_version = _required_incident_version(if_match)
+    operation_id = _operation_id(request, idempotency_key)
+    operation, replay = IncidentService.claim_idempotent_operation(
+        db, t_id, actor_id, idempotency_key, "incident.assign", payload, incident_id
+    )
+    if replay is not None:
+        return replay
+
     return IncidentService.assign_incident(
         db=db,
         tenant_id=t_id,
         incident_id=incident_id,
         actor_id=actor_id,
         payload=payload,
+        expected_version=expected_version,
+        operation_id=operation_id,
+        operation_record=operation,
     )
 
 
 @router.post("/{incident_id}/major-incident", response_model=MajorIncidentResponse, status_code=status.HTTP_201_CREATED, summary="Declare a major incident")
-def declare_major_incident(incident_id: UUID, payload: MajorIncidentDeclareRequest, request: Request, db: Session = Depends(get_tenant_db), tenant_id: str = Depends(get_current_tenant), _incident_manager: None = require_itsm_roles(["INCIDENT_MANAGER"])):
-    return IncidentService.declare_major_incident(db, UUID(tenant_id), incident_id, UUID(str(request.state.user_id)), payload)
+def declare_major_incident(
+    incident_id: UUID,
+    payload: MajorIncidentDeclareRequest,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+    _incident_manager: None = require_itsm_roles(["INCIDENT_MANAGER"]),
+    if_match: Optional[str] = Header(default=None, alias="If-Match"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+):
+    t_id = UUID(tenant_id)
+    actor_id = UUID(str(request.state.user_id))
+    expected_version = _required_incident_version(if_match)
+    operation_id = _operation_id(request, idempotency_key)
+    operation, replay = IncidentService.claim_idempotent_operation(
+        db, t_id, actor_id, idempotency_key, "incident.major.declare", payload, incident_id
+    )
+    if replay is not None:
+        return IncidentService.get_major_incident(db, t_id, replay.id)
+    return IncidentService.declare_major_incident(
+        db, t_id, incident_id, actor_id, payload,
+        expected_version=expected_version,
+        operation_id=operation_id,
+        operation_record=operation,
+    )
 
 
 @router.get("/{incident_id}/major-incident", response_model=MajorIncidentResponse, summary="Read major incident command details")
@@ -612,8 +704,31 @@ def get_major_incident(incident_id: UUID, db: Session = Depends(get_tenant_db), 
 
 
 @router.patch("/{incident_id}/major-incident", response_model=MajorIncidentResponse, summary="Update major incident command details")
-def update_major_incident(incident_id: UUID, payload: MajorIncidentUpdateRequest, request: Request, db: Session = Depends(get_tenant_db), tenant_id: str = Depends(get_current_tenant), _incident_manager: None = require_itsm_roles(["INCIDENT_MANAGER"])):
-    return IncidentService.update_major_incident(db, UUID(tenant_id), incident_id, UUID(str(request.state.user_id)), payload)
+def update_major_incident(
+    incident_id: UUID,
+    payload: MajorIncidentUpdateRequest,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+    _incident_manager: None = require_itsm_roles(["INCIDENT_MANAGER"]),
+    if_match: Optional[str] = Header(default=None, alias="If-Match"),
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+):
+    t_id = UUID(tenant_id)
+    actor_id = UUID(str(request.state.user_id))
+    expected_version = _required_incident_version(if_match)
+    operation_id = _operation_id(request, idempotency_key)
+    operation, replay = IncidentService.claim_idempotent_operation(
+        db, t_id, actor_id, idempotency_key, "incident.major.update", payload, incident_id
+    )
+    if replay is not None:
+        return IncidentService.get_major_incident(db, t_id, replay.id)
+    return IncidentService.update_major_incident(
+        db, t_id, incident_id, actor_id, payload,
+        expected_version=expected_version,
+        operation_id=operation_id,
+        operation_record=operation,
+    )
 
 
 @router.post(
@@ -665,6 +780,7 @@ def add_incident_activity(
         incident_id=incident_id,
         actor_id=actor_id,
         payload=payload,
+        operation_id=_operation_id(request, request.headers.get("Idempotency-Key")),
     )
 
 

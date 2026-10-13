@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useCallback, useEffect, useState } from "react";
-import { AlertCircle, Check, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, ListPlus, MessageSquareText, RefreshCw, Search, ShieldAlert, Trash2 } from "lucide-react";
+import Link from "next/link";
+import { AlertCircle, Check, CheckCircle2, ChevronLeft, ChevronRight, ExternalLink, ListPlus, RefreshCw, Search, ShieldAlert, Trash2 } from "lucide-react";
 import IncidentPriorityBadge from "@/components/itsm/incident-priority-badge";
 import IncidentStatusBadge from "@/components/itsm/incident-status-badge";
 import ActivityTimeline from "@/components/itsm/activity-timeline";
@@ -113,13 +114,12 @@ function CommandRecord({incident,record,users,references,loading,onSaved}:{incid
   const [checkpointTitle,setCheckpointTitle]=useState(""); const [checkpointOwner,setCheckpointOwner]=useState(""); const [checkpointTarget,setCheckpointTarget]=useState("");
   const [decisionSummary,setDecisionSummary]=useState(""); const [decisionOwner,setDecisionOwner]=useState(""); const [decisionContext,setDecisionContext]=useState(""); const [taskTitle,setTaskTitle]=useState(""); const [taskOwner,setTaskOwner]=useState(""); const [taskDue,setTaskDue]=useState("");
   const [stakeholderName,setStakeholderName]=useState(""); const [stakeholderRole,setStakeholderRole]=useState(""); const [stakeholderContact,setStakeholderContact]=useState("");
-  const [communicationAudience,setCommunicationAudience]=useState(""); const [communicationChannel,setCommunicationChannel]=useState(""); const [communicationMessage,setCommunicationMessage]=useState(""); const [communicationApprover,setCommunicationApprover]=useState(""); const [communicationStatus,setCommunicationStatus]=useState<"DRAFT"|"APPROVED"|"COMMUNICATED">("DRAFT");
   const [openSection,setOpenSection]=useState<CommandSection|null>(record ? "restore" : "details");
   const commander=record?.incident_commander_id ? users.find(user=>user.id===record.incident_commander_id)?.email || record.incident_commander_id : "Not assigned";
   const communicationLead=record?.communication_lead_id ? users.find(user=>user.id===record.communication_lead_id)?.email || record.communication_lead_id : "Not assigned";
   const openTasks=(record?.command_tasks||[]).filter(task=>!task.completed_at).length;
   const checkpointProgress=record?.restoration_checkpoints.length ? `${record.restoration_checkpoints.filter(item=>item.completed_at).length} of ${record.restoration_checkpoints.length} checkpoints complete` : "No checkpoints recorded";
-  const save=async(e:React.FormEvent)=>{e.preventDefault();setSaving(true);setError(null);setMessage(null);try{const payload:MajorIncidentPayload={...form,incident_commander_id:form.incident_commander_id||null,communication_lead_id:form.communication_lead_id||null,bridge_url:form.bridge_url||null,communication_channel:form.communication_channel||null,customer_impact_description:form.customer_impact_description||null,executive_summary:form.executive_summary||null,postmortem_url:form.postmortem_url||null,impacted_business_units:units.split(",").map(v=>v.trim()).filter(Boolean)};if(!record){delete payload.postmortem_status;delete payload.postmortem_url;}const response=await fetch(`/api/itsm/incidents/${incident.id}/major-incident`,jsonRequest(record?"PATCH":"POST",payload));const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(apiErrorMessage(body,record?"Unable to update command record":"Unable to declare major incident"));onSaved(body);setMessage(record?"Command record updated.":"Major incident declared and command record created.");}catch(reason:unknown){setError(reason instanceof Error?reason.message:"Unable to save command record");}finally{setSaving(false);}};
+  const save=async(e:React.FormEvent)=>{e.preventDefault();setSaving(true);setError(null);setMessage(null);try{const payload:MajorIncidentPayload={...form,incident_commander_id:form.incident_commander_id||null,communication_lead_id:form.communication_lead_id||null,bridge_url:form.bridge_url||null,communication_channel:form.communication_channel||null,customer_impact_description:form.customer_impact_description||null,executive_summary:form.executive_summary||null,postmortem_url:form.postmortem_url||null,impacted_business_units:units.split(",").map(v=>v.trim()).filter(Boolean)};if(!record){delete payload.postmortem_status;delete payload.postmortem_url;}const response=await fetch(`/api/itsm/incidents/${incident.id}/major-incident`,jsonRequest(record?"PATCH":"POST",payload,{"If-Match":String(incident.version)}));const body=await response.json().catch(()=>({}));if(!response.ok)throw new Error(apiErrorMessage(body,record?"Unable to update command record":"Unable to declare major incident"));onSaved(body);setMessage(record?"Command record updated.":"Major incident declared and command record created.");}catch(reason:unknown){setError(reason instanceof Error?reason.message:"Unable to save command record");}finally{setSaving(false);}};
   const toggleSection=(section:CommandSection)=>setOpenSection(current=>current===section?null:section);
   const saveAction=record?<div className="flex flex-col gap-3 border-t border-[#E6E9F0] pt-4 sm:flex-row sm:items-center sm:justify-between"><p className="text-xs leading-5 text-[#6B7488]">Save the changes made in this section to the command record.</p><button disabled={saving} className="shrink-0 rounded-lg bg-[#6D28D9] px-4 py-2.5 text-xs font-bold text-white transition hover:bg-[#5B21B6] disabled:opacity-50">{saving?"Saving...":"Update command record"}</button></div>:null;
   if(loading)return <div className="min-h-[560px] animate-pulse rounded-2xl border bg-white p-6"><div className="h-8 w-2/3 rounded bg-[#EEF1F5]"/><div className="mt-6 h-80 rounded bg-[#EEF1F5]"/></div>;
@@ -162,23 +162,7 @@ function CommandRecord({incident,record,users,references,loading,onSaved}:{incid
         </CommandList>
         <section className="rounded-xl border border-[#E4E7EC] bg-[#F9FAFB] p-4"><h3 className="text-xs font-bold uppercase tracking-wider text-[#475069]">Stakeholders</h3><p className="mt-1 text-[11px] text-[#6B7488]">People and groups who need command awareness.</p><div className="mt-3 grid gap-2 sm:grid-cols-3"><input aria-label="Stakeholder name" value={stakeholderName} onChange={e=>setStakeholderName(e.target.value)} placeholder="Name" className={commandInputClass}/><input aria-label="Stakeholder role" value={stakeholderRole} onChange={e=>setStakeholderRole(e.target.value)} placeholder="Role" className={commandInputClass}/><input aria-label="Stakeholder contact" value={stakeholderContact} onChange={e=>setStakeholderContact(e.target.value)} placeholder="Contact" className={commandInputClass}/></div><button type="button" onClick={()=>{if(stakeholderName.trim()){setForm({...form,stakeholders:[...(form.stakeholders||[]),{id:crypto.randomUUID(),name:stakeholderName.trim(),role:stakeholderRole.trim()||null,contact:stakeholderContact.trim()||null}]});setStakeholderName("");setStakeholderRole("");setStakeholderContact("");}}} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-[#D0D5DD] bg-white px-3 py-2 text-[10px] font-bold text-[#475467] hover:bg-[#F9FAFB]"><ListPlus className="h-3.5 w-3.5"/>Add stakeholder</button><div className="mt-3 space-y-2">{(form.stakeholders||[]).length===0?<p className="rounded-lg bg-white p-3 text-center text-[11px] text-[#8A93A5]">No stakeholders recorded.</p>:(form.stakeholders||[]).map(item=><div key={item.id} className="flex items-center justify-between gap-3 rounded-lg bg-white p-3"><div className="min-w-0"><p className="truncate text-xs font-semibold text-[#0E1726]">{item.name}</p><p className="mt-0.5 truncate text-[10px] text-[#6B7488]">{[item.role,item.contact].filter(Boolean).join(" · ")||"No role or contact"}</p></div><button type="button" onClick={()=>setForm({...form,stakeholders:(form.stakeholders||[]).filter(value=>value.id!==item.id)})} className="rounded p-1.5 text-[#8A93A5] hover:bg-[#F2F4F7] hover:text-[#5B21B6]" aria-label={`Remove ${item.name}`}><Trash2 className="h-3.5 w-3.5"/></button></div>)}</div></section>
         </div>
-        <CommunicationLog
-          records={form.command_communications||[]}
-          users={commanders}
-          audience={communicationAudience}
-          channel={communicationChannel}
-          message={communicationMessage}
-          approver={communicationApprover}
-          status={communicationStatus}
-          onAudience={setCommunicationAudience}
-          onChannel={setCommunicationChannel}
-          onMessage={setCommunicationMessage}
-          onApprover={setCommunicationApprover}
-          onStatus={setCommunicationStatus}
-          onAdd={()=>{if(communicationAudience.trim()&&communicationChannel.trim()&&communicationMessage.trim()){setForm({...form,command_communications:[...(form.command_communications||[]),{id:crypto.randomUUID(),audience:communicationAudience.trim(),channel:communicationChannel.trim(),message:communicationMessage.trim(),approver_id:communicationApprover||null,status:communicationStatus,recorded_at:new Date().toISOString()}]});setCommunicationAudience("");setCommunicationChannel("");setCommunicationMessage("");setCommunicationApprover("");setCommunicationStatus("DRAFT");}}}
-          onStatusChange={(id,status)=>setForm({...form,command_communications:(form.command_communications||[]).map(item=>item.id===id?{...item,status}:item)})}
-          onRemove={id=>setForm({...form,command_communications:(form.command_communications||[]).filter(item=>item.id!==id)})}
-        />
+        <RelatedAlertCard majorIncidentId={record.id} incidentId={incident.id} />
         {saveAction}</CommandAccordionSection>
       </div>}
       {record?<CommandAccordionSection id="pir" title="Restoration and PIR" description="Restoration evidence and post-incident review status." meta={sentenceCase(String(form.postmortem_status||"PENDING").replaceAll("_"," "))} open={openSection==="pir"} onToggle={toggleSection}><div className="grid gap-4 md:grid-cols-2"><Field label="PIR status"><select value={form.postmortem_status||"PENDING"} onChange={e=>setForm({...form,postmortem_status:e.target.value})} className="field"><option value="PENDING">Pending</option><option value="IN_PROGRESS">In progress</option><option value="COMPLETE">Complete</option></select></Field><Field label="PIR document URL"><input type="url" value={form.postmortem_url||""} onChange={e=>setForm({...form,postmortem_url:e.target.value})} className="field"/></Field></div>{record.resolved_at?<p className="text-xs text-[#475069]">Service restored: <strong>{formatDateTime(record.resolved_at)}</strong></p>:null}{record.bridge_url?<a href={record.bridge_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-bold text-[#6D28D9] hover:underline">Open response bridge<ExternalLink className="h-3 w-3"/></a>:null}{saveAction}</CommandAccordionSection>:null}
@@ -199,69 +183,12 @@ function CommandList({title,description,inputLabel,inputValue,onInput,onAdd,chil
 
 function CommandListRow({title,detail,meta,complete,onToggle,onRemove}:{title:string;detail?:string;meta?:string;complete?:boolean;onToggle?:()=>void;onRemove:()=>void}){return <div className="flex items-start gap-2 rounded-lg bg-white p-3">{onToggle&&<button type="button" onClick={onToggle} className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border ${complete?"border-[#6D28D9] bg-[#6D28D9] text-white":"border-[#C9CFDA] text-transparent hover:border-[#6D28D9]"}`} aria-label={complete?"Mark incomplete":"Mark complete"}><Check className="h-3 w-3"/></button>}<div className="min-w-0 flex-1"><p className={`text-xs font-semibold ${complete?"text-[#8A93A5] line-through":"text-[#0E1726]"}`}>{title}</p>{detail?<p className="mt-1 text-[11px] leading-5 text-[#475069]">{detail}</p>:null}{meta&&<p className="mt-1 text-[10px] text-[#8A93A5]">{meta}</p>}</div><button type="button" onClick={onRemove} className="rounded p-1.5 text-[#8A93A5] hover:bg-[#F1ECFE] hover:text-[#5B21B6]" aria-label={`Remove ${title}`}><Trash2 className="h-3.5 w-3.5"/></button></div>}
 
-type CommunicationStatus = "DRAFT" | "APPROVED" | "COMMUNICATED";
-
-function CommunicationLog({
-  records, users, audience, channel, message, approver, status,
-  onAudience, onChannel, onMessage, onApprover, onStatus, onAdd,
-  onStatusChange, onRemove,
-}: {
-  records: NonNullable<MajorIncidentPayload["command_communications"]>;
-  users: TenantUser[];
-  audience: string;
-  channel: string;
-  message: string;
-  approver: string;
-  status: CommunicationStatus;
-  onAudience: (value: string) => void;
-  onChannel: (value: string) => void;
-  onMessage: (value: string) => void;
-  onApprover: (value: string) => void;
-  onStatus: (value: CommunicationStatus) => void;
-  onAdd: () => void;
-  onStatusChange: (id: string | undefined, status: CommunicationStatus) => void;
-  onRemove: (id: string | undefined) => void;
-}) {
-  return <section className="rounded-xl border border-[#E6E9F0] bg-[#F8FAFC] p-4">
-    <div className="flex items-start gap-2">
-      <MessageSquareText className="mt-0.5 h-4 w-4 text-[#6D28D9]" />
-      <div>
-        <h3 className="text-xs font-bold uppercase tracking-wider text-[#475069]">Evidence-based communications</h3>
-        <p className="mt-1 text-[11px] leading-5 text-[#6B7488]">Record audience, channel, approver, time, and status. This is coordination evidence; it does not send notifications.</p>
-        <p className="mt-1 text-[11px] leading-5 text-[#6B7488]">New or changed content must be approved by the named Incident Manager. Communicated means manually recorded, not verified delivery.</p>
-      </div>
-    </div>
-    <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-      <input aria-label="Communication audience" value={audience} onChange={event=>onAudience(event.target.value)} placeholder="Audience" className={commandInputClass} />
-      <input aria-label="Communication channel" value={channel} onChange={event=>onChannel(event.target.value)} placeholder="Channel" className={commandInputClass} />
-      <select aria-label="Communication approver" value={approver} onChange={event=>onApprover(event.target.value)} className={commandInputClass}>
-        <option value="">No approver</option>
-        {users.map(user=><option key={user.id} value={user.id}>{user.email}</option>)}
-      </select>
-      <select aria-label="Communication status" value={status} onChange={event=>onStatus(event.target.value as CommunicationStatus)} className={commandInputClass}>
-        <option value="DRAFT">Draft</option>
-        <option value="APPROVED">Approved</option>
-        <option value="COMMUNICATED">Communicated</option>
-      </select>
-    </div>
-    <textarea aria-label="Communication message" value={message} onChange={event=>onMessage(event.target.value)} placeholder="Concise, evidence-based incident update" rows={3} className={`${commandInputClass} mt-2`} />
-    <button type="button" onClick={onAdd} disabled={!audience.trim()||!channel.trim()||!message.trim()} className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-[#DDE1E8] bg-white px-3 py-2 text-[10px] font-bold text-[#475069] hover:bg-[#F5F7FA] disabled:opacity-40"><ListPlus className="h-3.5 w-3.5" />Record communication</button>
-    <div className="mt-4 space-y-2">
-      {records.length===0 ? <p className="rounded-lg bg-white p-4 text-center text-[11px] text-[#8A93A5]">No command communications recorded.</p> : records.map(item=><article key={item.id} className="rounded-lg bg-white p-3">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2"><span className="text-xs font-bold text-[#0E1726]">{item.audience}</span><span className="rounded bg-[#F5F7FA] px-2 py-0.5 text-[9px] font-bold uppercase text-[#6B7488]">{item.channel}</span></div>
-            <p className="mt-2 whitespace-pre-wrap text-[11px] leading-5 text-[#475069]">{item.message}</p>
-            <p className="mt-2 text-[10px] text-[#8A93A5]">{item.approver_id?`Approver: ${users.find(user=>user.id===item.approver_id)?.email||item.approver_id}`:"No approver"}{item.recorded_at?` · ${formatDateTime(item.recorded_at)}`:""}</p>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <select aria-label={`Status for communication to ${item.audience}`} value={item.status} onChange={event=>onStatusChange(item.id,event.target.value as CommunicationStatus)} className="rounded-md border border-[#DDE1E8] bg-white px-2 py-1.5 text-[10px] font-bold text-[#475069]"><option value="DRAFT">Draft</option><option value="APPROVED">Approved</option><option value="COMMUNICATED">Communicated</option></select>
-            <button type="button" onClick={()=>onRemove(item.id)} className="rounded p-1.5 text-[#8A93A5] hover:bg-[#F1ECFE] hover:text-[#5B21B6]" aria-label={`Remove communication to ${item.audience}`}><Trash2 className="h-3.5 w-3.5" /></button>
-          </div>
-        </div>
-      </article>)}
-    </div>
-  </section>;
+function RelatedAlertCard({majorIncidentId,incidentId}:{majorIncidentId:string;incidentId:string}) {
+  const [alerts,setAlerts]=useState<Array<{id:string;title:string;status:string;updated_at:string}>>([]);
+  useEffect(()=>{let active=true;fetch(`/api/itsm/outage-alerts?linked_type=MAJOR_INCIDENT&linked_id=${encodeURIComponent(majorIncidentId)}`,{cache:"no-store"}).then(response=>response.ok?response.json():[]).then(rows=>{if(active)setAlerts(Array.isArray(rows)?rows:[]);});return()=>{active=false;};},[majorIncidentId]);
+  const latest=alerts[0];
+  const createHref=`/itsm/incident-manager/outage-alerts/create?related_type=MAJOR_INCIDENT&related_id=${encodeURIComponent(majorIncidentId)}&incident_id=${encodeURIComponent(incidentId)}`;
+  return <section className="rounded-xl border border-[#DDD6FE] bg-[#F8F5FF] p-4"><div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center"><div><h3 className="text-sm font-bold text-[#0E1726]">Related Outage &amp; Alert</h3><p className="mt-1 text-xs text-[#6B7488]">Public service communication is managed in Outage &amp; Alerts. Internal command coordination remains here.</p>{latest?<p className="mt-3 text-xs"><strong>{latest.title}</strong> · {latest.status.replaceAll("_"," ")}</p>:<p className="mt-3 text-xs text-[#6B7488]">No public alert is linked to this Major Incident.</p>}</div><div className="flex shrink-0 flex-wrap gap-2">{latest?<Link href={`/itsm/incident-manager/outage-alerts/${latest.id}`} className="rounded-lg border border-[#8B5CF6] bg-white px-3 py-2 text-xs font-bold text-[#5B21B6]">View related alert</Link>:null}<Link href={createHref} className="rounded-lg bg-[#6D28D9] px-3 py-2 text-xs font-bold text-white">{latest?"Create another alert":"Create / link alert"}</Link></div></div></section>;
 }
 
 function CommandActivity({incidentId,users}:{incidentId:string;users:TenantUser[]}){

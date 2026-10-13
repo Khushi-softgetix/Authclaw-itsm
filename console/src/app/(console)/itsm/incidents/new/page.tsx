@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import Link from "next/link";
 import {
   AlertCircle,
@@ -10,7 +10,6 @@ import {
   FileSpreadsheet,
   FileText,
   HelpCircle,
-  Image as ImageIcon,
   LifeBuoy,
   Loader2,
   Paperclip,
@@ -20,6 +19,7 @@ import {
 } from "lucide-react";
 import { jsonRequest } from "@/lib/client-fetch";
 import { apiErrorMessage } from "@/lib/errors";
+import { alertApi, type AlertDetail } from "@/lib/outage-alerts";
 
 const ALLOWED_EXTS = [
   ".png",
@@ -112,6 +112,13 @@ interface CreatedIncidentSummary {
   failed_uploads?: string[];
 }
 
+interface OutageAlertIncidentContext {
+  alertId: string;
+  alertNumber: string;
+  title: string;
+  services: Array<{ id: string; name: string }>;
+}
+
 export default function CreateIncidentPage() {
   // Form State
   const [title, setTitle] = useState<string>("");
@@ -157,7 +164,45 @@ export default function CreateIncidentPage() {
   const [attachmentValidationError, setAttachmentValidationError] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [createdIncident, setCreatedIncident] = useState<CreatedIncidentSummary | null>(null);
+  const [outageAlertContext, setOutageAlertContext] = useState<OutageAlertIncidentContext | null>(null);
+  const [incidentServiceId, setIncidentServiceId] = useState("");
+  const [contextError, setContextError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    const alertId = new URLSearchParams(window.location.search).get("outage_alert_id");
+    if (!alertId) return;
+    let active = true;
+    alertApi<AlertDetail>(`/${encodeURIComponent(alertId)}`).then((alert) => {
+      if (!active) return;
+      const services = Array.isArray(alert.content.affected_services)
+        ? alert.content.affected_services as Array<{ id: string; name: string }>
+        : [];
+      const service = services[0];
+      if (!service) throw new Error("The alert needs an affected service before an Incident can be created and linked.");
+      const alertTitle = String(alert.content.title || "Service interruption");
+      const publicSummary = String(alert.content.public_summary || "");
+      const impactSummary = String(alert.content.impact_summary || "");
+      const severity = String(alert.content.severity || "MEDIUM").toUpperCase();
+      const mappedPriority = severity === "CRITICAL" ? "P1" : severity === "HIGH" ? "P2" : severity === "LOW" ? "P4" : "P3";
+      const mappedImpact = severity === "CRITICAL" ? "CRITICAL" : severity === "HIGH" ? "HIGH" : severity === "LOW" ? "LOW" : "MEDIUM";
+      setOutageAlertContext({
+        alertId,
+        alertNumber: String(alert.content.alert_number || "Outage alert"),
+        title: alertTitle,
+        services,
+      });
+      setIncidentServiceId(service.id);
+      setTitle((current) => current || alertTitle);
+      setDescription((current) => current || [publicSummary, impactSummary].filter(Boolean).join("\n\n"));
+      setPriority(mappedPriority);
+      setImpact(mappedImpact);
+      setUrgency(mappedPriority === "P1" ? "HIGH" : mappedPriority === "P4" ? "LOW" : "MEDIUM");
+    }).catch((cause) => {
+      if (active) setContextError(cause instanceof Error ? cause.message : "The related alert could not be loaded.");
+    });
+    return () => { active = false; };
+  }, []);
 
   const processFiles = (files: FileList | File[]) => {
     const valid: File[] = [];
@@ -256,7 +301,8 @@ export default function CreateIncidentPage() {
         urgency: urgency || "MEDIUM",
         priority,
         category,
-        source_channel: "PORTAL",
+        service_id: incidentServiceId || undefined,
+        source_channel: outageAlertContext ? "AGENT" : "PORTAL",
       };
 
       const res = await fetch("/api/itsm/incidents", jsonRequest("POST", payload));
@@ -336,9 +382,11 @@ export default function CreateIncidentPage() {
             <span className="inline-block px-3 py-1 bg-[#F3E8FF] text-[#6D28D9] text-xs font-bold rounded-full uppercase tracking-wider">
               Submitted
             </span>
-            <h1 className="text-2xl font-extrabold text-[#0E1726]">Incident Reported Successfully</h1>
+            <h1 className="text-2xl font-extrabold text-[#0E1726]">{outageAlertContext ? "Incident Created Successfully" : "Incident Reported Successfully"}</h1>
             <p className="text-xs text-[#6B7488]">
-              Your issue has been logged and assigned to the IT support team.
+              {outageAlertContext
+                ? "The Incident is ready to be linked to the outage alert. Assignment and resolution work remain managed on the Incident."
+                : "Your issue has been logged for the IT support team."}
             </p>
           </div>
 
@@ -387,18 +435,33 @@ export default function CreateIncidentPage() {
 
           {/* Action Buttons */}
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
-            <Link
-              href="/itsm/dashboard/requester"
-              className="w-full sm:w-auto px-6 py-2.5 bg-[#6D28D9] hover:bg-[#5B21B6] text-white rounded-lg text-xs font-semibold shadow-sm transition text-center"
-            >
-              View My Incidents
-            </Link>
-            <button
-              onClick={resetForm}
-              className="w-full sm:w-auto px-6 py-2.5 bg-white border border-[#E6E9F0] text-[#475069] rounded-lg text-xs font-medium hover:bg-[#F5F7FA] transition"
-            >
-              Report Another Issue
-            </button>
+            {outageAlertContext ? <>
+              <Link
+                href={`/itsm/incident-manager/outage-alerts/create?edit=${encodeURIComponent(outageAlertContext.alertId)}&related_type=INCIDENT&related_id=${encodeURIComponent(createdIncident.id)}`}
+                className="w-full sm:w-auto px-6 py-2.5 bg-[#6D28D9] hover:bg-[#5B21B6] text-white rounded-lg text-xs font-semibold shadow-sm transition text-center"
+              >
+                Return and link Incident
+              </Link>
+              <Link
+                href={`/itsm/incidents/${encodeURIComponent(createdIncident.id)}`}
+                className="w-full sm:w-auto px-6 py-2.5 bg-white border border-[#E6E9F0] text-[#475069] rounded-lg text-xs font-medium hover:bg-[#F5F7FA] transition text-center"
+              >
+                Open Incident
+              </Link>
+            </> : <>
+              <Link
+                href="/itsm/dashboard/requester"
+                className="w-full sm:w-auto px-6 py-2.5 bg-[#6D28D9] hover:bg-[#5B21B6] text-white rounded-lg text-xs font-semibold shadow-sm transition text-center"
+              >
+                View My Incidents
+              </Link>
+              <button
+                onClick={resetForm}
+                className="w-full sm:w-auto px-6 py-2.5 bg-white border border-[#E6E9F0] text-[#475069] rounded-lg text-xs font-medium hover:bg-[#F5F7FA] transition"
+              >
+                Report Another Issue
+              </button>
+            </>}
           </div>
         </div>
       </div>
@@ -409,11 +472,11 @@ export default function CreateIncidentPage() {
     <div className="space-y-6 max-w-3xl mx-auto">
       {/* Navigation Breadcrumb */}
       <div className="flex items-center gap-2 text-xs text-[#6B7488]">
-        <Link href="/itsm/dashboard/requester" className="hover:text-[#0E1726] flex items-center gap-1">
-          <ArrowLeft className="w-3.5 h-3.5" /> Back to Requester Dashboard
+        <Link href={outageAlertContext ? `/itsm/incident-manager/outage-alerts/create?edit=${encodeURIComponent(outageAlertContext.alertId)}` : "/itsm/dashboard/requester"} className="hover:text-[#0E1726] flex items-center gap-1">
+          <ArrowLeft className="w-3.5 h-3.5" /> {outageAlertContext ? "Back to alert draft" : "Back to Requester Dashboard"}
         </Link>
         <span>/</span>
-        <span className="text-[#0E1726] font-medium">Report an Issue</span>
+        <span className="text-[#0E1726] font-medium">{outageAlertContext ? "Create Incident" : "Report an Issue"}</span>
       </div>
 
       {/* Page Header */}
@@ -422,12 +485,17 @@ export default function CreateIncidentPage() {
           <LifeBuoy className="w-6 h-6" />
         </div>
         <div>
-          <h1 className="text-xl font-extrabold text-[#0E1726] tracking-tight">Report an IT Issue</h1>
+          <h1 className="text-xl font-extrabold text-[#0E1726] tracking-tight">{outageAlertContext ? "Create Incident for outage work" : "Report an IT Issue"}</h1>
           <p className="text-xs text-[#6B7488] mt-1">
-            Need help? Tell us what went wrong and our IT support team will investigate and resolve it for you.
+            {outageAlertContext
+              ? "Review the prefilled operational record before creating it. The alert remains a separate communication record."
+              : "Need help? Tell us what went wrong and our IT support team will investigate and resolve it for you."}
           </p>
         </div>
       </div>
+
+      {outageAlertContext ? <div className="rounded-xl border border-[#DDD6FE] bg-[#F8F5FF] p-4"><p className="text-xs font-bold uppercase tracking-wider text-[#6D28D9]">Related outage alert</p><p className="mt-1 text-sm font-semibold text-[#0E1726]">{outageAlertContext.alertNumber} · {outageAlertContext.title}</p>{outageAlertContext.services.length > 1 ? <label className="mt-3 block text-xs font-semibold text-[#352A52]">Incident service<select value={incidentServiceId} onChange={(event) => setIncidentServiceId(event.target.value)} className="mt-1.5 w-full rounded-lg border border-[#C4B5FD] bg-white px-3 py-2 text-xs text-[#0E1726] outline-none focus:ring-2 focus:ring-[#6D28D9]/10">{outageAlertContext.services.map((service) => <option key={service.id} value={service.id}>{service.name}</option>)}</select></label> : <p className="mt-1 text-xs text-[#5B5670]">Incident service: {outageAlertContext.services[0].name}</p>}<p className="mt-2 text-xs text-[#5B5670]">A configured service escalation team will be applied automatically; individual assignment remains controlled in Incident Management.</p></div> : null}
+      {contextError ? <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-xs text-red-700">{contextError}</div> : null}
 
       {/* Error Alert */}
       {error && (
@@ -731,7 +799,7 @@ export default function CreateIncidentPage() {
               ) : (
                 <>
                   <Send className="w-3.5 h-3.5" />
-                  <span>Submit Issue</span>
+                  <span>{outageAlertContext ? "Create Incident" : "Submit Issue"}</span>
                 </>
               )}
             </button>

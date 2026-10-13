@@ -16,8 +16,9 @@ from app.db.models import (
     ITSMTeamMember, ITSMUserAccess, User,
 )
 from app.schemas.itsm_outage_alerts import (
-    AlertDetail, AlertDraftRequest, AlertPreview, AlertPreviewRequest, AlertPublicationRequest,
-    AlertReferenceData, AlertSummary, ServiceConsumerRequest, ServiceSupportTeamRequest,
+    AlertDetail, AlertDraftRequest, AlertEvidencePage, AlertPreview, AlertPreviewRequest,
+    AlertPublicationRequest, AlertReferenceData, AlertSummary, ServiceConsumerRequest,
+    ServiceSupportTeamRequest,
 )
 from app.services.itsm_outage_alert_service import OutageAlertService
 
@@ -38,6 +39,40 @@ def list_alerts(request: Request, alert_status: str | None = Query(default=None,
 def list_active_alerts(request: Request, db: Session = Depends(get_tenant_db), tenant_id: str = Depends(get_current_tenant)):
     tenant, actor = _identity(request, tenant_id)
     return OutageAlertService.list_visible(db, tenant, actor, "ACTIVE")
+
+
+@router.get("/auditor-evidence", response_model=AlertEvidencePage)
+def list_auditor_evidence(
+    request: Request,
+    search: str | None = Query(default=None, min_length=1, max_length=120),
+    lifecycle_status: str | None = Query(default=None, alias="status", pattern="^(DRAFT|ACTIVE|RECOVERED|CANCELLED)$"),
+    severity: str | None = Query(default=None, pattern="^(CRITICAL|HIGH|MEDIUM|LOW)$"),
+    audience: str | None = Query(default=None, max_length=32),
+    actor: str | None = Query(default=None, min_length=1, max_length=255),
+    delivery_status: str | None = Query(default=None, pattern="^(QUEUED|AVAILABLE|FAILED|RETRYING|PERMANENTLY_FAILED)$"),
+    start: datetime | None = Query(default=None),
+    end: datetime | None = Query(default=None),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    tenant, actor_id = _identity(request, tenant_id)
+    return OutageAlertService.list_auditor_evidence(
+        db,
+        tenant,
+        actor_id,
+        search=search,
+        lifecycle_status=lifecycle_status,
+        severity=severity,
+        audience=audience,
+        actor=actor,
+        delivery_status=delivery_status,
+        start=start,
+        end=end,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @router.get("/reference-data", response_model=AlertReferenceData)

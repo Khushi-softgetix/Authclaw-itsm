@@ -50,6 +50,10 @@ MANAGER_FIELDS = SERVICE_AGENT_FIELDS | {
     "internal_notes", "audiences", "configuration_items", "links",
     "created_by_id", "updated_by_id", "created_at",
 }
+AUDITOR_FIELDS = PUBLIC_FIELDS | {
+    "severity", "intent", "audiences", "configuration_items", "links",
+    "created_by_id", "updated_by_id", "created_at",
+}
 
 
 def normalize_role(role: str | None) -> str:
@@ -116,8 +120,14 @@ def project_alert(content: dict[str, Any], role: str | None) -> dict[str, Any]:
         fields = SERVICE_AGENT_FIELDS
     elif role in {"PROBLEM_AND_CHANGE_MANAGER", "SERVICE_OWNER"}:
         fields = PROCESS_FIELDS
-    elif role in {"INCIDENT_MANAGER", "AUDITOR"}:
+    elif role == "INCIDENT_MANAGER":
         fields = MANAGER_FIELDS
+    elif role == "AUDITOR":
+        # Audit access is not operational-content access. Published snapshots,
+        # lifecycle actors, audience configuration and delivery evidence are
+        # exposed separately by the evidence read model; restricted support
+        # guidance and internal notes remain excluded.
+        fields = AUDITOR_FIELDS
     elif role == "PLATFORM_ADMIN":
         fields = {"alert_number", "status", "published_at", "latest_publication_at", "updated_at"}
     else:

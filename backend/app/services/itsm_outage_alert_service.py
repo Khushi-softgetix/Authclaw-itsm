@@ -10,10 +10,11 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException, status
-from sqlalchemy import func, or_, text
+from sqlalchemy import String, cast, func, or_, text
 from sqlalchemy.orm import Session, selectinload
 
 from app.db.models import (
+    AuditLogMetadata,
     ITSMChangeRequest,
     ITSMConfigurationItem,
     ITSMMajorIncident,
@@ -1050,6 +1051,278 @@ class OutageAlertService:
             "snapshot_actions": snapshot.allowed_actions,
         }
 
+    @staticmethod
+    def _delivery_counts(alert: ITSMOutageAlert) -> dict[str, int]:
+        counts: dict[str, int] = defaultdict(int)
+        for publication in alert.publications:
+            for recipient in publication.recipients:
+                counts[recipient.delivery_status] += 1
+        return dict(sorted(counts.items()))
+
+    @staticmethod
+    def _parse_audit_trace(raw_trace: Any) -> dict[str, Any]:
+        if isinstance(raw_trace, dict):
+            return raw_trace
+        if isinstance(raw_trace, str):
+            try:
+                parsed = json.loads(raw_trace)
+            except json.JSONDecodeError:
+                return {}
+            if isinstance(parsed, dict):
+                return parsed
+            if isinstance(parsed, list):
+                values: dict[str, Any] = {}
+                for item in parsed:
+                    if isinstance(item, str) and "=" in item:
+                        key, value = item.split("=", 1)
+                        values[key.strip()] = value.strip()
+                return values
+        return {}
+
+    @classmethod
+    def _auditor_audit_events(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        alert_id: UUID,
+    ) -> list[dict[str, Any]]:
+        rows = (
+            db.query(AuditLogMetadata)
+            .filter(
+                AuditLogMetadata.tenant_id == tenant_id,
+                AuditLogMetadata.request_id == str(alert_id),
+                AuditLogMetadata.action.ilike("itsm.outage_alert.%"),
+            )
+            .order_by(AuditLogMetadata.tenant_sequence.asc())
+            .all()
+        )
+        actor_ids = {row.actor_id for row in rows if row.actor_id is not None}
+        displays = {
+            str(user.id): user.email
+            for user in db.query(User.id, User.email).filter(
+                User.tenant_id == tenant_id,
+                User.id.in_(actor_ids or {UUID(int=0)}),
+            )
+        }
+        return [
+            {
+                "record_id": str(row.record_id),
+                "sequence": row.tenant_sequence,
+                "timestamp": row.created_at,
+                "actor_id": str(row.actor_id) if row.actor_id else None,
+                "actor_display": displays.get(str(row.actor_id)) if row.actor_id else "System",
+                "action": row.action.removeprefix("itsm.outage_alert."),
+                "outcome": "RECORDED" if 200 <= row.response_status < 300 else "FAILED",
+                "response_status": row.response_status,
+                "reason": row.reason,
+                "correlation_id": row.request_id,
+                "policy_decision": cls._parse_audit_trace(row.execution_trace).get("policy_decision"),
+                "prior_hash": row.prior_hash,
+                "integrity_hash": row.integrity_hash,
+            }
+            for row in rows
+        ]
+
+    @classmethod
+    def _auditor_evidence_status(
+        cls,
+        alert: ITSMOutageAlert,
+        audit_event_count: int,
+    ) -> dict[str, Any]:
+        publications_expected = alert.status in {"ACTIVE", "RECOVERED"}
+        publication_status = "PRESENT" if alert.publications else (
+            "MISSING" if publications_expected else "NOT_APPLICABLE"
+        )
+        audience_status = "NOT_APPLICABLE"
+        resolution_status = "NOT_APPLICABLE"
+        delivery_status = "NOT_APPLICABLE"
+        if alert.publications:
+            audience_status = (
+                "PRESENT"
+                if all(publication.audience_snapshot is not None for publication in alert.publications)
+                else "MISSING"
+            )
+            resolution_status = (
+                "PRESENT"
+                if all(publication.recipient_count == len(publication.recipients) for publication in alert.publications)
+                else "INCOMPLETE"
+            )
+            recipients = [
+                recipient
+                for publication in alert.publications
+                for recipient in publication.recipients
+            ]
+            delivery_status = (
+                "PRESENT"
+                if recipients and all(recipient.delivery_status for recipient in recipients)
+                else "NOT_APPLICABLE" if not recipients else "INCOMPLETE"
+            )
+        checks = {
+            "publication_history": publication_status,
+            "audience_snapshot": audience_status,
+            "recipient_resolution": resolution_status,
+            "delivery_evidence": delivery_status,
+            "audit_timeline": "PRESENT" if audit_event_count else "MISSING",
+            # Successful lifecycle events are recorded, but the current alert
+            # workflow does not persist the evaluated policy/grant as a
+            # separate decision record. Report that limitation honestly.
+            "authorization_decision": "NOT_COLLECTED",
+            "recipient_exclusions": "NOT_COLLECTED",
+        }
+        incomplete = any(value in {"MISSING", "INCOMPLETE"} for value in checks.values())
+        limited = any(value == "NOT_COLLECTED" for value in checks.values())
+        overall = "INCOMPLETE" if incomplete else "AVAILABLE_WITH_LIMITATIONS" if limited else "COMPLETE"
+        return {"status": overall, "checks": checks}
+
+    @classmethod
+    def list_auditor_evidence(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        user_id: UUID,
+        *,
+        search: str | None = None,
+        lifecycle_status: str | None = None,
+        severity: str | None = None,
+        audience: str | None = None,
+        actor: str | None = None,
+        delivery_status: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> dict[str, Any]:
+        role = cls.role_for(db, tenant_id, user_id)
+        if normalize_role(role) != "AUDITOR":
+            raise HTTPException(status_code=403, detail="Auditor evidence permission required")
+
+        query = cls._query(db, tenant_id)
+        if lifecycle_status:
+            query = query.filter(ITSMOutageAlert.status == lifecycle_status.upper())
+        if severity:
+            query = query.filter(ITSMOutageAlert.severity == severity.upper())
+        if start:
+            query = query.filter(func.coalesce(ITSMOutageAlert.published_at, ITSMOutageAlert.created_at) >= start)
+        if end:
+            query = query.filter(func.coalesce(ITSMOutageAlert.published_at, ITSMOutageAlert.created_at) <= end)
+        if search:
+            pattern = f"%{search.strip()}%"
+            service_alert_ids = db.query(ITSMOutageAlertService.alert_id).join(
+                ITSMService,
+                (ITSMService.id == ITSMOutageAlertService.service_id)
+                & (ITSMService.tenant_id == ITSMOutageAlertService.tenant_id),
+            ).filter(
+                ITSMOutageAlertService.tenant_id == tenant_id,
+                ITSMService.name.ilike(pattern),
+            )
+            query = query.filter(or_(
+                ITSMOutageAlert.alert_number.ilike(pattern),
+                ITSMOutageAlert.title.ilike(pattern),
+                cast(ITSMOutageAlert.id, String).ilike(pattern),
+                ITSMOutageAlert.id.in_(service_alert_ids),
+            ))
+        if audience:
+            audience_alert_ids = db.query(ITSMOutageAlertAudience.alert_id).filter(
+                ITSMOutageAlertAudience.tenant_id == tenant_id,
+                ITSMOutageAlertAudience.audience_type == audience.upper(),
+            )
+            query = query.filter(ITSMOutageAlert.id.in_(audience_alert_ids))
+        if actor:
+            matching_actor_ids = [row.id for row in db.query(User.id).filter(
+                User.tenant_id == tenant_id,
+                User.email.ilike(f"%{actor.strip()}%"),
+            ).all()]
+            published_alert_ids = db.query(ITSMOutageAlertPublication.alert_id).filter(
+                ITSMOutageAlertPublication.tenant_id == tenant_id,
+                ITSMOutageAlertPublication.published_by_id.in_(matching_actor_ids),
+            )
+            query = query.filter(or_(
+                ITSMOutageAlert.created_by_id.in_(matching_actor_ids),
+                ITSMOutageAlert.id.in_(published_alert_ids),
+            ))
+        if delivery_status:
+            delivery_alert_ids = db.query(ITSMOutageAlertPublication.alert_id).join(
+                ITSMOutageAlertRecipient,
+                (ITSMOutageAlertRecipient.publication_id == ITSMOutageAlertPublication.id)
+                & (ITSMOutageAlertRecipient.tenant_id == ITSMOutageAlertPublication.tenant_id),
+            ).filter(
+                ITSMOutageAlertPublication.tenant_id == tenant_id,
+                ITSMOutageAlertRecipient.delivery_status == delivery_status.upper(),
+            )
+            query = query.filter(ITSMOutageAlert.id.in_(delivery_alert_ids))
+
+        total = query.count()
+        alerts = (
+            query.order_by(ITSMOutageAlert.updated_at.desc(), ITSMOutageAlert.id.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+        actor_ids = {
+            actor_id
+            for alert in alerts
+            for actor_id in (
+                alert.created_by_id,
+                alert.publications[-1].published_by_id if alert.publications else None,
+            )
+            if actor_id is not None
+        }
+        displays = {
+            str(user.id): user.email
+            for user in db.query(User.id, User.email).filter(
+                User.tenant_id == tenant_id,
+                User.id.in_(actor_ids or {UUID(int=0)}),
+            )
+        }
+        alert_ids = [str(alert.id) for alert in alerts]
+        audit_counts = {
+            str(request_id): int(count)
+            for request_id, count in db.query(
+                AuditLogMetadata.request_id,
+                func.count(AuditLogMetadata.id),
+            ).filter(
+                AuditLogMetadata.tenant_id == tenant_id,
+                AuditLogMetadata.request_id.in_(alert_ids or [""]),
+                AuditLogMetadata.action.ilike("itsm.outage_alert.%"),
+            ).group_by(AuditLogMetadata.request_id)
+        }
+
+        items = []
+        for alert in alerts:
+            latest = alert.publications[-1] if alert.publications else None
+            delivery = cls._delivery_counts(alert)
+            audit_count = audit_counts.get(str(alert.id), 0)
+            evidence = cls._auditor_evidence_status(alert, audit_count)
+            publication_recipient_counts = [publication.recipient_count for publication in alert.publications]
+            summary = cls.summary(alert, role)
+            summary.update({
+                "created_by_id": alert.created_by_id,
+                "created_by_display": displays.get(str(alert.created_by_id)),
+                "created_at": alert.created_at,
+                "published_by_id": latest.published_by_id if latest else None,
+                "published_by_display": displays.get(str(latest.published_by_id)) if latest else None,
+                "intended_audiences": sorted({item.audience_type for item in alert.audiences}),
+                "publication_count": len(alert.publications),
+                "recipient_count": publication_recipient_counts[-1] if publication_recipient_counts else 0,
+                "delivery_summary": delivery,
+                "broadcast_outcome": (
+                    "RECOVERED" if alert.status == "RECOVERED" else
+                    "PUBLISHED" if alert.status == "ACTIVE" else
+                    "CANCELLED" if alert.status == "CANCELLED" else
+                    "NOT_PUBLISHED"
+                ),
+                "audit_event_count": audit_count,
+                "evidence_status": evidence["status"],
+            })
+            items.append(summary)
+        return {
+            "items": items,
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+            "has_more": offset + len(items) < total,
+        }
+
     @classmethod
     def list_visible(cls, db: Session, tenant_id: UUID, user_id: UUID, requested_status: str | None = None, linked_type: str | None = None, linked_id: UUID | None = None) -> list[dict[str, Any]]:
         role = cls.role_for(db, tenant_id, user_id)
@@ -1095,6 +1368,7 @@ class OutageAlertService:
         role = cls.role_for(db, tenant_id, user_id)
         alert = cls.get_alert(db, tenant_id, alert_id)
         normalized = normalize_role(role)
+        evidence = None
         if can_manage(role):
             cls.require_alert_permission(db, tenant_id, user_id, "OUTAGE_ALERT:READ", alert)
             content = project_alert(cls._content(alert), role)
@@ -1103,9 +1377,88 @@ class OutageAlertService:
             publications = [{"id": str(p.id), "version": p.version, "type": p.publication_type, "published_at": p.published_at, "publisher_id": str(p.published_by_id), "recipient_count": p.recipient_count, "content": project_alert(p.content_snapshot, role)} for p in alert.publications]
         elif normalized == "AUDITOR":
             content = project_alert(cls._content(alert), role)
+            content["audiences"] = [
+                {
+                    "type": audience.audience_type,
+                    "scope": (
+                        "SELECTED_TEAM" if audience.team_id else
+                        "SPECIFIC_USER" if audience.user_id else
+                        "SERVICE_RELATIONSHIP"
+                    ),
+                }
+                for audience in alert.audiences
+            ]
             actions = allowed_actions_for(role, intent=alert.intent, handling=alert.service_agent_handling, has_incident_link=any(link.target_type == "INCIDENT" for link in alert.links))
             projection = projection_type_for_role(role)
-            publications = [{"id": str(p.id), "version": p.version, "type": p.publication_type, "published_at": p.published_at, "publisher_id": str(p.published_by_id), "recipient_count": p.recipient_count, "content": project_alert(p.content_snapshot, role)} for p in alert.publications]
+            publisher_ids = {publication.published_by_id for publication in alert.publications}
+            actor_ids = publisher_ids | {alert.created_by_id, alert.updated_by_id}
+            actor_displays = {
+                str(user.id): user.email
+                for user in db.query(User.id, User.email).filter(
+                    User.tenant_id == tenant_id,
+                    User.id.in_(actor_ids),
+                )
+            }
+            publications = []
+            for publication in alert.publications:
+                recipient_summary: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+                for recipient in publication.recipients:
+                    recipient_summary[recipient.audience_type][recipient.delivery_status] += 1
+                publication_content = project_alert(publication.content_snapshot, role)
+                publication_content["audiences"] = [
+                    {
+                        "type": str(item.get("type") or item.get("audience_type") or "UNKNOWN"),
+                        "scope": (
+                            "SELECTED_TEAM" if item.get("team_id") else
+                            "SPECIFIC_USER" if item.get("user_id") else
+                            "SERVICE_RELATIONSHIP"
+                        ),
+                    }
+                    for item in (publication.content_snapshot.get("audiences") or [])
+                    if isinstance(item, dict)
+                ]
+                publications.append({
+                    "id": str(publication.id),
+                    "version": publication.version,
+                    "type": publication.publication_type,
+                    "published_at": publication.published_at,
+                    "publisher_id": str(publication.published_by_id),
+                    "publisher_display": actor_displays.get(str(publication.published_by_id)),
+                    "recipient_count": publication.recipient_count,
+                    "audience_snapshot": [
+                        {
+                            "type": str(item.get("type") or item.get("audience_type") or "UNKNOWN"),
+                            "scope": (
+                                "SELECTED_TEAM" if item.get("team_id") else
+                                "SPECIFIC_USER" if item.get("user_id") else
+                                "SERVICE_RELATIONSHIP"
+                            ),
+                        }
+                        for item in (publication.audience_snapshot or [])
+                        if isinstance(item, dict)
+                    ],
+                    "recipient_resolution": {
+                        audience_type: dict(sorted(status_counts.items()))
+                        for audience_type, status_counts in sorted(recipient_summary.items())
+                    },
+                    "delivery_channels": sorted({
+                        "IN_APP" for recipient in publication.recipients if recipient.notification_id
+                    }),
+                    "exclusion_evidence": "NOT_COLLECTED",
+                    "content": publication_content,
+                })
+            audit_events = cls._auditor_audit_events(db, tenant_id, alert.id)
+            evidence = {
+                "summary": cls._auditor_evidence_status(alert, len(audit_events)),
+                "creator_display": actor_displays.get(str(alert.created_by_id)),
+                "updated_by_display": actor_displays.get(str(alert.updated_by_id)),
+                "audit_events": audit_events,
+                "authorization": {
+                    "status": "NOT_COLLECTED",
+                    "explanation": "The lifecycle action is recorded, but the evaluated permission and scope decision are not stored as separate evidence.",
+                },
+                "recipient_identities_exposed": False,
+            }
         else:
             current_recipient = cls._current_recipient(db, alert, user_id)
             if not current_recipient:
@@ -1133,17 +1486,14 @@ class OutageAlertService:
                     })
         delivery = None
         if can_manage(role) or normalized == "AUDITOR":
-            counts: dict[str, int] = defaultdict(int)
-            for pub in alert.publications:
-                for row in pub.recipients:
-                    counts[row.delivery_status] += 1
-            delivery = dict(counts)
+            delivery = cls._delivery_counts(alert)
         return {
             "id": alert.id, "alert_number": alert.alert_number, "status": alert.status,
             "projection_type": projection, "content": content, "allowed_actions": actions,
             "affected_services": content.get("affected_services", []),
             "links": content.get("links", []) if can_manage(role) or normalized == "AUDITOR" else content.get("authorized_links", []),
             "publications": publications, "delivery_summary": delivery,
+            "evidence": evidence,
         }
 
     @classmethod
@@ -1203,7 +1553,10 @@ class OutageAlertService:
         append_audit_event(db, {
             "id": str(uuid4()), "tenant_id": str(alert.tenant_id), "timestamp": datetime.now(timezone.utc),
             "actor_id": str(actor_id), "actor_type": "user", "action": f"itsm.outage_alert.{action}",
-            "request_id": str(alert.id), "provider": "itsm", "reason": action,
+            "request_id": str(alert.id), "context_id": str(alert.id),
+            "event_category": "action", "target_id": str(alert.id),
+            "target_type": "outage_alert", "policy_decision": "ALLOW",
+            "provider": "itsm", "reason": action,
             "response_status": 200, "frameworks_affected": ["ITIL"],
             "execution_trace": [f"alert_id={alert.id}", f"alert_number={alert.alert_number}", f"status={alert.status}"] + (extra or []),
         })

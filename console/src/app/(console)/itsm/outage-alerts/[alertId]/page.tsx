@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { AlertTriangle, ArrowLeft, BellRing, CheckCircle2, Clock3, ExternalLink, GitPullRequest, Headphones, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ArrowLeft, BellRing, CheckCircle2, Clock3, ExternalLink, FileCheck2, GitPullRequest, Headphones, Radio, ShieldCheck, Users } from "lucide-react";
 import {
   alertApi,
   type AlertDetail,
@@ -21,6 +21,13 @@ type Publication = {
   version?: number;
   type?: string;
   published_at?: string;
+  publisher_id?: string;
+  publisher_display?: string;
+  recipient_count?: number;
+  audience_snapshot?: Array<Record<string, unknown>>;
+  recipient_resolution?: Record<string, Record<string, number>>;
+  delivery_channels?: string[];
+  exclusion_evidence?: string;
   content?: Record<string, unknown>;
 };
 
@@ -231,19 +238,7 @@ export default function RecipientAlertPage() {
       ) : null}
 
       {alert.projection_type === "AUDITOR" ? (
-        <section className="rounded-2xl border border-[#DDD6FE] bg-white p-6">
-          <h2 className="flex items-center gap-2 font-semibold"><ShieldCheck className="h-5 w-5 text-[#6D28D9]" /> Auditor evidence</h2>
-          <p className="mt-1 text-xs text-[#6B7488]">Read-only operational and delivery evidence for this canonical alert.</p>
-          <div className="mt-5 grid gap-5 sm:grid-cols-2">
-            <Field label="Severity" value={content.severity} />
-            <Field label="Intent" value={content.intent} />
-            <Field label="Created" value={content.created_at ? formatAlertDate(String(content.created_at)) : "Not recorded"} />
-            <Field label="Created by" value={content.created_by_id} />
-            <Field label="Internal operational notes" value={content.internal_notes || "None recorded"} wide />
-            <Field label="Related records" value={alert.links.map((link) => `${link.type}: ${link.id}`).join("\n") || "None linked"} wide />
-            <Field label="Delivery results" value={alert.delivery_summary ? Object.entries(alert.delivery_summary).map(([state, count]) => `${state}: ${count}`).join("\n") : "No delivery evidence"} wide />
-          </div>
-        </section>
+        <AuditorEvidence alert={alert} content={content} publications={publications} />
       ) : null}
 
       <section className="rounded-2xl border border-[#E6E9F0] bg-white p-6">
@@ -255,9 +250,72 @@ export default function RecipientAlertPage() {
         ) : <p className="mt-4 rounded-xl bg-[#FBFAF9] p-4 text-sm text-[#6B7488]">No public communication has been published.</p>}
       </section>
 
-      <p className="flex items-center gap-2 text-xs text-[#6B7488]"><ShieldCheck className="h-4 w-4" /> This view contains only information authorized for your role and service relationship.</p>
+      <p className="flex items-center gap-2 text-xs text-[#6B7488]"><ShieldCheck className="h-4 w-4" /> This view contains only information authorized for your role and scope. Restricted operational notes and recipient identities are not included.</p>
     </div>
   );
+}
+
+function displayLabel(value: unknown) {
+  return String(value || "Unavailable").toLowerCase().replaceAll("_", " ").replace(/^./, (character) => character.toUpperCase());
+}
+
+function AuditorEvidence({ alert, content, publications }: { alert: AlertDetail; content: Record<string, unknown>; publications: Publication[] }) {
+  const evidence = alert.evidence;
+  const checks = evidence?.summary?.checks || {};
+  const auditEvents = evidence?.audit_events || [];
+  const latestPublication = publications[0];
+  const audienceSnapshot = latestPublication?.audience_snapshot || (Array.isArray(content.audiences) ? content.audiences as Array<Record<string, unknown>> : []);
+  const audienceTypes = [...new Set(audienceSnapshot.map((item) => String(item.type || "UNKNOWN")))];
+  const resolution = latestPublication?.recipient_resolution || {};
+  const evidenceStatus = evidence?.summary?.status || "UNAVAILABLE";
+
+  return <div className="space-y-5">
+    <section className="rounded-2xl border border-[#DDD6FE] bg-white p-6 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div><h2 className="flex items-center gap-2 font-semibold"><ShieldCheck className="h-5 w-5 text-[#6D28D9]" /> Governance summary</h2><p className="mt-1 text-xs text-[#6B7488]">Read-only lifecycle and actor evidence for this canonical alert.</p></div>
+        <span className="rounded-full border border-[#DDD6FE] bg-[#F8F5FF] px-3 py-1 text-xs font-bold text-[#5B21B6]">{displayLabel(evidenceStatus)}</span>
+      </div>
+      <div className="mt-5 grid gap-5 sm:grid-cols-2">
+        <Field label="Created" value={content.created_at ? formatAlertDate(String(content.created_at)) : "Not recorded"} />
+        <Field label="Created by" value={evidence?.creator_display || content.created_by_id || "Actor unavailable"} />
+        <Field label="Last updated" value={content.updated_at ? formatAlertDate(String(content.updated_at)) : "Not recorded"} />
+        <Field label="Updated by" value={evidence?.updated_by_display || content.updated_by_id || "Actor unavailable"} />
+        <Field label="Current lifecycle" value={`${alert.status} · ${formatPublicStatus(content.public_status)}`} />
+        <Field label="Latest published version" value={latestPublication?.version ? `Version ${latestPublication.version} · ${displayLabel(latestPublication.type)}` : "Not published"} />
+        <Field label="Related records" value={alert.links.map((link) => `${link.type}: ${link.id}`).join("\n") || "None linked"} wide />
+      </div>
+    </section>
+
+    <section className="grid gap-5 lg:grid-cols-2">
+      <div className="rounded-2xl border border-[#E6E9F0] bg-white p-6 shadow-sm">
+        <h2 className="flex items-center gap-2 font-semibold"><Users className="h-5 w-5 text-[#6D28D9]" /> Audience &amp; recipient resolution</h2>
+        <p className="mt-1 text-xs text-[#6B7488]">Categories and aggregate outcomes only. Recipient identities are intentionally hidden.</p>
+        <div className="mt-4 flex flex-wrap gap-2">{audienceTypes.length ? audienceTypes.map((audience) => <span key={audience} className="rounded-full border border-[#DDD6FE] bg-[#F8F5FF] px-3 py-1 text-xs font-semibold text-[#5B21B6]">{displayLabel(audience)}</span>) : <span className="text-sm text-[#6B7488]">No audience configured.</span>}</div>
+        <div className="mt-5 space-y-3">{Object.keys(resolution).length ? Object.entries(resolution).map(([audience, states]) => <div key={audience} className="rounded-xl border border-[#EEF1F5] bg-[#FBFAF9] p-3"><div className="flex items-center justify-between gap-3"><p className="text-sm font-semibold text-[#0E1726]">{displayLabel(audience)}</p><p className="text-xs font-semibold text-[#5B21B6]">{Object.values(states).reduce((total, count) => total + count, 0)} resolved</p></div><p className="mt-1 text-xs text-[#6B7488]">{Object.entries(states).map(([state, count]) => `${displayLabel(state)}: ${count}`).join(" · ")}</p></div>) : <p className="rounded-xl bg-[#FBFAF9] p-4 text-sm text-[#6B7488]">No resolved-recipient evidence is available for the latest version.</p>}</div>
+        <p className="mt-4 text-xs text-[#8A5A2B]">Exclusion reasons: {displayLabel(latestPublication?.exclusion_evidence || "NOT_COLLECTED")}. A missing exclusion record does not prove that no one was excluded.</p>
+      </div>
+
+      <div className="rounded-2xl border border-[#E6E9F0] bg-white p-6 shadow-sm">
+        <h2 className="flex items-center gap-2 font-semibold"><Radio className="h-5 w-5 text-[#6D28D9]" /> Delivery evidence</h2>
+        <p className="mt-1 text-xs text-[#6B7488]">Recorded application states—not provider delivery or message-read confirmation.</p>
+        <div className="mt-4 grid grid-cols-2 gap-3">{alert.delivery_summary && Object.keys(alert.delivery_summary).length ? Object.entries(alert.delivery_summary).map(([state, count]) => <div key={state} className="rounded-xl border border-[#EEF1F5] bg-[#FBFAF9] p-3"><p className="text-2xl font-bold text-[#0E1726]">{count}</p><p className="mt-1 text-xs font-semibold text-[#6B7488]">{displayLabel(state)}</p></div>) : <p className="col-span-2 rounded-xl bg-[#FBFAF9] p-4 text-sm text-[#6B7488]">No delivery attempts are recorded.</p>}</div>
+        <div className="mt-4 rounded-xl border border-[#E7E1F7] bg-[#FCFAFF] p-4 text-xs leading-5 text-[#5B5670]"><strong className="text-[#352A52]">Recorded channel:</strong> {latestPublication?.delivery_channels?.length ? latestPublication.delivery_channels.map(displayLabel).join(", ") : "No channel evidence"}. “Available” means an in-app notification record was created; it does not mean the user opened it.</div>
+      </div>
+    </section>
+
+    <section className="rounded-2xl border border-[#E6E9F0] bg-white p-6 shadow-sm">
+      <h2 className="flex items-center gap-2 font-semibold"><FileCheck2 className="h-5 w-5 text-[#6D28D9]" /> Evidence completeness</h2>
+      <p className="mt-1 text-xs text-[#6B7488]">“Not collected” is different from evidence that an event did not occur.</p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{Object.entries(checks).map(([name, state]) => <div key={name} className="rounded-xl border border-[#EEF1F5] p-3"><p className="text-xs font-semibold text-[#6B7488]">{displayLabel(name)}</p><p className={`mt-1 text-sm font-bold ${state === "PRESENT" ? "text-[#286044]" : state === "MISSING" || state === "INCOMPLETE" ? "text-[#9A4E31]" : "text-[#5B21B6]"}`}>{displayLabel(state)}</p></div>)}</div>
+      {evidence?.authorization ? <div className="mt-4 rounded-xl border border-[#E7D9CF] bg-[#FFF9F5] p-4 text-sm text-[#704C3B]"><strong>Authorization evidence: {displayLabel(evidence.authorization.status)}</strong><p className="mt-1 text-xs leading-5">{evidence.authorization.explanation}</p></div> : null}
+    </section>
+
+    <section className="rounded-2xl border border-[#E6E9F0] bg-white p-6 shadow-sm">
+      <h2 className="flex items-center gap-2 font-semibold"><Clock3 className="h-5 w-5 text-[#6D28D9]" /> Tamper-evident event timeline</h2>
+      <p className="mt-1 text-xs text-[#6B7488]">Events are read from the tenant audit chain. A recorded hash is shown as evidence of chain participation; this page does not independently re-verify the full tenant chain.</p>
+      {auditEvents.length ? <ol className="mt-4 space-y-3">{auditEvents.map((event, index) => <li key={String(event.record_id || index)} className="rounded-xl border border-[#EEF1F5] bg-[#FBFAF9] p-4"><div className="flex flex-wrap items-center justify-between gap-2"><p className="font-semibold text-[#0E1726]">{displayLabel(event.action)}</p><span className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-[#5B21B6]">{displayLabel(event.outcome)}</span></div><p className="mt-1 text-xs text-[#6B7488]">{formatAlertDate(String(event.timestamp || ""))} · {String(event.actor_display || event.actor_id || "System")}</p><p className="mt-2 text-xs text-[#6B7488]">Correlation: <span className="font-mono">{String(event.correlation_id || "Unavailable")}</span></p><p className="mt-1 text-xs text-[#6B7488]">Integrity hash: <span className="font-mono">{event.integrity_hash ? `${String(event.integrity_hash).slice(0, 16)}…` : "Not recorded"}</span></p></li>)}</ol> : <p className="mt-4 rounded-xl bg-[#FBFAF9] p-4 text-sm text-[#6B7488]">No matching alert lifecycle events were found in the audit chain.</p>}
+    </section>
+  </div>;
 }
 
 function HistoryEntry({ publication, latest }: { publication: Publication; latest: boolean }) {
@@ -277,6 +335,8 @@ function HistoryEntry({ publication, latest }: { publication: Publication; lates
         {latest ? <span className="rounded-full bg-[#F1ECFE] px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-[#5B21B6]">Latest</span> : null}
       </div>
       <p className="mt-1 text-xs text-[#6B7488]">Published {formatAlertDate(publication.published_at)}</p>
+      {publication.publisher_display || publication.publisher_id ? <p className="mt-1 text-xs text-[#6B7488]">Publisher: {publication.publisher_display || publication.publisher_id}</p> : null}
+      {typeof publication.recipient_count === "number" ? <p className="mt-1 text-xs text-[#6B7488]">Resolved recipients: {publication.recipient_count}</p> : null}
       {publicationType === "RECOVERY" ? <p className="mt-1 text-xs font-semibold text-[#2F6B4F]">Recovered {formatAlertDate(String(content.recovered_at || publication.published_at || ""))}</p> : null}
       <HistoryField label="Update" value={content.public_summary} />
       <HistoryField label="Impact" value={content.impact_summary} />

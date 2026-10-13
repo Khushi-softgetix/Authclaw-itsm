@@ -135,6 +135,29 @@ class AlertSummary(BaseModel):
     recovered_at: datetime | None = None
 
 
+class AlertEvidenceSummary(AlertSummary):
+    created_by_id: UUID
+    created_by_display: str | None = None
+    created_at: datetime
+    published_by_id: UUID | None = None
+    published_by_display: str | None = None
+    intended_audiences: list[str] = Field(default_factory=list)
+    publication_count: int = 0
+    recipient_count: int = 0
+    delivery_summary: dict[str, int] = Field(default_factory=dict)
+    broadcast_outcome: str
+    audit_event_count: int = 0
+    evidence_status: str
+
+
+class AlertEvidencePage(BaseModel):
+    items: list[AlertEvidenceSummary]
+    total: int
+    offset: int
+    limit: int
+    has_more: bool
+
+
 class AlertDetail(BaseModel):
     id: UUID
     alert_number: str
@@ -146,6 +169,7 @@ class AlertDetail(BaseModel):
     links: list[dict[str, Any]]
     publications: list[dict[str, Any]]
     delivery_summary: dict[str, int] | None = None
+    evidence: dict[str, Any] | None = None
 
 
 class AlertPreview(BaseModel):

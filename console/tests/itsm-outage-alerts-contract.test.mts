@@ -17,6 +17,7 @@ test("BFF exposes the protected alert lifecycle and targeting routes", () => {
   assert.equal(resolveBffRoute("GET", "itsm/outage-alerts")?.backendPath, "/v1/itsm/outage-alerts");
   assert.equal(resolveBffRoute("GET", "itsm/outage-alerts/reference-data")?.backendPath, "/v1/itsm/outage-alerts/reference-data");
   assert.equal(resolveBffRoute("GET", "itsm/outage-alerts/reference-options")?.backendPath, "/v1/itsm/outage-alerts/reference-options");
+  assert.equal(resolveBffRoute("GET", "itsm/outage-alerts/auditor-evidence")?.backendPath, "/v1/itsm/outage-alerts/auditor-evidence");
   assert.equal(resolveBffRoute("POST", "itsm/outage-alerts/alert-id/preview")?.backendPath, "/v1/itsm/outage-alerts/alert-id/preview");
   assert.equal(resolveBffRoute("POST", "itsm/outage-alerts/alert-id/recovery")?.backendPath, "/v1/itsm/outage-alerts/alert-id/recovery");
   assert.equal(resolveBffRoute("PUT", "itsm/outage-alerts/services/service-id/consumers/user-id")?.backendPath, "/v1/itsm/outage-alerts/services/service-id/consumers/user-id");
@@ -52,6 +53,19 @@ test("create alert uses scalable authorized reference search instead of bulk cho
   assert.match(create, /outage_alert_id/);
   assert.doesNotMatch(create, /value === "SOLVE" && !hasIncidentLink/);
   assert.doesNotMatch(create, /function ChoiceGrid/);
+});
+
+test("alert composer presents intent and audiences as accessible scalable decisions", () => {
+  const create = read("../src/app/(console)/itsm/incident-manager/outage-alerts/create/page.tsx");
+  assert.match(create, /<fieldset/);
+  assert.match(create, /<legend className="sr-only">Communication intent<\/legend>/);
+  assert.match(create, /Who should receive this alert\?/);
+  assert.match(create, /Select audience groups—not individual people\./);
+  assert.match(create, /Recipients are resolved automatically\./);
+  assert.match(create, /service access, support-team coverage, and service ownership/);
+  assert.match(create, /focus-within:ring-2/);
+  assert.doesNotMatch(create, /lg:grid-cols-4/);
+  assert.doesNotMatch(create, /Primary recipient audiences/);
 });
 
 test("explicit Incident creation returns to the preserved alert draft and links the record", () => {
@@ -114,11 +128,13 @@ test("Auditor has a discoverable read-only Outage Alert evidence experience", ()
   const detail = read("../src/app/(console)/itsm/outage-alerts/[alertId]/page.tsx");
   assert.match(shell, /Outage Evidence/);
   assert.match(layout, /!== "AUDITOR"/);
-  assert.match(list, /Read-only evidence/);
-  assert.match(list, /alertApi<AlertSummary\[]>/);
+  assert.match(list, /Independent, read-only review/);
+  assert.match(list, /alertApi<AlertEvidencePage>/);
+  assert.match(list, /\/auditor-evidence/);
+  assert.match(list, /Apply filters/);
   assert.doesNotMatch(list, /method[=:]\s*["']POST|\/publish|\/recovery/);
   assert.match(detail, /projection_type === "AUDITOR"/);
-  assert.match(detail, /Delivery results/);
+  assert.match(detail, /Delivery evidence/);
 });
 
 test("SA-01 to SA-04: Service Agent visibility, guidance fallback, severity/intent, and incident link actions", () => {
@@ -300,19 +316,21 @@ test("Requester projection remains strictly isolated from operational guidance, 
   assert.doesNotMatch(detail, /alert\.projection_type === "REQUESTER"[\s\S]*?Associated investigation records/);
 });
 
-test("Auditor evidence behavior remains unchanged and read-only", () => {
+test("Auditor evidence is structured, restricted, and read-only", () => {
   const detail = read("../src/app/(console)/itsm/outage-alerts/[alertId]/page.tsx");
 
   // Auditor navigation points to auditor dashboard evidence
   assert.match(detail, /alert\.projection_type === "AUDITOR" \? "\/itsm\/dashboard\/auditor\/outage-alerts" : "\/itsm\/outage-alerts"/);
   assert.match(detail, /alert\.projection_type === "AUDITOR" \? "Back to outage evidence" : "Back to service alerts"/);
 
-  // Auditor evidence section renders complete canonical evidence
+  // Auditor evidence renders governance evidence without restricted notes.
   assert.match(detail, /alert\.projection_type === "AUDITOR"/);
-  assert.match(detail, /Auditor evidence/);
-  assert.match(detail, /Internal operational notes/);
+  assert.match(detail, /Governance summary/);
+  assert.match(detail, /Audience &amp; recipient resolution/);
+  assert.match(detail, /Tamper-evident event timeline/);
+  assert.doesNotMatch(detail, /Internal operational notes/);
   assert.match(detail, /Related records/);
-  assert.match(detail, /Delivery results/);
+  assert.match(detail, /Delivery evidence/);
 });
 
 test("Unauthorized links are never reconstructed, guessed, or fetched independently by the frontend", () => {

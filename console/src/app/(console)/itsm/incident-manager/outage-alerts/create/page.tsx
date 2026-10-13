@@ -3,20 +3,57 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, BellRing, Check, ChevronDown, FilePlus2, Link2, LoaderCircle, Save, Search, ShieldCheck, X } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  BellRing,
+  Check,
+  ChevronDown,
+  FilePlus2,
+  Headphones,
+  Info,
+  Link2,
+  LoaderCircle,
+  Megaphone,
+  Save,
+  Search,
+  ShieldCheck,
+  User,
+  Users,
+  Wrench,
+  X,
+} from "lucide-react";
 import { alertApi, type AlertDetail, type AlertReferenceOption, type AlertReferenceOptionPage } from "@/lib/outage-alerts";
 
 const intents = [
-  ["INFORM", "Inform", "Share an outage or service-status message."],
-  ["ACTION_REQUIRED", "Action required", "Recipients should take the stated action."],
-  ["INVESTIGATE", "Investigate", "Authorized operational responders should investigate."],
-  ["RESOLVE", "Resolve", "Authorized responders should work toward resolution."],
+  { value: "INFORM", label: "Inform", description: "Share an outage or service-status update.", icon: Megaphone },
+  { value: "ACTION_REQUIRED", label: "Action required", description: "Ask recipients to complete the stated action.", icon: AlertTriangle },
+  { value: "INVESTIGATE", label: "Investigate", description: "Ask authorized responders to investigate.", icon: Search },
+  { value: "RESOLVE", label: "Resolve", description: "Direct authorized responders toward resolution.", icon: Wrench },
 ] as const;
 
 const primaryAudiences = [
-  ["SERVICE_USERS", "Users of affected services", "People covered by the selected services' recipient rules."],
-  ["SERVICE_AGENTS", "Service Agents", "Agents in support teams assigned to selected services."],
-  ["SERVICE_OWNERS", "Service owners", "Active owners of selected services."],
+  {
+    value: "SERVICE_USERS",
+    label: "Users of affected services",
+    description: "People entitled to use the selected services.",
+    source: "Service access",
+    icon: Users,
+  },
+  {
+    value: "SERVICE_AGENTS",
+    label: "Service Agents",
+    description: "Agents in support teams assigned to the selected services.",
+    source: "Support coverage",
+    icon: Headphones,
+  },
+  {
+    value: "SERVICE_OWNERS",
+    label: "Service owners",
+    description: "Active owners responsible for the selected services.",
+    source: "Service ownership",
+    icon: User,
+  },
 ] as const;
 
 export default function CreateOutageAlertPage() {
@@ -265,81 +302,131 @@ export default function CreateOutageAlertPage() {
         </section>
 
         {/* Card 3: Audience and Communication Intent */}
-        <section className="rounded-2xl border border-[#E6E9F0] bg-white p-5 shadow-sm">
-          <div className="border-b border-[#EEF1F5] pb-2.5">
-            <h2 className="text-xs font-bold uppercase tracking-wider text-[#6D28D9]">Audience & Communication Intent</h2>
-            <p className="text-xs text-[#6B7488]">Intent shapes recipient actions; recipient rosters are resolved automatically from service ties.</p>
+        <section className="overflow-hidden rounded-2xl border border-[#E2E6EE] bg-white shadow-sm">
+          <div className="flex items-start gap-3 border-b border-[#E8EBF1] bg-[#FBFAFF] px-5 py-4">
+            <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#DDD6FE] bg-white text-[#6D28D9] shadow-sm">
+              <BellRing className="h-4.5 w-4.5" aria-hidden="true" />
+            </span>
+            <div>
+              <h2 className="text-base font-semibold tracking-tight text-[#172033]">Audience &amp; communication</h2>
+              <p className="mt-0.5 max-w-2xl text-xs leading-5 text-[#59657A]">
+                Choose the purpose and audience. AuthClaw resolves eligible recipients from the affected services before preview and publication.
+              </p>
+            </div>
           </div>
 
-          {/* Intent selector */}
-          <div className="mt-3.5">
-            <label className="text-xs font-semibold uppercase tracking-wide text-[#475069]">Communication intent</label>
-            <div className="mt-1.5 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              {intents.map(([value, label, description]) => {
-                const isSelected = selectedIntent === value;
-                return (
-                  <label
-                    key={value}
-                    className={`flex cursor-pointer flex-col justify-between rounded-xl border p-3 transition ${
-                      isSelected ? "border-[#8B5CF6] bg-[#F8F5FF] shadow-sm" : "border-[#E6E9F0] bg-white hover:border-[#DDD6FE]"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-[#0E1726]">{label}</span>
+          <div className="grid gap-5 p-5 lg:grid-cols-[1.08fr_0.92fr]">
+            {/* Intent selector */}
+            <fieldset className="min-w-0 rounded-2xl border border-[#E5E8EF] bg-[#FCFCFD] p-4">
+              <legend className="sr-only">Communication intent</legend>
+              <div className="mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#6D28D9] text-[11px] font-bold text-white">1</span>
+                  <h3 className="text-sm font-semibold text-[#172033]">Communication intent</h3>
+                </div>
+                <p className="mt-1 pl-7 text-xs leading-5 text-[#667085]">What should recipients understand or do?</p>
+              </div>
+              <div className="grid gap-2.5 sm:grid-cols-2">
+                {intents.map(({ value, label, description, icon: Icon }) => {
+                  const isSelected = selectedIntent === value;
+                  return (
+                    <label
+                      key={value}
+                      className={`group relative flex min-h-28 cursor-pointer flex-col rounded-xl border p-3.5 outline-none transition focus-within:ring-2 focus-within:ring-[#6D28D9]/20 ${
+                        isSelected
+                          ? "border-[#7C3AED] bg-[#F7F3FF] shadow-[0_1px_3px_rgba(109,40,217,0.12)]"
+                          : "border-[#DDE2EA] bg-white hover:border-[#C4B5FD] hover:bg-[#FDFCFF]"
+                      }`}
+                    >
                       <input
                         type="radio"
                         name="intent"
                         value={value}
                         checked={isSelected}
                         onChange={() => setSelectedIntent(value)}
-                        className="accent-[#6D28D9]"
+                        className="sr-only"
                       />
-                    </div>
-                    <span className="mt-1 text-[11px] leading-tight text-[#6B7488]">{description}</span>
-                  </label>
-                );
-              })}
-            </div>
-            {selectedIntent === "ACTION_REQUIRED" ? (
-              <p className="mt-2 rounded-lg border border-[#DDD6FE] bg-[#F8F5FF] p-2 text-xs text-[#5B21B6]">
-                💡 <strong>Action required:</strong> Remember to specify recommended user steps in Optional Information below.
-              </p>
-            ) : null}
+                      <div className="flex items-start justify-between gap-3">
+                        <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${isSelected ? "bg-[#6D28D9] text-white" : "bg-[#F1F3F7] text-[#536079] group-hover:bg-[#F3EEFF] group-hover:text-[#6D28D9]"}`}>
+                          <Icon className="h-4 w-4" aria-hidden="true" />
+                        </span>
+                        <span className={`flex h-5 w-5 items-center justify-center rounded-full border ${isSelected ? "border-[#6D28D9] bg-[#6D28D9] text-white" : "border-[#BCC4D0] bg-white"}`} aria-hidden="true">
+                          {isSelected ? <Check className="h-3 w-3" strokeWidth={3} /> : null}
+                        </span>
+                      </div>
+                      <span className="mt-3 text-sm font-semibold text-[#172033]">{label}</span>
+                      <span className="mt-1 text-xs leading-5 text-[#59657A]">{description}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              {selectedIntent === "ACTION_REQUIRED" ? (
+                <div className="mt-3 flex items-start gap-2 rounded-xl border border-[#DDD6FE] bg-[#F7F3FF] p-3 text-xs leading-5 text-[#4C1D95]">
+                  <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  <p><strong>Add clear instructions.</strong> Include the action recipients should take in Optional Information.</p>
+                </div>
+              ) : null}
+            </fieldset>
+
+            {/* Primary audiences */}
+            <fieldset className="min-w-0 rounded-2xl border border-[#E5E8EF] bg-[#FCFCFD] p-4">
+              <legend className="sr-only">Who should receive this alert?</legend>
+              <div className="mb-3">
+                <div className="flex items-center gap-2">
+                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#6D28D9] text-[11px] font-bold text-white">2</span>
+                  <h3 className="text-sm font-semibold text-[#172033]">Who should receive this alert?</h3>
+                </div>
+                <p className="mt-1 pl-7 text-xs leading-5 text-[#667085]">Select audience groups—not individual people.</p>
+              </div>
+              <div className="space-y-2.5">
+                {primaryAudiences.map(({ value, label, description, source, icon: Icon }) => {
+                  const isChecked = selectedAudiences.includes(value);
+                  return (
+                    <label
+                      key={value}
+                      className={`group flex cursor-pointer items-start gap-3 rounded-xl border p-3.5 outline-none transition focus-within:ring-2 focus-within:ring-[#6D28D9]/20 ${
+                        isChecked
+                          ? "border-[#7C3AED] bg-[#F7F3FF] shadow-[0_1px_3px_rgba(109,40,217,0.1)]"
+                          : "border-[#DDE2EA] bg-white hover:border-[#C4B5FD] hover:bg-[#FDFCFF]"
+                      }`}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isChecked}
+                        onChange={() => toggle(value, selectedAudiences, setSelectedAudiences)}
+                        className="sr-only"
+                      />
+                      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${isChecked ? "bg-[#EDE9FE] text-[#6D28D9]" : "bg-[#F1F3F7] text-[#536079] group-hover:bg-[#F3EEFF] group-hover:text-[#6D28D9]"}`}>
+                        <Icon className="h-4 w-4" aria-hidden="true" />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-start justify-between gap-3">
+                          <span className="text-sm font-semibold text-[#172033]">{label}</span>
+                          <span className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${isChecked ? "border-[#6D28D9] bg-[#6D28D9] text-white" : "border-[#BCC4D0] bg-white"}`} aria-hidden="true">
+                            {isChecked ? <Check className="h-3 w-3" strokeWidth={3} /> : null}
+                          </span>
+                        </span>
+                        <span className="mt-0.5 block text-xs leading-5 text-[#59657A]">{description}</span>
+                        <span className="mt-1.5 inline-flex rounded-full bg-[#F1F3F7] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#667085]">{source}</span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </fieldset>
           </div>
 
-          {/* Primary audiences */}
-          <div className="mt-4 border-t border-[#EEF1F5] pt-3.5">
-            <label className="text-xs font-semibold uppercase tracking-wide text-[#475069]">Primary recipient audiences</label>
-            <p className="mt-0.5 text-xs text-[#6B7488]">Authorized people are resolved dynamically from service entitlements and support rosters.</p>
-            <div className="mt-2 grid gap-2 sm:grid-cols-3">
-              {primaryAudiences.map(([value, label, description]) => {
-                const isChecked = selectedAudiences.includes(value);
-                return (
-                  <label
-                    key={value}
-                    className={`flex cursor-pointer items-start gap-2.5 rounded-xl border p-2.5 transition ${
-                      isChecked ? "border-[#8B5CF6] bg-[#F8F5FF]" : "border-[#E6E9F0] bg-white hover:border-[#DDD6FE]"
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={isChecked}
-                      onChange={() => toggle(value, selectedAudiences, setSelectedAudiences)}
-                      className="mt-0.5 accent-[#6D28D9]"
-                    />
-                    <div className="min-w-0">
-                      <span className="block text-xs font-bold text-[#0E1726]">{label}</span>
-                      <span className="block text-[11px] leading-snug text-[#6B7488]">{description}</span>
-                    </div>
-                  </label>
-                );
-              })}
-            </div>
+          <div className="mx-5 mb-5 flex items-start gap-2.5 rounded-xl border border-[#E3E7EE] bg-[#F8FAFC] px-3.5 py-3">
+            <Info className="mt-0.5 h-4 w-4 shrink-0 text-[#6D28D9]" aria-hidden="true" />
+            <p className="text-xs leading-5 text-[#59657A]">
+              <strong className="font-semibold text-[#344054]">Recipients are resolved automatically.</strong>{" "}
+              Eligibility comes from current service access, support-team coverage, and service ownership when you preview or publish.
+            </p>
           </div>
 
           {/* Service Agent handling (conditional) */}
           {showAgentHandling ? (
-            <div className="mt-4 rounded-xl border border-[#DDD6FE] bg-[#FAF5FF] p-4">
+            <div className="mx-5 mb-5 rounded-xl border border-[#DDD6FE] bg-[#FAF5FF] p-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-bold uppercase tracking-wide text-[#6D28D9]">Service Agent Handling</h3>
                 <span className="text-[11px] text-[#6B7488]">Governs agent queue resolution workflow</span>

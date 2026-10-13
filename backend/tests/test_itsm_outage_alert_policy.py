@@ -54,9 +54,12 @@ def test_service_agent_projection_includes_only_approved_support_context():
     assert "internal_notes" not in projected
 
 
-def test_auditor_projection_is_complete_but_read_only():
+def test_auditor_projection_is_evidence_safe_and_read_only():
     projected = project_alert(CONTENT, "AUDITOR")
-    assert projected["internal_notes"] == CONTENT["internal_notes"]
+    assert projected["severity"] == CONTENT["severity"]
+    assert projected["links"] == CONTENT["links"]
+    assert "internal_notes" not in projected
+    assert "service_agent_guidance" not in projected
     assert allowed_actions_for("AUDITOR", intent="RESOLVE", handling="SOLVE", has_incident_link=True) == ["VIEW_EVIDENCE"]
 
 
@@ -108,3 +111,29 @@ def test_public_status_is_separate_from_internal_lifecycle_and_recovery_is_expli
         OutageAlertService._publication_public_status(alert, "UPDATE", "RECOVERED")
     with pytest.raises(HTTPException, match="requires the Recovered public status"):
         OutageAlertService._publication_public_status(alert, "RECOVERY", "MONITORING")
+
+
+def test_auditor_evidence_status_distinguishes_missing_from_not_collected():
+    publication = SimpleNamespace(
+        audience_snapshot=[{"type": "SERVICE_USERS"}],
+        recipient_count=1,
+        recipients=[SimpleNamespace(delivery_status="AVAILABLE")],
+    )
+    alert = SimpleNamespace(status="ACTIVE", publications=[publication])
+
+    evidence = OutageAlertService._auditor_evidence_status(alert, audit_event_count=2)
+
+    assert evidence["status"] == "AVAILABLE_WITH_LIMITATIONS"
+    assert evidence["checks"]["publication_history"] == "PRESENT"
+    assert evidence["checks"]["delivery_evidence"] == "PRESENT"
+    assert evidence["checks"]["authorization_decision"] == "NOT_COLLECTED"
+    assert evidence["checks"]["recipient_exclusions"] == "NOT_COLLECTED"
+
+
+def test_auditor_evidence_status_flags_missing_required_publication():
+    alert = SimpleNamespace(status="ACTIVE", publications=[])
+
+    evidence = OutageAlertService._auditor_evidence_status(alert, audit_event_count=1)
+
+    assert evidence["status"] == "INCOMPLETE"
+    assert evidence["checks"]["publication_history"] == "MISSING"

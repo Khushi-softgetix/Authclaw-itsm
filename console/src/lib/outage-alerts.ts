@@ -14,6 +14,29 @@ export type AlertSummary = {
   recovered_at?: string | null;
 };
 
+export type AlertEvidenceSummary = AlertSummary & {
+  created_by_id: string;
+  created_by_display?: string | null;
+  created_at: string;
+  published_by_id?: string | null;
+  published_by_display?: string | null;
+  intended_audiences: string[];
+  publication_count: number;
+  recipient_count: number;
+  delivery_summary: Record<string, number>;
+  broadcast_outcome: string;
+  audit_event_count: number;
+  evidence_status: string;
+};
+
+export type AlertEvidencePage = {
+  items: AlertEvidenceSummary[];
+  total: number;
+  offset: number;
+  limit: number;
+  has_more: boolean;
+};
+
 export type AlertDetail = {
   id: string;
   alert_number: string;
@@ -25,6 +48,14 @@ export type AlertDetail = {
   links: Array<{ type: string; id: string }>;
   publications: Array<Record<string, unknown>>;
   delivery_summary?: Record<string, number> | null;
+  evidence?: {
+    summary?: { status?: string; checks?: Record<string, string> };
+    creator_display?: string | null;
+    updated_by_display?: string | null;
+    audit_events?: Array<Record<string, unknown>>;
+    authorization?: { status?: string; explanation?: string };
+    recipient_identities_exposed?: boolean;
+  } | null;
 };
 
 export type AlertReferenceData = {

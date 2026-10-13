@@ -85,3 +85,34 @@ export function formatPublicStatus(value?: unknown) {
   if (!status) return "Status unavailable";
   return status.toLowerCase().replaceAll("_", " ").replace(/^./, (character) => character.toUpperCase());
 }
+
+export function getAlertIncidentLinks(links?: Array<{ type: string; id: string }> | null): Array<{ type: string; id: string }> {
+  return (links || []).filter((link) => link.type === "INCIDENT" || link.type === "MAJOR_INCIDENT");
+}
+
+export function getPrimaryIncidentLink(links?: Array<{ type: string; id: string }> | null): { type: string; id: string } | null {
+  const incidentLinks = getAlertIncidentLinks(links);
+  return incidentLinks.find((link) => link.type === "INCIDENT") || incidentLinks[0] || null;
+}
+
+export function canOpenLinkedIncident(alert?: Pick<AlertDetail, "allowed_actions" | "links"> | null): boolean {
+  if (!alert || !Array.isArray(alert.allowed_actions) || !alert.allowed_actions.includes("OPEN_LINKED_INCIDENT")) {
+    return false;
+  }
+  return Boolean(getPrimaryIncidentLink(alert.links));
+}
+
+export function getAlertProcessLinks(links?: Array<{ type: string; id: string }> | null): Array<{ type: string; id: string }> {
+  return (links || []).filter((link) => link.type === "PROBLEM" || link.type === "CHANGE");
+}
+
+export function getProcessLinkHref(link?: { type: string; id: string } | null): string | null {
+  if (!link || !link.id) return null;
+  if (link.type === "PROBLEM") {
+    return `/itsm/problem-change-manager/problems/${link.id}`;
+  }
+  if (link.type === "CHANGE") {
+    return `/itsm/problem-change-manager/changes/${link.id}`;
+  }
+  return null;
+}

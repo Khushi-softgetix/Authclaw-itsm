@@ -89,6 +89,13 @@ test("ITSM Landing page CTA routes unauthenticated visitors to /itsm/login", () 
     landingSource.includes('const primaryCtaHref = isAuthenticated ? "/itsm/incidents" : "/itsm/login";'),
     "ITSM landing page must direct unauthenticated visitors to /itsm/login"
   );
+
+  assert.match(
+    landingSource,
+    /Service work,<\/span>[\s\S]*ownership, and<\/span>[\s\S]*decisions - connected<\/span>/,
+    "ITSM landing headline must use the approved aligned copy"
+  );
+  assert.ok(!landingSource.includes("decisions&mdash;connected."), "Old headline punctuation must not return");
 });
 
 test("Dedicated ITSM login page reuses /api/auth/login and routes to /itsm/incidents", () => {

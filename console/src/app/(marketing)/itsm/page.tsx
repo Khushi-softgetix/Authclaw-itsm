@@ -86,8 +86,10 @@ export default async function ItsmLandingPage() {
       <section className="overflow-hidden border-b border-[#E6E9F0] bg-white">
         <div className="mx-auto grid max-w-7xl items-center gap-12 px-6 py-16 sm:px-8 sm:py-20 lg:items-start lg:min-h-[650px] lg:grid-cols-[minmax(0,1.03fr)_minmax(460px,.97fr)] lg:gap-20 lg:py-24">
           <div className="max-w-2xl">
-            <h1 className="max-w-[720px] text-[42px] font-semibold leading-[1.05] tracking-[-0.045em] text-[#0E1726] sm:text-[56px] lg:text-[64px]">
-              Service work, ownership, and decisions&mdash;connected.
+            <h1 className="max-w-[760px] text-[42px] font-semibold leading-[1.05] tracking-[-0.045em] text-[#0E1726] sm:text-[56px] lg:text-[60px]">
+              <span className="block">Service work,</span>
+              <span className="block">ownership, and</span>
+              <span className="block sm:whitespace-nowrap">decisions - connected</span>
             </h1>
             <div className="mt-9 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
               <Link className="btn btn-primary w-full justify-center sm:w-auto" href={primaryCtaHref}>

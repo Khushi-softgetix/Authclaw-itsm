@@ -3,8 +3,18 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { AlertTriangle, ArrowLeft, BellRing, CheckCircle2, Clock3, ShieldCheck } from "lucide-react";
-import { alertApi, type AlertDetail, formatAlertDate, formatPublicStatus } from "@/lib/outage-alerts";
+import { AlertTriangle, ArrowLeft, BellRing, CheckCircle2, Clock3, ExternalLink, GitPullRequest, Headphones, ShieldCheck } from "lucide-react";
+import {
+  alertApi,
+  type AlertDetail,
+  canOpenLinkedIncident as canOpenAlertIncident,
+  formatAlertDate,
+  formatPublicStatus,
+  getAlertIncidentLinks,
+  getAlertProcessLinks,
+  getPrimaryIncidentLink,
+  getProcessLinkHref,
+} from "@/lib/outage-alerts";
 
 type Publication = {
   id?: string;
@@ -66,6 +76,11 @@ export default function RecipientAlertPage() {
   const publications = [...alert.publications].reverse() as Publication[];
   const backHref = alert.projection_type === "AUDITOR" ? "/itsm/dashboard/auditor/outage-alerts" : "/itsm/outage-alerts";
 
+  const incidentLinks = getAlertIncidentLinks(alert.links);
+  const primaryIncidentLink = getPrimaryIncidentLink(alert.links);
+  const canOpenLinkedIncident = canOpenAlertIncident(alert);
+  const processLinks = getAlertProcessLinks(alert.links);
+
   return (
     <div className="mx-auto max-w-4xl space-y-5">
       <Link href={backHref} className="inline-flex items-center gap-2 text-sm font-semibold text-[#5B21B6]">
@@ -81,6 +96,20 @@ export default function RecipientAlertPage() {
             {isRecovered ? "Recovered service alert" : "Active service alert"}
             <span aria-hidden="true">·</span>
             <span>{publicStatus}</span>
+            {content.severity ? (
+              <>
+                <span aria-hidden="true">·</span>
+                <span className="rounded-md border border-[#DDD6FE] bg-white px-2 py-0.5 text-[11px] font-bold text-[#5B21B6]">
+                  {String(content.severity)}
+                </span>
+              </>
+            ) : null}
+            {content.intent ? (
+              <>
+                <span aria-hidden="true">·</span>
+                <span>{String(content.intent).replaceAll("_", " ")}</span>
+              </>
+            ) : null}
           </div>
           <h1 className="mt-3 text-3xl font-bold tracking-tight">{String(content.title || alert.alert_number)}</h1>
           <p className="mt-3 max-w-3xl text-[#475069]">{String(content.public_summary || "")}</p>
@@ -90,6 +119,8 @@ export default function RecipientAlertPage() {
           <div className="grid gap-5 sm:grid-cols-2">
             <Field label="Affected services" value={alert.affected_services.map((service) => service.name).join(", ") || "Service scope unavailable"} />
             <Field label="Current status" value={publicStatus} />
+            {content.severity ? <Field label="Severity" value={content.severity} /> : null}
+            {content.intent ? <Field label="Intent" value={String(content.intent).replaceAll("_", " ")} /> : null}
             <Field label="Outage started" value={content.outage_started_at ? formatAlertDate(String(content.outage_started_at)) : "Start time not announced"} />
             <Field label="Last public update" value={content.latest_publication_at ? formatAlertDate(String(content.latest_publication_at)) : "Not available"} />
             {isRecovered ? <Field label="Recovered at" value={content.recovered_at ? formatAlertDate(String(content.recovered_at)) : "Recovery time unavailable"} /> : null}
@@ -97,13 +128,107 @@ export default function RecipientAlertPage() {
             <Field label="Business impact" value={content.impact_summary} wide />
             <Field label="What you should do" value={content.recommended_action || "No action is required at this time."} wide />
           </div>
-          {alert.allowed_actions.includes("ACKNOWLEDGE") ? (
-            <button disabled={busy} onClick={() => void acknowledge()} className="mt-7 inline-flex items-center gap-2 rounded-xl bg-[#6D28D9] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#5B21B6] disabled:opacity-60">
-              <CheckCircle2 className="h-4 w-4" /> {busy ? "Recording..." : "Acknowledge"}
-            </button>
-          ) : null}
+
+          <div className="mt-7 flex flex-wrap items-center gap-3">
+            {alert.allowed_actions.includes("ACKNOWLEDGE") ? (
+              <button disabled={busy} onClick={() => void acknowledge()} className="inline-flex items-center gap-2 rounded-xl bg-[#6D28D9] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#5B21B6] disabled:opacity-60">
+                <CheckCircle2 className="h-4 w-4" /> {busy ? "Recording..." : "Acknowledge"}
+              </button>
+            ) : null}
+            {canOpenLinkedIncident && primaryIncidentLink ? (
+              <Link
+                href={`/itsm/incidents/${primaryIncidentLink.id}`}
+                className="inline-flex items-center gap-2 rounded-xl border border-[#8B5CF6] bg-white px-4 py-2.5 text-sm font-semibold text-[#5B21B6] shadow-sm hover:bg-[#F8F5FF]"
+              >
+                <ExternalLink className="h-4 w-4" /> Open linked incident
+              </Link>
+            ) : null}
+          </div>
         </div>
       </article>
+
+      {alert.projection_type === "SERVICE_AGENT" ? (
+        <section className="rounded-2xl border border-[#DDD6FE] bg-white p-6 shadow-sm">
+          <h2 className="flex items-center gap-2 font-semibold text-[#0E1726]">
+            <Headphones className="h-5 w-5 text-[#6D28D9]" /> Operational support guidance
+          </h2>
+          <p className="mt-1 text-xs text-[#6B7488]">Approved operational instructions and authorized resolution links for Service Agents.</p>
+
+          <div className="mt-4 rounded-xl border border-[#DDD6FE] bg-[#F8F5FF] p-4">
+            <p className="text-xs font-semibold uppercase tracking-wider text-[#6D28D9]">Approved guidance</p>
+            {content.service_agent_guidance ? (
+              <p className="mt-2 whitespace-pre-wrap text-sm text-[#352A52]">{String(content.service_agent_guidance)}</p>
+            ) : (
+              <p className="mt-2 text-sm italic text-[#6B7488]">No specific agent guidance was issued for this alert.</p>
+            )}
+            {content.service_agent_handling ? (
+              <div className="mt-3 flex items-center gap-2 text-xs text-[#5B5670]">
+                <span className="font-semibold text-[#352A52]">Handling mode:</span>
+                <span className="rounded border border-[#DDD6FE] bg-white px-2 py-0.5 font-medium">{String(content.service_agent_handling).replaceAll("_", " ")}</span>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="mt-5 border-t border-[#EEF1F5] pt-4">
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-[#8A93A5]">Authorized resolution incidents</h3>
+            {incidentLinks.length ? (
+              <ul className="mt-3 space-y-2">
+                {incidentLinks.map((link) => (
+                  <li key={link.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#EEF1F5] bg-[#FBFAF9] p-3 text-sm">
+                    <div>
+                      <span className="font-semibold text-[#0E1726]">{link.type.replaceAll("_", " ")}</span>
+                      <span className="ml-2 font-mono text-xs text-[#6B7488]">{link.id}</span>
+                    </div>
+                    <Link
+                      href={`/itsm/incidents/${link.id}`}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[#DDD6FE] bg-white px-3 py-1.5 text-xs font-semibold text-[#5B21B6] hover:bg-[#F8F5FF]"
+                    >
+                      Open incident <ExternalLink className="h-3.5 w-3.5" />
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="mt-2 text-sm text-[#6B7488]">No authorized incidents are currently linked to this alert.</p>
+            )}
+          </div>
+        </section>
+      ) : null}
+
+      {alert.projection_type === "PROCESS_MANAGER" ? (
+        <section className="rounded-2xl border border-[#DDD6FE] bg-white p-6 shadow-sm">
+          <h2 className="flex items-center gap-2 font-semibold text-[#0E1726]">
+            <GitPullRequest className="h-5 w-5 text-[#6D28D9]" /> Associated investigation records
+          </h2>
+          <p className="mt-1 text-xs text-[#6B7488]">Problem and Change records assigned to your queue for this outage.</p>
+
+          {processLinks.length ? (
+            <ul className="mt-4 space-y-2">
+              {processLinks.map((link) => {
+                const isProblem = link.type === "PROBLEM";
+                const targetHref = getProcessLinkHref(link);
+                if (!targetHref) return null;
+                return (
+                  <li key={link.id} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#EEF1F5] bg-[#FBFAF9] p-3 text-sm">
+                    <div>
+                      <span className="font-semibold text-[#0E1726]">{isProblem ? "Problem Record" : "Change Request"}</span>
+                      <span className="ml-2 font-mono text-xs text-[#6B7488]">{link.id}</span>
+                    </div>
+                    <Link
+                      href={targetHref}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-[#DDD6FE] bg-white px-3 py-1.5 text-xs font-semibold text-[#5B21B6] hover:bg-[#F8F5FF]"
+                    >
+                      View {isProblem ? "problem" : "change"} <ExternalLink className="h-3.5 w-3.5" />
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <p className="mt-4 text-sm text-[#6B7488]">No operational records are currently linked to your queue for this alert.</p>
+          )}
+        </section>
+      ) : null}
 
       {alert.projection_type === "AUDITOR" ? (
         <section className="rounded-2xl border border-[#DDD6FE] bg-white p-6">

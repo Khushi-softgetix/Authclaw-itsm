@@ -226,6 +226,10 @@ services:
       dockerfile: Dockerfile.demo
     container_name: authclaw-full-backend
     env_file:
+      - path: .env.full
+        required: false
+      - path: .env
+        required: false
       - path: .env.local
         required: false
     depends_on:

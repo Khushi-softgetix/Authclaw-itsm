@@ -66,6 +66,11 @@ const ITSM_ROLES = [
     label: "Catalog Manager",
     desc: "Manage Service Catalog offerings and intake forms.",
   },
+  {
+    value: "CMDB_ADMIN",
+    label: "CMDB Admin",
+    desc: "Maintain configuration items, relationships, schema, and imports.",
+  },
 ];
 
 export default function UserAccessDetailPage() {

@@ -1480,6 +1480,34 @@ class ITSMConfigurationItem(Base):
     )
 
 
+class ITSMConfigurationItemRelationship(Base):
+    """Typed configuration item relationships (CMDB-002 Service Graph Edges)."""
+    __tablename__ = "itsm_ci_relationships"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    parent_ci_id = Column(UUID(as_uuid=True), ForeignKey("itsm_configuration_items.id", ondelete="CASCADE"), nullable=False)
+    child_ci_id = Column(UUID(as_uuid=True), ForeignKey("itsm_configuration_items.id", ondelete="CASCADE"), nullable=False)
+    relationship_type = Column(String(50), nullable=False, default="DEPENDS_ON")
+    source = Column(String(100), nullable=False, default="MANUAL")
+    confidence = Column(Float, nullable=False, default=1.0)
+    status = Column(String(32), nullable=False, default="ACTIVE")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+    parent_ci = relationship("ITSMConfigurationItem", foreign_keys=[parent_ci_id])
+    child_ci = relationship("ITSMConfigurationItem", foreign_keys=[child_ci_id])
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "parent_ci_id", "child_ci_id", "relationship_type", name="uq_itsm_ci_rel"),
+        CheckConstraint("parent_ci_id != child_ci_id", name="ck_itsm_ci_rel_no_self_ref"),
+        Index("idx_itsm_ci_rel_parent", "tenant_id", "parent_ci_id"),
+        Index("idx_itsm_ci_rel_child", "tenant_id", "child_ci_id"),
+        Index("idx_itsm_ci_rel_type", "tenant_id", "relationship_type"),
+    )
+
+
 # -----------------------------------------------------------------------------
 # V1 Models (5 tables)
 # -----------------------------------------------------------------------------

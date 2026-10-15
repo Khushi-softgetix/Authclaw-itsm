@@ -65,6 +65,7 @@ const ITSM_ROLE_LABELS: Record<string, string> = {
   PLATFORM_ADMINISTRATOR: "Platform Administrator",
   AUDITOR: "Auditor",
   CATALOG_MANAGER: "Catalog Manager",
+  CMDB_ADMIN: "CMDB Admin",
 };
 
 const readRoles = ["owner", "admin", "developer", "operator", "viewer"];
@@ -124,6 +125,10 @@ const catalogManagerNavigation: NavItem[] = [
   { name: "Form Builder", href: "/itsm/catalog-manager/form-builder", icon: FileCheck, roles: readRoles },
 ];
 
+const cmdbAdminNavigation: NavItem[] = [
+  { name: "Configuration Items", href: "/itsm/admin-portal/configuration-items", icon: Database, roles: readRoles },
+];
+
 export default function ConsoleShell({ children, userEmail, tenantId, tenantName, userRole, platformRole = "NONE", itsmRole }: ConsoleShellProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -160,6 +165,8 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
       ? problemChangeNavigation
       : effectiveItsmRole === "CATALOG_MANAGER"
       ? catalogManagerNavigation
+      : effectiveItsmRole === "CMDB_ADMIN"
+      ? cmdbAdminNavigation
       : itsmNavigation
     : navigation;
   const allowedNavigation = activeNavigationList.filter((item) => item.roles.includes(normalizedRole));

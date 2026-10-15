@@ -102,6 +102,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
             "/v1/auth/login",
             "/v1/auth/password-reset/request",
             "/v1/auth/password-reset/confirm",
+            "/v1/auth/activate",
+            "/v1/itsm/admin/users/activate",
             "/api/public/v1/access-requests",
         }
         public_access_request = (

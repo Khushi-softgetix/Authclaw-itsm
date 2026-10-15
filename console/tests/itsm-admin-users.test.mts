@@ -219,3 +219,44 @@ test("BFF routes whitelist Step 1 & Step 2 endpoints and reject non-implemented 
   assert.equal(resolveBffRoute("GET", "itsm/admin/cmdb-discovery"), null);
   assert.equal(resolveBffRoute("GET", "itsm/admin/integrations"), null);
 });
+
+test("Prompt 4: Create/Invite modal removes temporary passwords and adds invitation lifecycle actions", () => {
+  const pagePath = path.join(consoleDir, "src/app/(console)/itsm/admin-portal/users/page.tsx");
+  const source = fs.readFileSync(pagePath, "utf-8");
+
+  // Zero temporary passwords
+  assert.ok(!source.includes('type="password"'), "Modal must not contain password inputs");
+  assert.ok(!source.includes("manualPassword"), "manualPassword state must be removed");
+  assert.ok(!source.includes("manualConfirmPassword"), "manualConfirmPassword state must be removed");
+  assert.ok(!source.includes("Email these login credentials"), "Credentials checkbox must be removed");
+
+  // Required invitation inputs
+  assert.ok(source.includes("inviteEmail"), "Must require employee email");
+  assert.ok(source.includes("inviteRole"), "Must require ITSM role");
+  assert.ok(source.includes("Send Invitation"), "Must provide Send Invitation action");
+
+  // Status displays
+  assert.ok(source.includes("Pending Activation"), "Must display Pending Activation status");
+  assert.ok(source.includes("Expired"), "Must handle Expired status");
+  assert.ok(source.includes("Revoked"), "Must handle Revoked status");
+
+  // Authorized actions
+  assert.ok(source.includes("Resend Invite"), "Must provide Resend Invite action");
+  assert.ok(source.includes("Revoke"), "Must provide Revoke action");
+});
+
+test("Prompt 4: Account activation page exists and provides secure password setup without temporary passwords", () => {
+  const setupPath = path.join(consoleDir, "src/app/itsm/setup/page.tsx");
+  assert.ok(fs.existsSync(setupPath), "Account activation page must exist at /itsm/setup/page.tsx");
+
+  const source = fs.readFileSync(setupPath, "utf-8");
+  assert.ok(source.includes("Activate Your Account"), "Must have 'Activate Your Account' heading");
+  assert.ok(source.includes("new-password"), "Must have new password input");
+  assert.ok(source.includes("confirm-password"), "Must have confirm password input");
+  assert.ok(source.includes("showPassword"), "Must have show/hide password control");
+  assert.ok(source.includes("password.length < 12"), "Must validate minimum 12 characters");
+  assert.ok(source.includes("password !== confirmPassword"), "Must validate matching passwords");
+  assert.ok(source.includes("/api/itsm/activate"), "Must call activation API");
+  assert.ok(!source.includes("localStorage.setItem"), "Must not store tokens in localStorage");
+  assert.ok(!source.includes("sessionStorage.setItem"), "Must not store tokens in sessionStorage");
+});

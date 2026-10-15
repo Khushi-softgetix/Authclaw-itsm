@@ -7,6 +7,7 @@ import {
   Check,
   Database,
   Edit2,
+  GitBranch,
   Loader2,
   Plus,
   RefreshCw,
@@ -16,6 +17,7 @@ import {
   X,
 } from "lucide-react";
 import { CIImportModal } from "@/components/itsm/ci-import-modal";
+import { CIRelationshipsModal } from "@/components/itsm/ci-relationships-modal";
 
 interface ServiceOption {
   id: string;
@@ -55,10 +57,12 @@ export default function AdminConfigurationItemsPage() {
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("ALL");
+  const [isCmdbAdmin, setIsCmdbAdmin] = useState(false);
 
   // Modal state
   const [modalOpen, setModalOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
+  const [relationshipsCi, setRelationshipsCi] = useState<ConfigurationItem | null>(null);
   const [editingItem, setEditingItem] = useState<ConfigurationItem | null>(null);
   const [formName, setFormName] = useState("");
   const [formType, setFormType] = useState("SERVER");
@@ -97,7 +101,18 @@ export default function AdminConfigurationItemsPage() {
   };
 
   useEffect(() => {
-    const request = window.setTimeout(() => { void fetchItems(); void fetchServices(); }, 0);
+    const request = window.setTimeout(() => {
+      void fetchItems();
+      void fetchServices();
+      fetch("/api/auth/session")
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          if (data?.itsmRole === "CMDB_ADMIN" || data?.itsm_role === "CMDB_ADMIN") {
+            setIsCmdbAdmin(true);
+          }
+        })
+        .catch(() => {});
+    }, 0);
     return () => window.clearTimeout(request);
   }, []);
 
@@ -217,8 +232,11 @@ export default function AdminConfigurationItemsPage() {
       {/* Breadcrumb & Header */}
       <div>
         <div className="flex items-center gap-2 text-xs text-[#6B7488] mb-1">
-          <Link href="/itsm/admin-portal" className="hover:text-[#0E1726]">
-            Platform Administration
+          <Link
+            href={isCmdbAdmin ? "/itsm/admin-portal/configuration-items" : "/itsm/admin-portal"}
+            className="hover:text-[#0E1726]"
+          >
+            {isCmdbAdmin ? "CMDB Administration" : "Platform Administration"}
           </Link>
           <span>/</span>
           <span className="text-[#0E1726] font-medium">Configuration Items</span>
@@ -391,6 +409,14 @@ export default function AdminConfigurationItemsPage() {
                     </td>
                     <td className="py-3.5 px-4 text-right space-x-2">
                       <button
+                        onClick={() => setRelationshipsCi(ci)}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-[#E6E9F0] bg-white text-xs font-medium text-[#475069] hover:text-[#6D28D9] hover:bg-[#F1ECFE]/30 transition"
+                        title="Manage upstream and downstream relationships"
+                      >
+                        <GitBranch className="w-3 h-3 text-[#6D28D9]" />
+                        <span>Relationships</span>
+                      </button>
+                      <button
                         onClick={() => openEditModal(ci)}
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-[#E6E9F0] bg-white text-xs font-medium text-[#475069] hover:text-[#0E1726] hover:bg-[#F5F7FA] transition"
                       >
@@ -555,6 +581,14 @@ export default function AdminConfigurationItemsPage() {
         isOpen={importModalOpen}
         onClose={() => setImportModalOpen(false)}
         onImportComplete={fetchItems}
+      />
+
+      {/* CI Relationships Modal (CMDB-002) */}
+      <CIRelationshipsModal
+        isOpen={!!relationshipsCi}
+        onClose={() => setRelationshipsCi(null)}
+        ci={relationshipsCi}
+        availableCIs={items}
       />
     </div>
   );

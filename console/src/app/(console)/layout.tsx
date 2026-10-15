@@ -24,7 +24,7 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
   );
 
   if (!response.ok) {
-    redirect(isItsmPath ? "/itsm/login" : "/login");
+    redirect(isItsmPath ? "/itsm/login?error=session_expired" : "/login?error=session_expired");
   }
 
   const principal = await response.json();
@@ -68,9 +68,25 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
     ) {
       redirect("/itsm/dashboard");
     }
+    if (
+      itsmRole === "CMDB_ADMIN" &&
+      currentPath &&
+      currentPath !== "/itsm/profile" &&
+      !currentPath.startsWith("/itsm/profile/")
+    ) {
+      redirect("/itsm/admin-portal/configuration-items");
+    }
   }
 
   if (isAdminPortal) {
+    if (
+      itsmRole === "CMDB_ADMIN" &&
+      currentPath &&
+      !currentPath.startsWith("/itsm/admin-portal/configuration-items")
+    ) {
+      redirect("/itsm/admin-portal/configuration-items");
+    }
+
     return (
       <AdminPortalShell
         userEmail={userEmail}

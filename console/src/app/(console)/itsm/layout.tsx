@@ -15,7 +15,7 @@ export default async function ItsmLayout({ children }: { children: React.ReactNo
   );
 
   if (!response.ok) {
-    redirect("/itsm/login");
+    redirect("/itsm/login?error=session_expired");
   }
 
   const principal = await response.json();

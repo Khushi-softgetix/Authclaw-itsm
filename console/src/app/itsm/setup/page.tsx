@@ -6,9 +6,14 @@ import Link from "next/link";
 import {
   AlertCircle,
   ArrowRight,
+  Check,
   CheckCircle2,
-  KeyRound,
+  Eye,
+  EyeOff,
+  Loader2,
   Lock,
+  Mail,
+  RefreshCw,
   ShieldCheck,
 } from "lucide-react";
 import {
@@ -16,28 +21,27 @@ import {
   TERMS_VERSION,
 } from "@/marketing/legal-config";
 
-function isUuid(value: string | null): value is string {
-  return Boolean(
-    value &&
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
-  );
-}
-
-function ItsmSetupContent() {
+function ItsmActivationContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const inviteId = searchParams.get("invite");
+  const token = searchParams.get("token") || "";
+  const inviteId = searchParams.get("invite") || "";
   const emailParam = searchParams.get("email") || "";
 
-  const [otp, setOtp] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [termsAccepted, setTermsAccepted] = useState(true);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [errorType, setErrorType] = useState<"validation" | "expired" | "revoked" | "used" | "locked" | "server" | null>(null);
   const [success, setSuccess] = useState(false);
-  const [redirectSeconds, setRedirectSeconds] = useState(3);
+  const [activatedRole, setActivatedRole] = useState<string | null>(null);
+  const [redirectSeconds, setRedirectSeconds] = useState(4);
 
+  // Auto-redirect to login on success
   useEffect(() => {
     if (!success) return;
     const interval = setInterval(() => {
@@ -59,42 +63,50 @@ function ItsmSetupContent() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setErrorType(null);
 
-    if (!inviteId || !isUuid(inviteId)) {
-      setError("Invalid or missing invitation reference. Please use the exact link sent to your email.");
+    // Validation
+    if (!token.trim()) {
+      setError("Missing or invalid activation token. Please open the activation link directly from your invitation email.");
+      setErrorType("validation");
       return;
     }
 
-    const cleanOtp = otp.trim().replace(/\s+/g, "");
-    if (!/^\d{6}$/.test(cleanOtp)) {
-      setError("Please enter the 6-digit verification code from your email.");
+    if (!password) {
+      setError("Please enter a new password.");
+      setErrorType("validation");
       return;
     }
 
     if (password.length < 12) {
       setError("Password must be at least 12 characters long.");
+      setErrorType("validation");
       return;
     }
 
     if (password !== confirmPassword) {
-      setError("Password and confirmation do not match.");
+      setError("Passwords do not match. Please re-enter your confirmation password.");
+      setErrorType("validation");
       return;
     }
 
     if (!termsAccepted) {
-      setError("You must accept the Terms of Use and acknowledge the Privacy Notice.");
+      setError("You must accept the Terms of Use and Privacy Notice to proceed.");
+      setErrorType("validation");
       return;
     }
 
     setLoading(true);
     try {
-      const response = await fetch("/api/onboarding/verify", {
+      const response = await fetch("/api/itsm/activate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          signup_id: inviteId,
-          otp: cleanOtp,
+          token: token.trim(),
           password: password,
+          confirm_password: confirmPassword,
+          signup_id: inviteId || undefined,
+          email: emailParam || undefined,
           terms_accepted: true,
           terms_version: TERMS_VERSION,
           privacy_notice_acknowledged: true,
@@ -105,242 +117,326 @@ function ItsmSetupContent() {
       const data = await response.json().catch(() => ({}));
 
       if (!response.ok) {
-        const rawDetail = data.detail || data.message || "";
-        if (rawDetail.includes("invalid") || response.status === 400) {
-          if (rawDetail.includes("expired")) {
-            throw new Error("This invitation has expired (15 minutes). Please contact your administrator for a new invite.");
-          }
-          throw new Error("Invalid verification code. Please check your email and enter the correct 6-digit code.");
-        } else if (response.status === 429) {
-          throw new Error("Too many incorrect attempts. This invitation has been locked for security. Please request a new invite.");
+        const detail = (data.detail || data.message || "").toLowerCase();
+        if (detail.includes("expired")) {
+          setError("This activation link has expired (links are valid for 24 hours). Please contact your Platform Administrator to request a new invitation.");
+          setErrorType("expired");
+        } else if (detail.includes("revoked")) {
+          setError("This invitation has been revoked by your administrator. Please contact your administrator for a new invitation.");
+          setErrorType("revoked");
+        } else if (detail.includes("already") || detail.includes("used")) {
+          setError("This activation link has already been used. Your account is active. Please proceed to the sign-in page.");
+          setErrorType("used");
+        } else if (detail.includes("replaced") || detail.includes("superseded")) {
+          setError("This invitation has been replaced by a newer invitation link. Please check your inbox for the most recent email.");
+          setErrorType("revoked");
+        } else if (detail.includes("locked") || detail.includes("too many")) {
+          setError("Too many failed activation attempts. For security, this invitation is locked. Please request a new invitation from your administrator.");
+          setErrorType("locked");
         } else {
-          throw new Error(rawDetail || `Account setup failed (${response.status})`);
+          setError(data.detail || data.message || "Activation failed. Please ensure your link is valid or request a new invitation.");
+          setErrorType("server");
         }
+        return;
       }
 
       setSuccess(true);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Account setup failed. Please try again.");
+      if (data.itsm_role) {
+        setActivatedRole(data.itsm_role);
+      }
+    } catch {
+      setError("Unable to connect to the activation service. Please check your internet connection and try again.");
+      setErrorType("server");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <main className="min-h-screen bg-[#FBFAF9] text-[#0E1726] font-sans flex flex-col justify-center items-center px-4 py-12">
-      <div className="w-full max-w-md">
-        {/* Header Branding */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-12 h-12 rounded-[14px] bg-[#6D28D9] shadow-[0_8px_20px_-6px_rgba(109,40,217,0.5)] mb-3">
-            <ShieldCheck className="w-6 h-6 text-white" />
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-[#0E1726]">AuthClaw ITSM</h1>
-          <p className="text-xs text-[#6B7488] mt-1 font-medium">Enterprise IT Service Management</p>
+    <div className="w-full max-w-md rounded-2xl border border-[#E6E9F0] bg-white p-8 shadow-xl">
+      {/* Brand Header */}
+      <div className="flex items-center gap-3 pb-6 border-b border-[#F0F2F5]">
+        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-[#6D28D9] to-[#4F46E5] flex items-center justify-center text-white shadow-md shadow-[#6D28D9]/20">
+          <ShieldCheck className="w-5 h-5" />
         </div>
-
-        {/* Main Card */}
-        <div className="bg-white border border-[#E6E9F0] rounded-[18px] p-6 sm:p-8 shadow-[0_4px_24px_rgba(11,31,63,0.06)]">
-          {success ? (
-            <div className="text-center py-4">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-600 mb-4">
-                <CheckCircle2 className="w-8 h-8" />
-              </div>
-              <h2 className="text-lg font-bold text-[#0E1726] mb-1.5">Account Setup Complete!</h2>
-              <p className="text-xs text-[#475069] leading-relaxed mb-6">
-                Your password has been securely created and your ITSM account is activated.
-                {emailParam && (
-                  <span className="block mt-1 font-medium text-[#0E1726]">
-                    Account: {emailParam}
-                  </span>
-                )}
-              </p>
-
-              <div className="bg-[#F5F7FA] border border-[#E6E9F0] rounded-[10px] p-3 text-xs text-[#6B7488] mb-6">
-                Redirecting you to the sign-in page in <span className="font-bold text-[#6D28D9]">{redirectSeconds}</span> seconds...
-              </div>
-
-              <Link
-                href={
-                  emailParam
-                    ? `/itsm/login?email=${encodeURIComponent(emailParam)}&setup=success`
-                    : `/itsm/login?setup=success`
-                }
-                className="w-full inline-flex items-center justify-center gap-2 py-2.5 px-4 bg-[#6D28D9] hover:bg-[#5B21B6] text-white text-xs font-semibold rounded-[10px] shadow-[0_8px_20px_-8px_rgba(109,40,217,0.6)] transition"
-              >
-                <span>Proceed to Sign In</span>
-                <ArrowRight className="w-4 h-4" />
-              </Link>
-            </div>
-          ) : (
-            <>
-              <div className="mb-6">
-                <h2 className="text-lg font-bold text-[#0E1726]">Complete Account Setup</h2>
-                <p className="text-xs text-[#6B7488] mt-1">
-                  {emailParam ? (
-                    <>
-                      Setting up access for <strong className="text-[#0E1726]">{emailParam}</strong>. Please enter the verification code from your email and create your password.
-                    </>
-                  ) : (
-                    "Please enter the verification code sent to your email and create your password."
-                  )}
-                </p>
-              </div>
-
-              {/* Error Alert */}
-              {error && (
-                <div className="mb-5 p-3.5 rounded-[12px] bg-red-50 border border-red-200 flex items-start gap-2.5 text-red-700 text-xs">
-                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <div className="flex-1 font-medium">{error}</div>
-                </div>
-              )}
-
-              <form onSubmit={handleSubmit} className="space-y-4" autoComplete="off">
-                {/* 6-Digit OTP */}
-                <div>
-                  <label className="block text-xs font-semibold text-[#0E1726] mb-1.5" htmlFor="setup-otp">
-                    6-Digit Verification Code
-                  </label>
-                  <div className="relative">
-                    <input
-                      id="setup-otp"
-                      type="text"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      maxLength={6}
-                      required
-                      autoFocus
-                      value={otp}
-                      onChange={(e) => setOtp(e.target.value.replace(/[^0-9]/g, "").slice(0, 6))}
-                      placeholder="123456"
-                      className="w-full px-3 py-2.5 bg-[#F5F7FA] border border-[#E6E9F0] rounded-[10px] text-center text-lg font-bold tracking-[6px] text-[#0E1726] placeholder-[#9CA3AF] focus:bg-white focus:outline-none focus:border-[#6D28D9] focus:ring-1 focus:ring-[#6D28D9] transition font-mono"
-                    />
-                  </div>
-                  <p className="text-[11px] text-[#6B7488] mt-1">
-                    Check your inbox for the code sent by your platform administrator.
-                  </p>
-                </div>
-
-                {/* Password */}
-                <div>
-                  <label className="block text-xs font-semibold text-[#0E1726] mb-1.5" htmlFor="setup-password">
-                    Create Password
-                  </label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#6B7488]">
-                      <Lock className="w-4 h-4" />
-                    </div>
-                    <input
-                      id="setup-password"
-                      type="password"
-                      required
-                      minLength={12}
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="At least 12 characters"
-                      className="w-full pl-9 pr-3 py-2.5 bg-[#F5F7FA] border border-[#E6E9F0] rounded-[10px] text-xs text-[#0E1726] placeholder-[#6B7488] focus:bg-white focus:outline-none focus:border-[#6D28D9] focus:ring-1 focus:ring-[#6D28D9] transition"
-                    />
-                  </div>
-                  <div className="flex items-center justify-between text-[11px] text-[#6B7488] mt-1">
-                    <span>Minimum 12 characters</span>
-                    <span className={password.length >= 12 ? "text-emerald-600 font-medium" : "text-[#6B7488]"}>
-                      {password.length}/12
-                    </span>
-                  </div>
-                </div>
-
-                {/* Confirm Password */}
-                <div>
-                  <label className="block text-xs font-semibold text-[#0E1726] mb-1.5" htmlFor="setup-confirm-password">
-                    Confirm Password
-                  </label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#6B7488]">
-                      <KeyRound className="w-4 h-4" />
-                    </div>
-                    <input
-                      id="setup-confirm-password"
-                      type="password"
-                      required
-                      minLength={12}
-                      value={confirmPassword}
-                      onChange={(e) => setConfirmPassword(e.target.value)}
-                      placeholder="Repeat password"
-                      className="w-full pl-9 pr-3 py-2.5 bg-[#F5F7FA] border border-[#E6E9F0] rounded-[10px] text-xs text-[#0E1726] placeholder-[#6B7488] focus:bg-white focus:outline-none focus:border-[#6D28D9] focus:ring-1 focus:ring-[#6D28D9] transition"
-                    />
-                  </div>
-                </div>
-
-                {/* Legal Acceptance */}
-                <label className="flex items-start gap-2.5 pt-1 text-xs text-[#475069] cursor-pointer select-none">
-                  <input
-                    type="checkbox"
-                    required
-                    checked={termsAccepted}
-                    onChange={(e) => setTermsAccepted(e.target.checked)}
-                    className="mt-0.5 h-3.5 w-3.5 accent-[#6D28D9] rounded cursor-pointer"
-                  />
-                  <span>
-                    I accept the{" "}
-                    <Link href="/terms" target="_blank" className="font-semibold text-[#6D28D9] underline hover:text-[#5B21B6]">
-                      Terms of Use
-                    </Link>{" "}
-                    and acknowledge the{" "}
-                    <Link href="/privacy" target="_blank" className="font-semibold text-[#6D28D9] underline hover:text-[#5B21B6]">
-                      Privacy Notice
-                    </Link>
-                    .
-                  </span>
-                </label>
-
-                {/* Submit Button */}
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full mt-3 py-2.5 px-4 bg-[#6D28D9] hover:bg-[#5B21B6] text-white text-xs font-semibold rounded-[10px] shadow-[0_8px_20px_-8px_rgba(109,40,217,0.6)] transition flex items-center justify-center gap-2 disabled:opacity-50"
-                >
-                  {loading ? (
-                    <>
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      <span>Activating Account...</span>
-                    </>
-                  ) : (
-                    <>
-                      <span>Complete Account Setup</span>
-                      <ArrowRight className="w-4 h-4" />
-                    </>
-                  )}
-                </button>
-              </form>
-
-              <div className="mt-6 pt-5 border-t border-[#F1F3F7] text-center">
-                <p className="text-xs text-[#6B7488]">
-                  Already have your password configured?{" "}
-                  <Link href="/itsm/login" className="font-semibold text-[#6D28D9] hover:text-[#5B21B6]">
-                    Sign in to ITSM
-                  </Link>
-                </p>
-              </div>
-            </>
-          )}
+        <div>
+          <span className="text-xs font-bold uppercase tracking-wider text-[#6D28D9]">
+            AuthClaw ITSM
+          </span>
+          <h1 className="text-lg font-bold text-[#0E1726]">
+            Activate Your Account
+          </h1>
         </div>
-
-        {/* Footer info */}
-        <p className="text-center text-[11px] text-[#9CA3AF] mt-6">
-          AuthClaw ITSM &bull; Protected enterprise workspace
-        </p>
       </div>
-    </main>
+
+      {/* Success State */}
+      {success ? (
+        <div className="py-6 space-y-5 text-center">
+          <div className="w-14 h-14 rounded-full bg-[#ECFDF5] border border-[#A7F3D0] flex items-center justify-center mx-auto text-[#059669]">
+            <CheckCircle2 className="w-8 h-8" />
+          </div>
+          <div className="space-y-1.5">
+            <h2 className="text-base font-bold text-[#0E1726]">
+              Account Activated Successfully!
+            </h2>
+            <p className="text-xs text-[#6B7488] leading-relaxed">
+              Your password has been configured. You are now ready to sign in to the AuthClaw ITSM portal.
+            </p>
+          </div>
+
+          {emailParam && (
+            <div className="p-3 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] text-xs font-mono text-[#334155]">
+              {emailParam}
+            </div>
+          )}
+
+          {activatedRole && (
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-[#F5F3FF] text-[#6D28D9] border border-[#DDD6FE]">
+              <span>Assigned Role:</span>
+              <span>{activatedRole.replace(/_/g, " ")}</span>
+            </div>
+          )}
+
+          <div className="pt-3 space-y-3">
+            <Link
+              href={
+                emailParam
+                  ? `/itsm/login?email=${encodeURIComponent(emailParam)}&setup=success`
+                  : `/itsm/login?setup=success`
+              }
+              className="w-full inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-[#6D28D9] text-white text-xs font-semibold hover:bg-[#5B21B6] transition shadow-md shadow-[#6D28D9]/20"
+            >
+              <span>Continue to Sign In ({redirectSeconds}s)</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
+          </div>
+        </div>
+      ) : (
+        /* Form State */
+        <div className="pt-6 space-y-5">
+          <p className="text-xs text-[#6B7488] leading-relaxed">
+            Welcome to the workspace! Please choose a secure password to complete your account activation.
+          </p>
+
+          {/* Account Email Display */}
+          {emailParam && (
+            <div className="flex items-center gap-2.5 p-3 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] text-xs text-[#334155]">
+              <Mail className="w-4 h-4 text-[#8E97A8] shrink-0" />
+              <div className="flex-1 truncate">
+                <span className="text-[#8E97A8]">Activating: </span>
+                <span className="font-semibold text-[#0E1726]">{emailParam}</span>
+              </div>
+            </div>
+          )}
+
+          {/* Missing Token Alert */}
+          {!token && (
+            <div className="p-3.5 rounded-xl bg-[#FEF2F2] border border-[#FECACA] flex items-start gap-2.5 text-xs text-[#991B1B]">
+              <AlertCircle className="w-4 h-4 text-[#DC2626] shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <p className="font-semibold">Missing Activation Token</p>
+                <p className="text-[11px] text-[#B91C1C]">
+                  Please open the exact activation link sent to your corporate email inbox.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Error Message */}
+          {error && (
+            <div className="p-3.5 rounded-xl bg-[#FEF2F2] border border-[#FECACA] flex items-start gap-2.5 text-xs text-[#991B1B]">
+              <AlertCircle className="w-4 h-4 text-[#DC2626] shrink-0 mt-0.5" />
+              <div className="flex-1 space-y-1">
+                <span className="block leading-relaxed">{error}</span>
+                {errorType === "used" && (
+                  <Link
+                    href={`/itsm/login?email=${encodeURIComponent(emailParam)}`}
+                    className="inline-flex items-center gap-1 font-semibold text-[#6D28D9] hover:underline pt-0.5"
+                  >
+                    <span>Go to Sign In</span>
+                    <ArrowRight className="w-3 h-3" />
+                  </Link>
+                )}
+              </div>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {/* New Password */}
+            <div className="space-y-1">
+              <label
+                htmlFor="new-password"
+                className="block text-xs font-semibold text-[#0E1726]"
+              >
+                New Password <span className="text-red-500">*</span>
+              </label>
+              <div className="relative">
+                <Lock className="w-4 h-4 text-[#8E97A8] absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  id="new-password"
+                  type={showPassword ? "text" : "password"}
+                  required
+                  minLength={12}
+                  disabled={loading || !token}
+                  placeholder="Minimum 12 characters"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  className="w-full pl-9 pr-10 py-2.5 rounded-xl border border-[#E6E9F0] bg-[#FBFAF9] text-xs text-[#0E1726] placeholder-[#8E97A8] focus:bg-white focus:outline-none focus:border-[#6D28D9] transition disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="p-1 rounded text-[#8E97A8] hover:text-[#0E1726] absolute right-2.5 top-1/2 -translate-y-1/2 transition"
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Confirm Password */}
+            <div className="space-y-1">
+              <label
+                htmlFor="confirm-password"
+                className="block text-xs font-semibold text-[#0E1726]"
+              >
+                Confirm Password <span className="text-red-500">*</span>
+              </label>
+              <div className="relative">
+                <Lock className="w-4 h-4 text-[#8E97A8] absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  id="confirm-password"
+                  type={showConfirmPassword ? "text" : "password"}
+                  required
+                  minLength={12}
+                  disabled={loading || !token}
+                  placeholder="Re-enter your password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className="w-full pl-9 pr-10 py-2.5 rounded-xl border border-[#E6E9F0] bg-[#FBFAF9] text-xs text-[#0E1726] placeholder-[#8E97A8] focus:bg-white focus:outline-none focus:border-[#6D28D9] transition disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                  className="p-1 rounded text-[#8E97A8] hover:text-[#0E1726] absolute right-2.5 top-1/2 -translate-y-1/2 transition"
+                  aria-label={showConfirmPassword ? "Hide confirmation password" : "Show confirmation password"}
+                >
+                  {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
+            </div>
+
+            {/* Password Policy Indicator */}
+            <div className="p-3 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] space-y-1.5 text-[11px]">
+              <div className="flex items-center gap-1.5">
+                <div
+                  className={`w-3.5 h-3.5 rounded-full flex items-center justify-center ${
+                    password.length >= 12
+                      ? "bg-[#10B981] text-white"
+                      : "bg-[#E2E8F0] text-[#8E97A8]"
+                  }`}
+                >
+                  <Check className="w-2.5 h-2.5" />
+                </div>
+                <span className={password.length >= 12 ? "text-[#059669] font-medium" : "text-[#6B7488]"}>
+                  At least 12 characters
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div
+                  className={`w-3.5 h-3.5 rounded-full flex items-center justify-center ${
+                    password.length > 0 && password === confirmPassword
+                      ? "bg-[#10B981] text-white"
+                      : "bg-[#E2E8F0] text-[#8E97A8]"
+                  }`}
+                >
+                  <Check className="w-2.5 h-2.5" />
+                </div>
+                <span
+                  className={
+                    password.length > 0 && password === confirmPassword
+                      ? "text-[#059669] font-medium"
+                      : "text-[#6B7488]"
+                  }
+                >
+                  Passwords match
+                </span>
+              </div>
+            </div>
+
+            {/* Terms Acceptance */}
+            <div className="pt-1">
+              <label className="flex items-start gap-2 text-[11px] text-[#475069] cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={termsAccepted}
+                  onChange={(e) => setTermsAccepted(e.target.checked)}
+                  disabled={loading}
+                  className="w-3.5 h-3.5 rounded border-[#D1D5DB] text-[#6D28D9] focus:ring-[#6D28D9] mt-0.5"
+                />
+                <span>
+                  I agree to the{" "}
+                  <Link href="/terms" target="_blank" className="font-semibold text-[#6D28D9] hover:underline">
+                    Terms of Use
+                  </Link>{" "}
+                  and acknowledge the{" "}
+                  <Link href="/privacy" target="_blank" className="font-semibold text-[#6D28D9] hover:underline">
+                    Privacy Notice
+                  </Link>
+                  .
+                </span>
+              </label>
+            </div>
+
+            {/* Submit Button */}
+            <button
+              type="submit"
+              disabled={loading || !token || password.length < 12 || password !== confirmPassword || !termsAccepted}
+              className="w-full inline-flex items-center justify-center gap-2 py-2.5 px-4 rounded-xl bg-[#6D28D9] text-white text-xs font-semibold hover:bg-[#5B21B6] transition disabled:opacity-50 shadow-md shadow-[#6D28D9]/20"
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span>Activating Account...</span>
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>Activate Account & Set Password</span>
+                </>
+              )}
+            </button>
+          </form>
+
+          {/* Footer note */}
+          <p className="text-center text-[11px] text-[#8E97A8] pt-2">
+            Already have your credentials?{" "}
+            <Link
+              href={emailParam ? `/itsm/login?email=${encodeURIComponent(emailParam)}` : "/itsm/login"}
+              className="font-semibold text-[#6D28D9] hover:underline"
+            >
+              Sign in
+            </Link>
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 
 export default function ItsmSetupPage() {
   return (
-    <Suspense fallback={
-      <div className="min-h-screen bg-[#FBFAF9] flex items-center justify-center">
-        <div className="w-6 h-6 border-2 border-[#6D28D9] border-t-transparent rounded-full animate-spin" />
-      </div>
-    }>
-      <ItsmSetupContent />
-    </Suspense>
+    <div className="min-h-screen bg-[#F8FAFC] flex flex-col items-center justify-center p-4">
+      <Suspense
+        fallback={
+          <div className="w-full max-w-md rounded-2xl border border-[#E6E9F0] bg-white p-8 shadow-xl text-center space-y-3">
+            <Loader2 className="w-6 h-6 animate-spin text-[#6D28D9] mx-auto" />
+            <p className="text-xs text-[#6B7488]">Loading activation portal...</p>
+          </div>
+        }
+      >
+        <ItsmActivationContent />
+      </Suspense>
+    </div>
   );
 }

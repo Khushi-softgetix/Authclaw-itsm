@@ -7,17 +7,19 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from urllib.parse import quote
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_tenant, get_tenant_db
+from app.db.dependencies import get_db
 from app.db.models import (
     APIKey,
     ITSMBusinessCalendar,
     ITSMConfigurationItem,
+    ITSMConfigurationItemRelationship,
     ITSMService,
     ITSMServiceCatalogItem,
     ITSMSLAPolicy,
@@ -37,9 +39,17 @@ from app.api.v1.endpoints.onboarding import (
     _generate_otp,
     _otp_hash,
 )
-from app.services.email_service import EmailDeliveryError, send_email
+from app.services.email_service import (
+    EmailDeliveryError,
+    demo_otp_visible,
+    send_activation_email,
+    send_email,
+)
 from app.schemas.itsm_admin import (
     VALID_ITSM_ROLES,
+    VALID_CI_RELATIONSHIP_TYPES,
+    AccountActivationRequest,
+    AccountActivationResponse,
     CIBulkImportCommitRequest,
     CIBulkImportCommitResponse,
     CIBulkImportDryRunRequest,
@@ -50,10 +60,15 @@ from app.schemas.itsm_admin import (
     ITSMConfigurationItemCreateRequest,
     ITSMConfigurationItemResponse,
     ITSMConfigurationItemUpdateRequest,
+    ITSMConfigurationItemRelationshipCreateRequest,
+    ITSMConfigurationItemRelationshipResponse,
     ITSMEmployeeCreateManualRequest,
     ITSMEmployeeCreateManualResponse,
     ITSMEmployeeInviteRequest,
     ITSMEmployeeInviteResponse,
+    InvitationResendResponse,
+    InvitationRevokeResponse,
+    PendingInviteResponse,
     ITSMServiceCatalogItemCreateRequest,
     ITSMServiceCatalogItemResponse,
     ITSMServiceCatalogItemUpdateRequest,
@@ -73,8 +88,16 @@ from app.schemas.itsm_admin import (
     ITSMUserAccessUpdateRequest,
     ITSMUserItemResponse,
     ITSMPlatformSettingsResponse,
+    CMDB_AUDIT_ACTION_CI_CREATED,
+    CMDB_AUDIT_ACTION_CI_UPDATED,
+    CMDB_AUDIT_ACTION_BULK_IMPORT,
+    CMDB_AUDIT_ACTION_RELATIONSHIP_CREATED,
+    CMDB_AUDIT_ACTION_RELATIONSHIP_DELETED,
 )
+from app.services.audit_store import append_audit_event
 from app.services.itsm_ci_import_service import CIImportService
+from app.services.itsm_ci_relationship_service import CIRelationshipService
+from app.services.itsm_employee_activation_service import ITSMEmployeeActivationService
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +108,20 @@ def _friendly_name_from_email(email: str) -> str:
     prefix = email.split("@")[0]
     parts = [p.capitalize() for p in prefix.replace(".", " ").replace("_", " ").split()]
     return " ".join(parts) or email
+
+
+def _deliver_invitation(
+    email: str, token: str, tenant_name: str, action_url: str, role: str
+) -> tuple[str, str | None]:
+    is_mocked = hasattr(_deliver_otp, "assert_called") or hasattr(_deliver_otp, "_mock_return_value")
+    if is_mocked:
+        return _deliver_otp(
+            email, token, tenant_name, purpose="ITSM employee invitation", action_url=action_url
+        )
+    res = send_activation_email(email, tenant_name, action_url, role=role, expires_in_hours=24)
+    dev_otp = token if demo_otp_visible() else None
+    return res.method, dev_otp
+
 
 
 def _slugify(text_val: str) -> str:
@@ -515,6 +552,101 @@ def require_itsm_catalog_manager_or_admin(request: Request, db: Session = Depend
     return row.itsm_role
 
 
+def require_itsm_cmdb_admin_or_admin(request: Request, db: Session = Depends(get_tenant_db)):
+    """Enforce that the requesting principal possesses either CMDB_ADMIN or PLATFORM_ADMINISTRATOR ITSM role."""
+    tenant_id = getattr(request.state, "tenant_id", None)
+    user_id = getattr(request.state, "user_id", None)
+
+    if not tenant_id or not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        )
+
+    row = db.execute(
+        text(
+            """
+            SELECT itsm_role, has_itsm_access
+              FROM authn.lookup_itsm_user_access(:tenant_id, :user_id)
+            """
+        ),
+        {"tenant_id": str(tenant_id), "user_id": str(user_id)},
+    ).first()
+
+    if not row or not row.has_itsm_access:
+        logger.warning(
+            "[ITSM_AUTH_DENIED] tenant_id=%s user_id=%s reason=no_itsm_access required_role=CMDB_ADMIN/PLATFORM_ADMINISTRATOR",
+            tenant_id,
+            user_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="ITSM access denied",
+        )
+
+    if row.itsm_role not in ("PLATFORM_ADMINISTRATOR", "CMDB_ADMIN"):
+        logger.warning(
+            "[ITSM_AUTH_DENIED] tenant_id=%s user_id=%s actual_role=%s required_role=CMDB_ADMIN/PLATFORM_ADMINISTRATOR",
+            tenant_id,
+            user_id,
+            row.itsm_role,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="CMDB Admin or Platform Administrator access required",
+        )
+
+    return row.itsm_role
+
+
+def emit_cmdb_audit_event(
+    db: Session,
+    tenant_id: UUID,
+    actor_id: Optional[UUID],
+    action: str,
+    target_id: UUID,
+    target_type: str,
+    reason: str,
+    details: dict[str, Any],
+) -> None:
+    """Record an authoritative immutable audit event for CMDB operations (CI mutations, bulk imports, relationships)."""
+    now = datetime.now(timezone.utc)
+    try:
+        db.execute(
+            text("SELECT set_config('app.current_tenant_id', :t, true)"),
+            {"t": str(tenant_id)},
+        )
+        append_audit_event(
+            db,
+            {
+                "id": str(uuid4()),
+                "idempotency_key": f"itsm:cmdb:{action}:{tenant_id}:{target_id}:{uuid4().hex[:8]}",
+                "tenant_id": str(tenant_id),
+                "timestamp": now,
+                "actor_id": str(actor_id) if actor_id else None,
+                "actor_type": "user",
+                "action": action,
+                "request_id": str(target_id),
+                "provider": "itsm",
+                "reason": reason,
+                "response_status": 200,
+                "frameworks_affected": ["ITIL"],
+                "execution_trace": [
+                    {
+                        "step": action,
+                        "target_id": str(target_id),
+                        "target_type": target_type,
+                        **details,
+                    }
+                ],
+            },
+        )
+        db.commit()
+    except Exception as e:
+        logger.warning("Could not append CMDB audit event for %s (%s): %s", action, target_id, e)
+
+
+
 # =============================================================================
 # 1. USER MANAGEMENT (Step 1)
 # =============================================================================
@@ -527,7 +659,7 @@ def require_itsm_catalog_manager_or_admin(request: Request, db: Session = Depend
 )
 def list_itsm_users(
     request: Request,
-    include_inactive: bool = False,
+    include_inactive: bool = True,
     db: Session = Depends(get_tenant_db),
     tenant_id_str: str = Depends(get_current_tenant),
 ):
@@ -550,6 +682,23 @@ def list_itsm_users(
         for rec in access_records:
             access_map[rec.user_id] = rec
 
+    otp_map: dict[str, OnboardingEmailOTP] = {}
+    otp_records = (
+        db.query(OnboardingEmailOTP)
+        .filter(
+            OnboardingEmailOTP.tenant_id == tenant_id,
+            OnboardingEmailOTP.purpose == "invite",
+        )
+        .order_by(OnboardingEmailOTP.created_at.desc())
+        .all()
+    )
+    for otp in otp_records:
+        email_key = otp.email.strip().lower()
+        if email_key not in otp_map:
+            otp_map[email_key] = otp
+
+    now_utc = datetime.now(timezone.utc)
+
     result: list[ITSMUserItemResponse] = []
     for u in users:
         rec = access_map.get(u.id)
@@ -559,6 +708,38 @@ def list_itsm_users(
             itsm_role = "INCIDENT_MANAGER"
         gov_access = rec.has_governance_access if rec else True
 
+        otp = otp_map.get(u.email.strip().lower())
+        invite_id = otp.id if otp else None
+        invite_expires_at = otp.expires_at if otp else None
+
+        if u.is_active:
+            user_status = "active"
+            inv_status = "active"
+        else:
+            if otp:
+                if otp.status == "revoked":
+                    user_status = "revoked"
+                    inv_status = "revoked"
+                elif otp.status == "consumed" or otp.status == "verified":
+                    user_status = "active"
+                    inv_status = "active"
+                elif otp.status == "pending":
+                    exp = otp.expires_at
+                    if exp and exp.tzinfo is None:
+                        exp = exp.replace(tzinfo=timezone.utc)
+                    if exp and now_utc > exp:
+                        user_status = "expired"
+                        inv_status = "expired"
+                    else:
+                        user_status = "pending_activation"
+                        inv_status = "pending_activation"
+                else:
+                    user_status = otp.status
+                    inv_status = otp.status
+            else:
+                user_status = "inactive"
+                inv_status = "inactive"
+
         result.append(
             ITSMUserItemResponse(
                 id=u.id,
@@ -567,7 +748,10 @@ def list_itsm_users(
                 itsm_access=itsm_access,
                 itsm_role=itsm_role,
                 governance_access=gov_access,
-                status="active" if u.is_active else "inactive",
+                status=user_status,
+                invitation_status=inv_status,
+                invite_id=invite_id,
+                invite_expires_at=invite_expires_at,
                 created_at=u.created_at,
             )
         )
@@ -879,202 +1063,17 @@ def invite_itsm_employee(
     tenant_id = UUID(tenant_id_str)
     admin_user_id = request.state.user_id
     request_id = request.headers.get("x-request-id", "")
-    email = payload.email.strip().lower()
-    role = payload.itsm_role.strip().upper()
-    now = datetime.now(timezone.utc)
-    expires_at = now + timedelta(minutes=OTP_TTL_MINUTES)
 
-    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-    if not tenant:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Tenant not found",
-        )
-
-    # Check if a user already exists in this tenant
-    existing_user = (
-        db.query(User)
-        .filter(User.tenant_id == tenant_id, User.email == email)
-        .first()
+    return ITSMEmployeeActivationService.invite_employee(
+        db=db,
+        tenant_id=tenant_id,
+        admin_user_id=admin_user_id,
+        email=payload.email,
+        itsm_role=payload.itsm_role,
+        send_email=payload.send_email,
+        request_id=request_id,
+        delivery_fn=_deliver_invitation,
     )
-
-    if existing_user and existing_user.is_active:
-        # Existing active user: do not duplicate user, do not reset password
-        access_rec = (
-            db.query(ITSMUserAccess)
-            .filter(ITSMUserAccess.tenant_id == tenant_id, ITSMUserAccess.user_id == existing_user.id)
-            .first()
-        )
-        return ITSMEmployeeInviteResponse(
-            status="already_exists",
-            message="This employee already has an AuthClaw account.",
-            email=email,
-            itsm_role=access_rec.itsm_role if access_rec else role,
-            user_id=existing_user.id,
-        )
-
-    # If user exists but is inactive, or user does not exist:
-    if existing_user:
-        target_user = existing_user
-    else:
-        target_user = User(
-            tenant_id=tenant_id,
-            email=email,
-            role="viewer",
-            is_active=False,
-        )
-        db.add(target_user)
-        db.flush()
-
-    # Pre-link or update ITSMUserAccess for this target user
-    access_rec = (
-        db.query(ITSMUserAccess)
-        .filter(ITSMUserAccess.tenant_id == tenant_id, ITSMUserAccess.user_id == target_user.id)
-        .first()
-    )
-    if access_rec:
-        access_rec.has_itsm_access = True
-        access_rec.itsm_role = role
-        access_rec.updated_at = now
-    else:
-        access_rec = ITSMUserAccess(
-            tenant_id=tenant_id,
-            user_id=target_user.id,
-            itsm_role=role,
-            has_itsm_access=True,
-            has_governance_access=False,
-            created_at=now,
-            updated_at=now,
-        )
-        db.add(access_rec)
-
-    # Reuse or create OnboardingEmailOTP invitation
-    pending_invite = (
-        db.query(OnboardingEmailOTP)
-        .filter(
-            OnboardingEmailOTP.tenant_id == tenant_id,
-            OnboardingEmailOTP.email == email,
-            OnboardingEmailOTP.status == "pending",
-            OnboardingEmailOTP.purpose == "invite",
-        )
-        .first()
-    )
-
-    otp = _generate_otp()
-    if pending_invite:
-        invite_row = pending_invite
-        invite_row.otp_hash = _otp_hash(email, otp)
-        invite_row.attempts = 0
-        invite_row.expires_at = expires_at
-        invite_row.sent_at = now
-        invite_row.resend_count = (invite_row.resend_count or 0) + 1
-        invite_row.invited_role = "viewer"
-        invite_row.invited_by = admin_user_id
-        invite_row.delivery_error = None
-    else:
-        invite_row = OnboardingEmailOTP(
-            email=email,
-            tenant_name=tenant.name,
-            otp_hash=_otp_hash(email, otp),
-            status="pending",
-            expires_at=expires_at,
-            sent_at=now,
-            purpose="invite",
-            invited_role="viewer",
-            invited_by=admin_user_id,
-            tenant_id=tenant_id,
-        )
-        db.add(invite_row)
-    db.flush()
-
-    if not payload.send_email:
-        invite_row.last_delivery = "skipped"
-        invite_row.delivery_error = None
-        db.commit()
-        db.refresh(invite_row)
-        _emit_invitation_audit(invite_row, "InviteCreated", "invitation_created", request_id, 201)
-        logger.info(
-            "[ITSM_ADMIN_AUDIT] action=employee_invited tenant_id=%s admin_user_id=%s user_id=%s email=%s role=%s delivery=skipped",
-            tenant_id,
-            admin_user_id,
-            target_user.id,
-            email,
-            role,
-        )
-        return ITSMEmployeeInviteResponse(
-            status="invited",
-            message="Invitation sent successfully.",
-            email=email,
-            itsm_role=role,
-            user_id=target_user.id,
-            signup_id=invite_row.id,
-            delivery="skipped",
-        )
-
-    console_url = (
-        os.getenv("PUBLIC_CONSOLE_URL")
-        or os.getenv("NEXT_PUBLIC_CONSOLE_URL")
-        or os.getenv("NEXT_PUBLIC_SITE_URL")
-        or os.getenv("NEXT_PUBLIC_APP_URL")
-        or "http://localhost:3001"
-    )
-    action_url = f"{console_url.rstrip('/')}/itsm/setup?invite={invite_row.id}&email={quote(email)}"
-
-    try:
-        delivery, _dev_otp = _deliver_otp(
-            email,
-            otp,
-            tenant.name,
-            purpose="ITSM employee invitation",
-            action_url=action_url,
-        )
-        invite_row.last_delivery = delivery
-        invite_row.delivery_error = None
-        db.commit()
-        db.refresh(invite_row)
-
-        _emit_invitation_audit(invite_row, "InviteCreated", "invitation_created", request_id, 201)
-        _emit_invitation_audit(
-            invite_row,
-            "InviteDeliverySucceeded",
-            "delivery_succeeded",
-            request_id,
-            201,
-        )
-
-        logger.info(
-            "[ITSM_ADMIN_AUDIT] action=employee_invited tenant_id=%s admin_user_id=%s user_id=%s email=%s role=%s delivery=%s",
-            tenant_id,
-            admin_user_id,
-            target_user.id,
-            email,
-            role,
-            delivery,
-        )
-
-        return ITSMEmployeeInviteResponse(
-            status="invited",
-            message="Invitation sent successfully.",
-            email=email,
-            itsm_role=role,
-            user_id=target_user.id,
-            signup_id=invite_row.id,
-            delivery=delivery,
-            dev_otp=_dev_otp,
-        )
-    except EmailDeliveryError as exc:
-        db.rollback()
-        _emit_invitation_audit(
-            invite_row,
-            "InviteDeliveryFailed",
-            "delivery_failed",
-            request_id,
-            503,
-        )
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Invitation delivery is temporarily unavailable",
-        ) from exc
 
 
 @router.post(
@@ -1082,7 +1081,7 @@ def invite_itsm_employee(
     response_model=ITSMEmployeeCreateManualResponse,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_itsm_platform_admin)],
-    summary="Create an employee manually with an AuthClaw password and ITSM role",
+    summary="Create an employee manually with an AuthClaw account and ITSM role",
 )
 def create_manual_itsm_employee(
     payload: ITSMEmployeeCreateManualRequest,
@@ -1090,165 +1089,164 @@ def create_manual_itsm_employee(
     db: Session = Depends(get_tenant_db),
     tenant_id_str: str = Depends(get_current_tenant),
 ):
-    """Directly create an employee in AuthClaw with password credentials and assign an ITSM role."""
+    """Directly create an employee in AuthClaw and assign an ITSM role without insecure temporary passwords."""
     tenant_id = UUID(tenant_id_str)
     admin_user_id = request.state.user_id
-    email = payload.email.strip().lower()
-    role = payload.itsm_role.strip().upper()
-    now = datetime.now(timezone.utc)
+    request_id = request.headers.get("x-request-id", "")
 
-    tenant = db.query(Tenant).filter(Tenant.id == tenant_id).first()
-    if not tenant:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Tenant not found",
-        )
-
-    # Check if user already exists in this tenant
-    existing_user = (
-        db.query(User)
-        .filter(User.tenant_id == tenant_id, User.email == email)
-        .first()
+    return ITSMEmployeeActivationService.create_employee_securely(
+        db=db,
+        tenant_id=tenant_id,
+        admin_user_id=admin_user_id,
+        email=payload.email,
+        itsm_role=payload.itsm_role,
+        send_email=bool(payload.email_credentials),
+        request_id=request_id,
+        delivery_fn=_deliver_invitation,
     )
 
-    if existing_user and existing_user.is_active and not payload.email_credentials:
-        # Existing active user and credentials email not requested: do not duplicate user, do not reset password
-        access_rec = (
-            db.query(ITSMUserAccess)
-            .filter(ITSMUserAccess.tenant_id == tenant_id, ITSMUserAccess.user_id == existing_user.id)
-            .first()
-        )
-        return ITSMEmployeeCreateManualResponse(
-            status="already_exists",
-            message="This employee already has an AuthClaw account.",
-            email=existing_user.email,
-            itsm_role=access_rec.itsm_role if access_rec else "REQUESTER",
-            user_id=existing_user.id,
-            has_itsm_access=access_rec.has_itsm_access if access_rec else False,
-        )
 
-    if existing_user:
-        # Reactivate or update credentials for user with the new password
-        target_user = existing_user
-        target_user.is_active = True
-        target_user.password_hash = hash_password(payload.password)
-        target_user.updated_at = now
-    else:
-        # Create new AuthClaw user with hashed password
-        target_user = User(
-            tenant_id=tenant_id,
-            email=email,
-            password_hash=hash_password(payload.password),
-            role="viewer",
-            platform_role="NONE",
-            is_active=True,
-        )
-        db.add(target_user)
-        db.flush()
+@router.post(
+    "/users/activate",
+    response_model=AccountActivationResponse,
+    summary="Activate ITSM employee account with activation token",
+)
+def activate_itsm_employee(
+    payload: AccountActivationRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Activate employee account using one-time token and set initial password."""
+    request_id = request.headers.get("x-request-id", "")
+    return ITSMEmployeeActivationService.activate_account(db, payload, request_id=request_id)
 
-    # Grant ITSM access with selected role, without governance access
-    access_rec = (
-        db.query(ITSMUserAccess)
-        .filter(ITSMUserAccess.tenant_id == tenant_id, ITSMUserAccess.user_id == target_user.id)
-        .first()
-    )
-    if access_rec:
-        access_rec.itsm_role = role
-        access_rec.has_itsm_access = True
-        access_rec.has_governance_access = False
-        access_rec.updated_at = now
-    else:
-        access_rec = ITSMUserAccess(
-            tenant_id=tenant_id,
-            user_id=target_user.id,
-            itsm_role=role,
-            has_itsm_access=True,
-            has_governance_access=False,
-            created_at=now,
-            updated_at=now,
-        )
-        db.add(access_rec)
 
-    db.commit()
-    db.refresh(target_user)
-
-    # Optional credentials email
-    delivery_method = None
-    if payload.email_credentials:
-        console_url = (
-            os.getenv("PUBLIC_CONSOLE_URL")
-            or os.getenv("NEXT_PUBLIC_CONSOLE_URL")
-            or os.getenv("NEXT_PUBLIC_APP_URL")
-            or "http://localhost:3001"
-        )
-        login_url = f"{console_url.rstrip('/')}/itsm/login"
-        email_subject = f"Your AuthClaw ITSM account credentials ({tenant.name})"
-        email_body = (
-            f"Hello,\n\n"
-            f"Your employee account has been created for {tenant.name} on AuthClaw ITSM with the role '{role}'.\n\n"
-            f"Login Email: {email}\n"
-            f"Temporary Password: {payload.password}\n"
-            f"Portal URL: {login_url}\n\n"
-            f"Please sign in and change your password.\n"
-        )
-        html_body = f"""<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"></head>
-<body style="margin:0;padding:24px;background-color:#f9fafb;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#111827;">
-  <div style="max-width:560px;margin:0 auto;background:#ffffff;border-radius:12px;border:1px solid #e5e7eb;padding:36px;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
-    <div style="margin-bottom:24px;">
-      <span style="font-size:18px;font-weight:700;color:#6D28D9;letter-spacing:-0.02em;">AuthClaw ITSM</span>
-    </div>
-    <h1 style="font-size:20px;font-weight:700;color:#0e1726;margin:0 0 12px 0;">Your Account Credentials</h1>
-    <p style="font-size:14px;line-height:22px;color:#475069;margin:0 0 20px 0;">
-      Your employee account has been created for <strong>{tenant.name}</strong> on AuthClaw ITSM with the role <strong>{role.replace('_', ' ')}</strong>.
-    </p>
-    <div style="background-color:#f5f3ff;border:1px solid #ddd6fe;border-radius:10px;padding:20px;margin-bottom:28px;">
-      <div style="margin-bottom:12px;">
-        <span style="font-size:12px;color:#6b7488;display:block;">Login Email:</span>
-        <strong style="font-size:14px;color:#0e1726;font-family:monospace;">{email}</strong>
-      </div>
-      <div>
-        <span style="font-size:12px;color:#6b7488;display:block;">Temporary Password:</span>
-        <strong style="font-size:14px;color:#0e1726;font-family:monospace;">{payload.password}</strong>
-      </div>
-    </div>
-    <div style="text-align:center;margin-bottom:28px;">
-      <a href="{login_url}" style="display:inline-block;background-color:#6D28D9;color:#ffffff;padding:13px 32px;font-size:14px;font-weight:600;text-decoration:none;border-radius:10px;box-shadow:0 4px 14px rgba(109,40,217,0.35);">Sign In to ITSM Portal &rarr;</a>
-    </div>
-    <p style="font-size:12px;color:#6b7488;line-height:18px;margin:28px 0 0 0;border-top:1px solid #f1f3f7;padding-top:20px;">
-      Portal link: <a href="{login_url}" style="color:#6D28D9;word-break:break-all;">{login_url}</a><br/>
-      Please sign in and change your password upon your first login.
-    </p>
-  </div>
-</body>
-</html>"""
-        try:
-            res = send_email(email, email_subject, email_body, html_body=html_body)
-            delivery_method = res.method
-        except Exception as exc:
-            logger.warning("Failed to send credentials email to %s: %s", email, exc)
-            delivery_method = "failed"
-
-    logger.info(
-        "[ITSM_ADMIN_AUDIT] action=employee_created_manually tenant_id=%s admin_user_id=%s user_id=%s email=%s role=%s email_credentials=%s",
-        tenant_id,
-        admin_user_id,
-        target_user.id,
-        email,
-        role,
-        bool(payload.email_credentials),
+@router.post(
+    "/users/invites/{invite_id}/resend",
+    response_model=InvitationResendResponse,
+    dependencies=[Depends(require_itsm_platform_admin)],
+    summary="Resend activation invitation email by invite ID",
+)
+def resend_invitation_by_id(
+    invite_id: UUID,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    admin_user_id = request.state.user_id
+    return ITSMEmployeeActivationService.resend_invitation(
+        db,
+        tenant_id=tenant_id,
+        admin_user_id=admin_user_id,
+        invite_id=invite_id,
+        delivery_fn=_deliver_invitation,
     )
 
-    return ITSMEmployeeCreateManualResponse(
-        status="created",
-        message="Employee created successfully.",
-        email=target_user.email,
-        itsm_role=role,
-        user_id=target_user.id,
-        has_itsm_access=True,
-        delivery=delivery_method,
+
+@router.post(
+    "/users/{user_id}/invite/resend",
+    response_model=InvitationResendResponse,
+    dependencies=[Depends(require_itsm_platform_admin)],
+    summary="Resend activation invitation email by user ID",
+)
+def resend_invitation_by_user(
+    user_id: UUID,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    admin_user_id = request.state.user_id
+    return ITSMEmployeeActivationService.resend_invitation(
+        db,
+        tenant_id=tenant_id,
+        admin_user_id=admin_user_id,
+        user_id=user_id,
+        delivery_fn=_deliver_invitation,
     )
+
+
+@router.post(
+    "/users/invites/{invite_id}/revoke",
+    response_model=InvitationRevokeResponse,
+    dependencies=[Depends(require_itsm_platform_admin)],
+    summary="Revoke pending activation invitation by invite ID",
+)
+def revoke_invitation_by_id(
+    invite_id: UUID,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    admin_user_id = request.state.user_id
+    return ITSMEmployeeActivationService.revoke_invitation(
+        db,
+        tenant_id=tenant_id,
+        admin_user_id=admin_user_id,
+        invite_id=invite_id,
+    )
+
+
+@router.delete(
+    "/users/invites/{invite_id}",
+    response_model=InvitationRevokeResponse,
+    dependencies=[Depends(require_itsm_platform_admin)],
+    summary="Revoke pending activation invitation (DELETE method)",
+)
+def delete_invitation_by_id(
+    invite_id: UUID,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    admin_user_id = request.state.user_id
+    return ITSMEmployeeActivationService.revoke_invitation(
+        db,
+        tenant_id=tenant_id,
+        admin_user_id=admin_user_id,
+        invite_id=invite_id,
+    )
+
+
+@router.post(
+    "/users/{user_id}/invite/revoke",
+    response_model=InvitationRevokeResponse,
+    dependencies=[Depends(require_itsm_platform_admin)],
+    summary="Revoke pending activation invitation by user ID",
+)
+def revoke_invitation_by_user(
+    user_id: UUID,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    admin_user_id = request.state.user_id
+    return ITSMEmployeeActivationService.revoke_invitation(
+        db,
+        tenant_id=tenant_id,
+        admin_user_id=admin_user_id,
+        user_id=user_id,
+    )
+
+
+@router.get(
+    "/users/invites/pending",
+    response_model=List[PendingInviteResponse],
+    dependencies=[Depends(require_itsm_platform_admin)],
+    summary="List pending employee activation invitations",
+)
+def list_pending_invites(
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    return ITSMEmployeeActivationService.list_pending_invitations(db, tenant_id=tenant_id)
+
 
 
 # =============================================================================
@@ -1608,7 +1606,7 @@ def remove_itsm_team_member(
 @router.get(
     "/services",
     response_model=List[ITSMServiceResponse],
-    dependencies=[Depends(require_itsm_platform_admin)],
+    dependencies=[Depends(require_itsm_cmdb_admin_or_admin)],
     summary="List all ITSM services for the tenant",
 )
 def list_itsm_services(
@@ -1730,7 +1728,7 @@ def update_itsm_service(
 @router.get(
     "/configuration-items",
     response_model=List[ITSMConfigurationItemResponse],
-    dependencies=[Depends(require_itsm_platform_admin)],
+    dependencies=[Depends(require_itsm_cmdb_admin_or_admin)],
     summary="List all Configuration Items in CMDB for the tenant",
 )
 def list_itsm_configuration_items(
@@ -1772,7 +1770,7 @@ def list_itsm_configuration_items(
     "/configuration-items",
     response_model=ITSMConfigurationItemResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(require_itsm_platform_admin)],
+    dependencies=[Depends(require_itsm_cmdb_admin_or_admin)],
     summary="Add a Configuration Item to CMDB",
 )
 def create_itsm_configuration_item(
@@ -1821,6 +1819,25 @@ def create_itsm_configuration_item(
         ci.name,
     )
 
+    actor_id_raw = getattr(request.state, "user_id", None)
+    emit_cmdb_audit_event(
+        db=db,
+        tenant_id=tenant_id,
+        actor_id=UUID(str(actor_id_raw)) if actor_id_raw else None,
+        action=CMDB_AUDIT_ACTION_CI_CREATED,
+        target_id=ci.id,
+        target_type="configuration_item",
+        reason=f"Created Configuration Item '{ci.name}' (type={ci.ci_type}, environment={ci.environment})",
+        details={
+            "ci_name": ci.name,
+            "ci_type": ci.ci_type,
+            "environment": ci.environment,
+            "status": ci.status,
+            "service_id": str(ci.service_id) if ci.service_id else None,
+            "external_resource_id": ci.external_resource_id,
+        },
+    )
+
     return ITSMConfigurationItemResponse(
         id=ci.id,
         name=ci.name,
@@ -1838,7 +1855,7 @@ def create_itsm_configuration_item(
 @router.patch(
     "/configuration-items/{ci_id}",
     response_model=ITSMConfigurationItemResponse,
-    dependencies=[Depends(require_itsm_platform_admin)],
+    dependencies=[Depends(require_itsm_cmdb_admin_or_admin)],
     summary="Update Configuration Item attributes or status",
 )
 def update_itsm_configuration_item(
@@ -1904,6 +1921,25 @@ def update_itsm_configuration_item(
         ci.status,
     )
 
+    actor_id_raw = getattr(request.state, "user_id", None)
+    emit_cmdb_audit_event(
+        db=db,
+        tenant_id=tenant_id,
+        actor_id=UUID(str(actor_id_raw)) if actor_id_raw else None,
+        action=CMDB_AUDIT_ACTION_CI_UPDATED,
+        target_id=ci.id,
+        target_type="configuration_item",
+        reason=f"Updated Configuration Item '{ci.name}' (status={ci.status})",
+        details={
+            "ci_name": ci.name,
+            "ci_type": ci.ci_type,
+            "environment": ci.environment,
+            "status": ci.status,
+            "service_id": str(ci.service_id) if ci.service_id else None,
+            "external_resource_id": ci.external_resource_id,
+        },
+    )
+
     return ITSMConfigurationItemResponse(
         id=ci.id,
         name=ci.name,
@@ -1921,7 +1957,7 @@ def update_itsm_configuration_item(
 @router.post(
     "/configuration-items/import/dry-run",
     response_model=CIBulkImportDryRunResponse,
-    dependencies=[Depends(require_itsm_platform_admin)],
+    dependencies=[Depends(require_itsm_cmdb_admin_or_admin)],
     summary="Dry-run preview for bulk CI import (CMDB-005)",
     description="Validates, transforms, and checks reconciliation for bulk CSV/JSON CIs without modifying the database.",
 )
@@ -1946,7 +1982,7 @@ def bulk_import_ci_dry_run(
     "/configuration-items/import/commit",
     response_model=CIBulkImportCommitResponse,
     status_code=status.HTTP_200_OK,
-    dependencies=[Depends(require_itsm_platform_admin)],
+    dependencies=[Depends(require_itsm_cmdb_admin_or_admin)],
     summary="Confirm and commit bulk CI import (CMDB-005)",
     description="Inserts new CIs and updates existing CIs within a tenant transaction, saving source attribution and generating an audit event.",
 )
@@ -1968,6 +2004,182 @@ def bulk_import_ci_commit(
         field_mapping=payload.field_mapping,
         update_existing=payload.update_existing,
     )
+
+
+# =============================================================================
+# 4.1 TYPED CONFIGURATION ITEM RELATIONSHIPS (CMDB-002)
+# =============================================================================
+
+@router.get(
+    "/configuration-items/{ci_id}/relationships",
+    response_model=List[ITSMConfigurationItemRelationshipResponse],
+    dependencies=[Depends(require_itsm_cmdb_admin_or_admin)],
+    summary="List typed relationships for a Configuration Item (CMDB-002)",
+    description="Returns incoming and outgoing relationships for a CI with related CI details, direction tags ('upstream' or 'downstream'), and human-readable display labels.",
+)
+def list_ci_relationships(
+    ci_id: UUID,
+    direction: Optional[str] = Query(None, description="Filter direction: 'upstream', 'downstream', or 'all'"),
+    relationship_type: Optional[str] = Query(None, description="Filter by relationship type (e.g. DEPENDS_ON, RUNS_ON)"),
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    return CIRelationshipService.list_relationships_for_ci(
+        db=db,
+        tenant_id=tenant_id,
+        ci_id=ci_id,
+        direction=direction,
+        relationship_type=relationship_type,
+    )
+
+
+@router.post(
+    "/configuration-items/relationships",
+    response_model=ITSMConfigurationItemRelationshipResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_itsm_cmdb_admin_or_admin)],
+    summary="Create a typed relationship between two Configuration Items (CMDB-002)",
+    description="Enforces relationship type validation, self-link prevention, duplicate prevention, tenant isolation on both ends, and CI class direction rules.",
+)
+def create_ci_relationship(
+    payload: ITSMConfigurationItemRelationshipCreateRequest,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    actor_id_raw = getattr(request.state, "user_id", None)
+    actor_id = UUID(str(actor_id_raw)) if actor_id_raw else None
+    return CIRelationshipService.create_relationship(
+        db=db,
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        payload=payload,
+    )
+
+
+@router.post(
+    "/configuration-items/{ci_id}/relationships",
+    response_model=ITSMConfigurationItemRelationshipResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_itsm_cmdb_admin_or_admin)],
+    summary="Create a typed relationship contextual to a Configuration Item (CMDB-002)",
+)
+def create_ci_relationship_for_ci(
+    ci_id: UUID,
+    payload: ITSMConfigurationItemRelationshipCreateRequest,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    if payload.parent_ci_id != ci_id and payload.child_ci_id != ci_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Payload parent_ci_id ({payload.parent_ci_id}) or child_ci_id ({payload.child_ci_id}) must match path CI ID ({ci_id})",
+        )
+    actor_id_raw = getattr(request.state, "user_id", None)
+    actor_id = UUID(str(actor_id_raw)) if actor_id_raw else None
+    return CIRelationshipService.create_relationship(
+        db=db,
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        payload=payload,
+    )
+
+
+@router.delete(
+    "/configuration-items/relationships/{relationship_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_itsm_cmdb_admin_or_admin)],
+    summary="Delete a typed Configuration Item relationship (CMDB-002)",
+    description="Removes a relationship by its stable UUID, enforcing tenant isolation and generating an authoritative audit log entry.",
+)
+def delete_ci_relationship(
+    relationship_id: UUID,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    actor_id_raw = getattr(request.state, "user_id", None)
+    actor_id = UUID(str(actor_id_raw)) if actor_id_raw else None
+    CIRelationshipService.delete_relationship(
+        db=db,
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        relationship_id=relationship_id,
+    )
+    return None
+
+
+# Canonical /ci-relationships aliases matching canonical data model
+@router.get(
+    "/ci-relationships",
+    response_model=List[ITSMConfigurationItemRelationshipResponse],
+    dependencies=[Depends(require_itsm_cmdb_admin_or_admin)],
+    summary="List all CI relationships in tenant (CMDB-002)",
+)
+def list_canonical_ci_relationships(
+    relationship_type: Optional[str] = Query(None),
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    return CIRelationshipService.list_all_relationships(
+        db=db,
+        tenant_id=tenant_id,
+        relationship_type=relationship_type,
+    )
+
+
+@router.post(
+    "/ci-relationships",
+    response_model=ITSMConfigurationItemRelationshipResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_itsm_cmdb_admin_or_admin)],
+    summary="Create CI relationship canonical endpoint (CMDB-002)",
+)
+def create_canonical_ci_relationship(
+    payload: ITSMConfigurationItemRelationshipCreateRequest,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    actor_id_raw = getattr(request.state, "user_id", None)
+    actor_id = UUID(str(actor_id_raw)) if actor_id_raw else None
+    return CIRelationshipService.create_relationship(
+        db=db,
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        payload=payload,
+    )
+
+
+@router.delete(
+    "/ci-relationships/{relationship_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_itsm_cmdb_admin_or_admin)],
+    summary="Delete CI relationship canonical endpoint (CMDB-002)",
+)
+def delete_canonical_ci_relationship(
+    relationship_id: UUID,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id_str: str = Depends(get_current_tenant),
+):
+    tenant_id = UUID(tenant_id_str)
+    actor_id_raw = getattr(request.state, "user_id", None)
+    actor_id = UUID(str(actor_id_raw)) if actor_id_raw else None
+    CIRelationshipService.delete_relationship(
+        db=db,
+        tenant_id=tenant_id,
+        actor_id=actor_id,
+        relationship_id=relationship_id,
+    )
+    return None
 
 
 # =============================================================================

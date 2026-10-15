@@ -27,6 +27,9 @@ export default function ItsmLoginPage() {
     if (params.get("error") === "access_denied") {
       return "Your account does not have access to AuthClaw ITSM. Please contact your workspace administrator or sign in to AuthClaw Governance.";
     }
+    if (params.get("error") === "session_expired") {
+      return "Your session has expired or is invalid. Please sign in again.";
+    }
     return params.get("sso_error");
   });
   const [message, setMessage] = useState<string | null>(() => {
@@ -90,6 +93,9 @@ export default function ItsmLoginPage() {
           break;
         case "CATALOG_MANAGER":
           defaultRoute = "/itsm/dashboard/catalog-manager";
+          break;
+        case "CMDB_ADMIN":
+          defaultRoute = "/itsm/admin-portal/configuration-items";
           break;
       }
       const returnTo = explicitReturnTo || defaultRoute;

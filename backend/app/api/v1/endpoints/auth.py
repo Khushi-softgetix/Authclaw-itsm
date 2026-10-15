@@ -34,8 +34,10 @@ from app.core.auth import get_tenant_db, hash_key as _api_key_hash, require_role
 from app.db.models import APIKey, OnboardingEmailOTP, Tenant, TenantOIDCConfig, User, ITSMUserAccess
 from app.services.email_service import EmailDeliveryError
 
+from app.core.crypto import get_session_key_ring
 from app.core.oidc import oidc_config
 from app.services import event_backbone, oidc_sso, oidc_transactions
+from app.schemas.itsm_admin import AccountActivationRequest, AccountActivationResponse
 
 router = APIRouter()
 logger = logging.getLogger("api.auth")
@@ -770,3 +772,20 @@ def confirm_password_reset(payload: PasswordResetConfirmRequest):
         raise
     finally:
         db.close()
+
+
+@router.post(
+    "/activate",
+    response_model=AccountActivationResponse,
+    summary="Activate account with a secure invitation token",
+)
+def activate_account_endpoint(
+    payload: AccountActivationRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Securely activate a pending employee account and set their initial password."""
+    from app.services.itsm_employee_activation_service import ITSMEmployeeActivationService
+    request_id = request.headers.get("x-request-id", "")
+    return ITSMEmployeeActivationService.activate_account(db, payload, request_id=request_id)
+

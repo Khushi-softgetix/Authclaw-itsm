@@ -81,7 +81,7 @@ export function proxy(request: NextRequest) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
-  const hasAccessError = request.nextUrl.searchParams.get("error") === "access_denied";
+  const hasAccessError = Boolean(request.nextUrl.searchParams.get("error"));
 
   if (session && path === "/itsm/login") {
     if (!hasAccessError) {
@@ -94,6 +94,11 @@ export function proxy(request: NextRequest) {
           ? returnTo
           : "/itsm/incidents";
       return NextResponse.redirect(new URL(safeRedirect, request.url));
+    } else {
+      // If an error is present (e.g. session_expired or access_denied), clear the stale cookie
+      const res = NextResponse.next();
+      res.cookies.delete("authclaw_session");
+      return res;
     }
   }
 
@@ -108,6 +113,10 @@ export function proxy(request: NextRequest) {
           ? returnTo
           : "/overview";
       return NextResponse.redirect(new URL(safeRedirect, request.url));
+    } else if (hasAccessError) {
+      const res = NextResponse.next();
+      res.cookies.delete("authclaw_session");
+      return res;
     }
   }
 

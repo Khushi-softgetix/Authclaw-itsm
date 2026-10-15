@@ -45,6 +45,8 @@ export default async function DashboardRootPage() {
       redirect("/itsm/dashboard/auditor");
     case "CATALOG_MANAGER":
       redirect("/itsm/dashboard/catalog-manager");
+    case "CMDB_ADMIN":
+      redirect("/itsm/admin-portal/configuration-items");
     default:
       redirect("/itsm/dashboard/agent");
   }

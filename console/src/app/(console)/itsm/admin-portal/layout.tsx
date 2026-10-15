@@ -1,5 +1,5 @@
 import React from "react";
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 export default async function AdminPortalLayout({
@@ -28,15 +28,27 @@ export default async function AdminPortalLayout({
 
   const principal = await response.json();
   const hasItsmAccess = principal.product_access?.itsm ?? false;
-  const itsmRole = principal.itsm_role || "";
+  const itsmRole = (principal.itsm_role || "").toUpperCase();
 
   // 1. Enforce ITSM product access
   if (!hasItsmAccess) {
     redirect("/itsm/login?error=access_denied");
   }
 
-  // 2. Server-side guard: Only PLATFORM_ADMINISTRATOR is allowed in the Admin Portal
-  if (itsmRole !== "PLATFORM_ADMINISTRATOR") {
+  const headerList = await headers();
+  const currentPath = headerList.get("x-authclaw-pathname") || "";
+
+  // 2. Server-side guard:
+  // - PLATFORM_ADMINISTRATOR is allowed across all Admin Portal workspaces.
+  // - CMDB_ADMIN is allowed in Configuration Items workspace only.
+  if (itsmRole === "CMDB_ADMIN") {
+    if (
+      currentPath &&
+      !currentPath.startsWith("/itsm/admin-portal/configuration-items")
+    ) {
+      redirect("/itsm/admin-portal/configuration-items");
+    }
+  } else if (itsmRole !== "PLATFORM_ADMINISTRATOR") {
     redirect("/itsm/incidents?error=admin_required");
   }
 

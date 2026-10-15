@@ -17,7 +17,15 @@ VALID_ITSM_ROLES = (
     "PLATFORM_ADMINISTRATOR",
     "AUDITOR",
     "CATALOG_MANAGER",
+    "CMDB_ADMIN",
 )
+
+# CMDB Audit Action Constants (supporting CI CRUD, bulk import, and preparing for CMDB-002 relationships)
+CMDB_AUDIT_ACTION_CI_CREATED = "itsm.cmdb.ci_created"
+CMDB_AUDIT_ACTION_CI_UPDATED = "itsm.cmdb.ci_updated"
+CMDB_AUDIT_ACTION_BULK_IMPORT = "itsm.cmdb.bulk_import"
+CMDB_AUDIT_ACTION_RELATIONSHIP_CREATED = "itsm.cmdb.relationship_created"
+CMDB_AUDIT_ACTION_RELATIONSHIP_DELETED = "itsm.cmdb.relationship_deleted"
 
 
 class ITSMUserItemResponse(BaseModel):
@@ -30,6 +38,9 @@ class ITSMUserItemResponse(BaseModel):
     governance_access: bool
     status: str
     created_at: datetime
+    invitation_status: Optional[str] = None
+    invite_id: Optional[UUID] = None
+    invite_expires_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -164,6 +175,77 @@ class ITSMConfigurationItemUpdateRequest(BaseModel):
     environment: Optional[str] = Field(default=None)
     status: Optional[str] = Field(default=None)
     external_resource_id: Optional[str] = Field(default=None, max_length=512)
+
+
+# --- Configuration Item Typed Relationships Schemas (CMDB-002) ---
+VALID_CI_RELATIONSHIP_TYPES = (
+    "DEPENDS_ON",
+    "RUNS_ON",
+    "HOSTED_ON",
+    "CONNECTS_TO",
+    "OWNED_BY",
+    "SUPPORTS",
+    "PART_OF",
+)
+
+
+class ITSMRelatedCIDetails(BaseModel):
+    """Summarized attributes of a related Configuration Item."""
+    id: UUID
+    name: str
+    ci_type: str
+    environment: str
+    status: str
+    service_id: Optional[UUID] = None
+    service_name: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ITSMConfigurationItemRelationshipResponse(BaseModel):
+    """Schema for a typed CI relationship in the CMDB Service Graph."""
+    id: UUID
+    tenant_id: UUID
+    parent_ci_id: UUID
+    child_ci_id: UUID
+    relationship_type: str
+    source: str = "MANUAL"
+    confidence: float = 1.0
+    status: str = "ACTIVE"
+    created_at: datetime
+    updated_at: datetime
+    direction: Optional[str] = None
+    display_label: Optional[str] = None
+    related_ci: Optional[ITSMRelatedCIDetails] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ITSMConfigurationItemRelationshipCreateRequest(BaseModel):
+    """Schema for creating a typed relationship between two Configuration Items."""
+    parent_ci_id: UUID = Field(..., description="Source/parent CI ID")
+    child_ci_id: UUID = Field(..., description="Target/child CI ID")
+    relationship_type: str = Field(default="DEPENDS_ON", description="One of: DEPENDS_ON, RUNS_ON, HOSTED_ON, CONNECTS_TO, OWNED_BY, SUPPORTS, PART_OF")
+    source: Optional[str] = Field(default="MANUAL", max_length=100)
+    confidence: Optional[float] = Field(default=1.0, ge=0.0, le=1.0)
+
+    @field_validator("relationship_type")
+    @classmethod
+    def validate_type(cls, value: str) -> str:
+        normalized = value.strip().upper()
+        if normalized not in VALID_CI_RELATIONSHIP_TYPES:
+            raise ValueError(
+                f"Invalid relationship type '{value}'. Supported types: {', '.join(VALID_CI_RELATIONSHIP_TYPES)}"
+            )
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_no_self_link(self) -> "ITSMConfigurationItemRelationshipCreateRequest":
+        if self.parent_ci_id == self.child_ci_id:
+            raise ValueError("A Configuration Item cannot have a relationship with itself (self-link is prohibited)")
+        return self
 
 
 # --- Bulk Configuration Item (CI) Import Schemas (CMDB-005) ---
@@ -420,15 +502,17 @@ class ITSMEmployeeInviteResponse(BaseModel):
     signup_id: Optional[UUID] = None
     delivery: Optional[str] = None
     dev_otp: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    action_url: Optional[str] = None
 
 
 class ITSMEmployeeCreateManualRequest(BaseModel):
-    """Schema for manually creating an employee in AuthClaw with an ITSM role."""
+    """Schema for creating an employee in AuthClaw with an ITSM role."""
     email: str = Field(..., description="Employee corporate email address")
     itsm_role: str = Field(..., description="Assigned ITSM business role")
-    password: str = Field(..., description="Employee account password")
-    confirm_password: str = Field(..., description="Password confirmation")
-    email_credentials: bool = Field(default=False, description="Optionally send login credentials to employee")
+    password: Optional[str] = Field(default=None, description="Optional employee account password (deprecated; activation link used)")
+    confirm_password: Optional[str] = Field(default=None, description="Password confirmation")
+    email_credentials: bool = Field(default=False, description="Optionally send invitation / activation link")
 
     @field_validator("email")
     @classmethod
@@ -450,10 +534,11 @@ class ITSMEmployeeCreateManualRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_passwords(self) -> "ITSMEmployeeCreateManualRequest":
-        if not self.password or len(self.password) < 12:
-            raise ValueError("Password must be at least 12 characters")
-        if self.password != self.confirm_password:
-            raise ValueError("Passwords do not match")
+        if self.password:
+            if len(self.password) < 12:
+                raise ValueError("Password must be at least 12 characters")
+            if self.password != self.confirm_password:
+                raise ValueError("Passwords do not match")
         return self
 
 
@@ -464,8 +549,67 @@ class ITSMEmployeeCreateManualResponse(BaseModel):
     email: str
     itsm_role: str
     user_id: Optional[UUID] = None
+    signup_id: Optional[UUID] = None
     has_itsm_access: Optional[bool] = None
     delivery: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    action_url: Optional[str] = None
+
+
+class AccountActivationRequest(BaseModel):
+    """Request payload for employee account activation and initial password setting."""
+    token: str = Field(..., min_length=1, description="URL-safe activation token")
+    password: str = Field(..., min_length=1, max_length=256, description="Chosen employee password")
+    confirm_password: Optional[str] = Field(default=None, description="Optional confirmation password")
+    signup_id: Optional[UUID] = Field(default=None, description="Optional invitation ID")
+    email: Optional[str] = Field(default=None, description="Optional employee email")
+
+    @model_validator(mode="after")
+    def validate_confirm_password(self) -> "AccountActivationRequest":
+        if self.confirm_password is not None and self.password != self.confirm_password:
+            raise ValueError("Passwords do not match")
+        return self
+
+
+class AccountActivationResponse(BaseModel):
+    """Response payload after successful employee account activation."""
+    status: str = "activated"
+    message: str = "Account activated successfully. You may now sign in."
+    email: str
+    user_id: UUID
+    itsm_role: Optional[str] = None
+
+
+class InvitationResendResponse(BaseModel):
+    """Response payload after resending an activation invitation."""
+    status: str = "resent"
+    message: str = "Activation invitation resent successfully."
+    signup_id: UUID
+    email: str
+    expires_at: datetime
+    delivery: Optional[str] = None
+
+
+class InvitationRevokeResponse(BaseModel):
+    """Response payload after revoking an activation invitation."""
+    status: str = "revoked"
+    message: str = "Invitation revoked successfully."
+    signup_id: UUID
+    email: str
+
+
+class PendingInviteResponse(BaseModel):
+    """Response payload representing a pending tenant invitation."""
+    signup_id: UUID
+    email: str
+    tenant_name: str
+    invited_role: Optional[str] = None
+    status: str
+    expires_at: datetime
+    sent_at: Optional[datetime] = None
+    resend_count: int = 0
+    delivery: Optional[str] = None
+
 
 
 

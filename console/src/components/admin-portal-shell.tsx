@@ -53,6 +53,10 @@ export default function AdminPortalShell({
   const router = useRouter();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [profileDropdownOpen, setProfileDropdownOpen] = useState(false);
+  const isCmdbAdmin = itsmRole?.toUpperCase() === "CMDB_ADMIN";
+  const effectiveAdminNavigation = isCmdbAdmin
+    ? adminNavigation.filter((item) => item.name === "Configuration Items")
+    : adminNavigation;
 
   const handleLogout = async () => {
     try {
@@ -89,10 +93,10 @@ export default function AdminPortalShell({
     <div className="space-y-4">
       <div>
         <p className="px-3 text-[11px] font-semibold uppercase tracking-wider text-[#6B7488] mb-1.5">
-          Administration
+          {isCmdbAdmin ? "CMDB Administration" : "Administration"}
         </p>
         <div className="space-y-1">
-          {adminNavigation.map((item) => {
+          {effectiveAdminNavigation.map((item) => {
             const active = pathname === item.href || pathname.startsWith(item.href);
             return (
               <Link
@@ -125,7 +129,9 @@ export default function AdminPortalShell({
           </div>
           <div>
             <span className="block font-bold text-sm text-[#0E1726]">AuthClaw ITSM</span>
-            <span className="block text-[10px] uppercase tracking-wider text-[#6B7488]">Platform Administration</span>
+            <span className="block text-[10px] uppercase tracking-wider text-[#6B7488]">
+              {isCmdbAdmin ? "CMDB Administration" : "Platform Administration"}
+            </span>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -145,7 +151,7 @@ export default function AdminPortalShell({
         <aside className="sticky top-4 m-4 mr-0 hidden h-[calc(100vh-2rem)] w-64 flex-col overflow-hidden rounded-[20px] border border-[#E6E9F0] bg-white shadow-[0_1px_2px_rgba(11,31,63,.05),0_12px_30px_-12px_rgba(11,31,63,.18)] md:flex">
           {/* Logo / Portal Title */}
           <Link
-            href="/itsm/admin-portal"
+            href={isCmdbAdmin ? "/itsm/admin-portal/configuration-items" : "/itsm/admin-portal"}
             className="h-16 flex items-center gap-2.5 px-6 border-b border-[#E6E9F0] hover:bg-[#F9FAFB] transition-colors"
           >
             <div className="w-8 h-8 rounded-[10px] bg-[#6D28D9] flex items-center justify-center shadow-[0_8px_20px_-8px_rgba(109,40,217,.6)]">
@@ -156,7 +162,7 @@ export default function AdminPortalShell({
                 AuthClaw ITSM
               </span>
               <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6D28D9]">
-                Platform Administration
+                {isCmdbAdmin ? "CMDB Administration" : "Platform Administration"}
               </span>
             </div>
           </Link>
@@ -197,7 +203,9 @@ export default function AdminPortalShell({
                 </div>
                 <div>
                   <span className="block font-bold text-sm text-[#0E1726]">AuthClaw ITSM</span>
-                  <span className="block text-[10px] font-semibold text-[#6D28D9]">Platform Administration</span>
+                  <span className="block text-[10px] font-semibold text-[#6D28D9]">
+                    {isCmdbAdmin ? "CMDB Administration" : "Platform Administration"}
+                  </span>
                 </div>
               </div>
               <button
@@ -237,11 +245,13 @@ export default function AdminPortalShell({
           {/* Top Header Bar */}
           <header className="sticky top-4 z-30 mx-4 mt-4 hidden h-14 items-center justify-between rounded-[20px] border border-[#E6E9F0] bg-white/90 px-6 shadow-[0_1px_2px_rgba(11,31,63,.05),0_12px_30px_-12px_rgba(11,31,63,.18)] backdrop-blur-md md:flex">
             <div className="flex items-center gap-3">
-              <Link href="/itsm/admin-portal" className="text-[#6B7488] text-sm hover:text-[#0E1726]">
+              <Link href={isCmdbAdmin ? "/itsm/admin-portal/configuration-items" : "/itsm/admin-portal"} className="text-[#6B7488] text-sm hover:text-[#0E1726]">
                 AuthClaw ITSM
               </Link>
               <span className="text-[#A8B0C0]">/</span>
-              <span className="text-[#6B7488] text-sm">Platform Administration</span>
+              <span className="text-[#6B7488] text-sm">
+                {isCmdbAdmin ? "CMDB Administration" : "Platform Administration"}
+              </span>
               <span className="text-[#A8B0C0]">/</span>
               <span className="text-[#0E1726] text-sm font-medium">{currentPage}</span>
             </div>

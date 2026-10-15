@@ -45,6 +45,8 @@ function getRoleProfileTitle(role?: string): string {
       return "Auditor Profile";
     case "CATALOG_MANAGER":
       return "Catalog Manager Profile";
+    case "CMDB_ADMIN":
+      return "CMDB Admin Profile";
     default:
       return "ITSM Profile";
   }
@@ -67,6 +69,8 @@ function getRoleSubtitle(role?: string): string {
       return "Your authenticated compliance auditor session and audit trail inspection scope.";
     case "CATALOG_MANAGER":
       return "Your authenticated catalog management session for managing Service Catalog offerings and request intake forms.";
+    case "CMDB_ADMIN":
+      return "Your authenticated CMDB management session for managing Configuration Items, relationships, schemas, and imports.";
     default:
       return "Your authenticated AuthClaw user session and workspace entitlement details.";
   }
@@ -96,6 +100,8 @@ function getRoleBadgeLabel(role?: string): string {
       return "Auditor";
     case "CATALOG_MANAGER":
       return "Catalog Manager";
+    case "CMDB_ADMIN":
+      return "CMDB Admin";
     default:
       return role || "REQUESTER";
   }
@@ -116,6 +122,8 @@ function getAvatarInitials(email?: string, role?: string): string {
       return "AU";
     case "CATALOG_MANAGER":
       return "CM";
+    case "CMDB_ADMIN":
+      return "CA";
     case "REQUESTER":
       return "RQ";
   }

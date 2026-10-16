@@ -36,6 +36,8 @@ from app.schemas.itsm_incidents import (
 from app.schemas.itsm_problems import (
     ReportRecurringProblemRequest,
     ReportRecurringProblemResponse,
+    LinkIncidentProblemRequest,
+    LinkIncidentProblemResponse,
 )
 from app.services.itsm_incident_service import IncidentService
 from app.services.itsm_problem_service import ProblemService
@@ -797,4 +799,102 @@ def report_problem_alias(
         response=response,
         db=db,
         tenant_id=tenant_id,
+    )
+
+
+@router.post(
+    "/{incident_id}/link-problem",
+    response_model=LinkIncidentProblemResponse,
+    summary="Link Incident to existing Problem",
+    description="Link an incident ticket to an existing problem/known error, updating references and activity.",
+)
+def link_incident_to_problem(
+    incident_id: UUID,
+    payload: LinkIncidentProblemRequest,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    actor_id = UUID(str(request.state.user_id))
+    actor_email = getattr(request.state, "user_email", None)
+    t_id = UUID(tenant_id)
+
+    access_row = db.execute(
+        text("SELECT itsm_role, has_itsm_access FROM authn.lookup_itsm_user_access(:tenant_id, :user_id)"),
+        {"tenant_id": str(t_id), "user_id": str(actor_id)},
+    ).first()
+    if access_row and not access_row.has_itsm_access:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ITSM access disabled")
+
+    role = str(access_row.itsm_role).upper() if (access_row and access_row.itsm_role) else _get_itsm_role(db, t_id, actor_id)
+    allowed_roles = {"SERVICE_AGENT", "INCIDENT_MANAGER", "PROCESS_CHANGE_MANAGER", "PLATFORM_ADMINISTRATOR", "ADMIN"}
+    if role not in allowed_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Service Agent or Incident Manager role required to link problem",
+        )
+
+    incident = IncidentService.get_incident(db=db, tenant_id=t_id, incident_id=incident_id)
+    if role == "SERVICE_AGENT":
+        if not IncidentService.check_incident_agent_access(db, t_id, incident, actor_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Incident is not assigned to you or your team",
+            )
+
+    return ProblemService.link_incident_to_problem(
+        db=db,
+        tenant_id=t_id,
+        incident_id=incident_id,
+        problem_id=payload.problem_id,
+        actor_id=actor_id,
+        actor_email=actor_email,
+    )
+
+
+@router.post(
+    "/{incident_id}/unlink-problem",
+    response_model=LinkIncidentProblemResponse,
+    summary="Unlink Incident from Problem",
+    description="Remove the link between an incident and a problem ticket.",
+)
+def unlink_incident_from_problem(
+    incident_id: UUID,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    actor_id = UUID(str(request.state.user_id))
+    actor_email = getattr(request.state, "user_email", None)
+    t_id = UUID(tenant_id)
+
+    access_row = db.execute(
+        text("SELECT itsm_role, has_itsm_access FROM authn.lookup_itsm_user_access(:tenant_id, :user_id)"),
+        {"tenant_id": str(t_id), "user_id": str(actor_id)},
+    ).first()
+    if access_row and not access_row.has_itsm_access:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ITSM access disabled")
+
+    role = str(access_row.itsm_role).upper() if (access_row and access_row.itsm_role) else _get_itsm_role(db, t_id, actor_id)
+    allowed_roles = {"SERVICE_AGENT", "INCIDENT_MANAGER", "PROCESS_CHANGE_MANAGER", "PLATFORM_ADMINISTRATOR", "ADMIN"}
+    if role not in allowed_roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: Service Agent or Incident Manager role required to unlink problem",
+        )
+
+    incident = IncidentService.get_incident(db=db, tenant_id=t_id, incident_id=incident_id)
+    if role == "SERVICE_AGENT":
+        if not IncidentService.check_incident_agent_access(db, t_id, incident, actor_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Incident is not assigned to you or your team",
+            )
+
+    return ProblemService.unlink_incident_from_problem(
+        db=db,
+        tenant_id=t_id,
+        incident_id=incident_id,
+        actor_id=actor_id,
+        actor_email=actor_email,
     )

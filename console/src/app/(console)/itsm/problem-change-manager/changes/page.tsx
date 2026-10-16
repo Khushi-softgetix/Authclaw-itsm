@@ -19,6 +19,26 @@ import {
 } from "lucide-react";
 import { formatDateTime } from "@/lib/itsm-format";
 import { ChangeStats, ChangeSummary } from "@/lib/itsm-types";
+import CompactDateCell from "@/components/itsm/compact-date-cell";
+
+function formatCompactWindow(iso?: string | null) {
+  if (!iso) return "—";
+  try {
+    const str = String(iso);
+    const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/.test(str) ? str : `${str}Z`;
+    const d = new Date(normalized);
+    if (isNaN(d.getTime())) return str;
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Kolkata",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(d);
+  } catch {
+    return String(iso || "—");
+  }
+}
 
 type FilterStatus = "ALL" | "OPEN" | "IN_PROGRESS" | "SCHEDULED" | "COMPLETED";
 
@@ -175,7 +195,7 @@ export default function ChangeManagementQueuePage() {
   }, [fetchData]);
 
   return (
-    <div className="space-y-8 max-w-7xl mx-auto" id="pcm-changes-page">
+    <div className="w-full space-y-8" id="pcm-changes-page">
       {/* Top Header Banner matching My Tickets header style */}
       <div
         className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm"
@@ -432,94 +452,114 @@ export default function ChangeManagementQueuePage() {
             </p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="border-b border-[#E6E9F0] bg-[#F8FAFC] text-[#6B7488] font-semibold">
-                  <th className="py-3 px-4">Change #</th>
-                  <th className="py-3 px-4 min-w-[220px]">Short Description</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">Type</th>
-                  <th className="py-3 px-4">Risk / Impact</th>
-                  <th className="py-3 px-4">Service</th>
-                  <th className="py-3 px-4">Assigned Team</th>
-                  <th className="py-3 px-4">Assignee</th>
-                  <th className="py-3 px-4">Planned Window</th>
-                  <th className="py-3 px-4">Updated</th>
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-21rem)] min-h-[350px]">
+            <table className="w-full text-left text-xs border-collapse table-fixed min-w-[920px] lg:min-w-0">
+              <colgroup>
+                <col className="w-[88px]" />
+                <col className="w-auto" />
+                <col className="w-[84px]" />
+                <col className="w-[72px]" />
+                <col className="w-[88px]" />
+                <col className="w-[88px]" />
+                <col className="w-[88px]" />
+                <col className="w-[96px]" />
+                <col className="w-[118px]" />
+                <col className="w-[150px]" />
+              </colgroup>
+              <thead className="sticky top-0 z-10 bg-[#FBFAF9] shadow-[0_1px_0_0_#E6E9F0]">
+                <tr className="border-b border-[#E6E9F0] bg-[#FBFAF9] text-[11px] font-bold text-[#6B7488] uppercase tracking-wider">
+                  <th className="py-2.5 px-2 whitespace-nowrap">Change #</th>
+                  <th className="py-2.5 px-2.5 min-w-[140px]">Short Description</th>
+                  <th className="py-2.5 px-2 whitespace-nowrap">Status</th>
+                  <th className="py-2.5 px-2 whitespace-nowrap">Type</th>
+                  <th className="py-2.5 px-2 whitespace-nowrap">Risk / Impact</th>
+                  <th className="py-2.5 px-2 whitespace-nowrap">Service</th>
+                  <th className="py-2.5 px-2 whitespace-nowrap">Assigned Team</th>
+                  <th className="py-2.5 px-2 whitespace-nowrap">Assignee</th>
+                  <th className="py-2.5 px-2 whitespace-nowrap">Planned Window</th>
+                  <th className="py-2.5 px-2 whitespace-nowrap">Created / Updated</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#E6E9F0]" id="pcm-changes-tbody">
+              <tbody className="divide-y divide-[#F0F2F5]" id="pcm-changes-tbody">
                 {changes.map((chg) => (
                   <tr
                     key={chg.id}
-                    className="hover:bg-[#F8FAFC] transition group"
+                    className="hover:bg-[#F9FAFB] transition-colors group cursor-pointer"
+                    onClick={() => {
+                      window.location.href = `/itsm/problem-change-manager/changes/${chg.id}`;
+                    }}
                   >
-                    <td className="py-3.5 px-4 font-semibold text-[#6D28D9] whitespace-nowrap">
+                    <td className="py-2.5 px-2 font-semibold text-[#6D28D9] font-mono whitespace-nowrap text-xs">
                       <Link
                         href={`/itsm/problem-change-manager/changes/${chg.id}`}
                         className="hover:underline inline-flex items-center gap-1"
+                        onClick={(e) => e.stopPropagation()}
                       >
                         <span>{chg.change_number}</span>
-                        <ExternalLink className="w-3 h-3 text-[#94A3B8] opacity-0 group-hover:opacity-100 transition" />
+                        <ExternalLink className="w-3 h-3 text-[#94A3B8] opacity-0 group-hover:opacity-100 transition shrink-0" />
                       </Link>
                     </td>
-                    <td className="py-3.5 px-4">
-                      <div className="font-semibold text-[#0E1726]">{chg.title}</div>
+                    <td className="py-2.5 px-2.5 min-w-0">
+                      <div className="font-semibold text-[#0E1726] line-clamp-2 leading-snug" title={chg.title}>
+                        {chg.title}
+                      </div>
                       {chg.description && (
-                        <p className="text-[#64748B] text-[11px] truncate max-w-xs mt-0.5">
+                        <p className="text-[#64748B] text-[11px] line-clamp-2 leading-snug mt-0.5" title={chg.description}>
                           {chg.description}
                         </p>
                       )}
                     </td>
-                    <td className="py-3.5 px-4 whitespace-nowrap">
+                    <td className="py-2.5 px-2 whitespace-nowrap">
                       <ChangeStatusBadge status={chg.status} />
                     </td>
-                    <td className="py-3.5 px-4 whitespace-nowrap">
+                    <td className="py-2.5 px-2 whitespace-nowrap">
                       <ChangeTypeBadge type={chg.change_type} />
                     </td>
-                    <td className="py-3.5 px-4 whitespace-nowrap">
-                      <div className="flex items-center gap-1.5">
+                    <td className="py-2.5 px-2 whitespace-nowrap">
+                      <div className="flex items-center gap-1">
                         <RiskBadge risk={chg.risk_level} />
                         {chg.impact_level && chg.impact_level !== chg.risk_level && (
-                          <span className="text-[10px] text-[#94A3B8]">
+                          <span className="text-[10px] text-[#94A3B8]" title={`Impact: ${chg.impact_level}`}>
                             Imp: {chg.impact_level}
                           </span>
                         )}
                       </div>
                     </td>
-                    <td className="py-3.5 px-4 whitespace-nowrap">
+                    <td className="py-2.5 px-2 whitespace-nowrap text-[#475069]">
                       {chg.service_name ? (
-                        <span className="inline-flex items-center gap-1.5 font-medium text-[#0E1726]">
-                          <Layers className="w-3.5 h-3.5 text-[#6D28D9]" />
-                          <span>{chg.service_name}</span>
+                        <span className="inline-flex items-center gap-1 font-medium truncate max-w-full" title={chg.service_name}>
+                          <Layers className="w-3 h-3 text-[#6D28D9] shrink-0" />
+                          <span className="truncate">{chg.service_name}</span>
                         </span>
                       ) : (
                         <span className="text-[#94A3B8]">—</span>
                       )}
                     </td>
-                    <td className="py-3.5 px-4 whitespace-nowrap text-[#475569]">
-                      {chg.assigned_team || "—"}
+                    <td className="py-2.5 px-2 whitespace-nowrap text-[#475069]">
+                      <span className="truncate block text-[11px] max-w-full" title={chg.assigned_team || undefined}>
+                        {chg.assigned_team || "—"}
+                      </span>
                     </td>
-                    <td className="py-3.5 px-4 whitespace-nowrap text-[#475569]">
+                    <td className="py-2.5 px-2 whitespace-nowrap text-[#475069]">
                       {chg.assignee_email ? (
-                        <span className="inline-flex items-center gap-1">
-                          <User className="w-3 h-3 text-[#94A3B8]" />
-                          <span className="truncate max-w-[140px]">{chg.assignee_email}</span>
+                        <span className="inline-flex items-center gap-1 truncate max-w-full text-[11px]" title={chg.assignee_email}>
+                          <User className="w-3 h-3 text-[#94A3B8] shrink-0" />
+                          <span className="truncate">{chg.assignee_email}</span>
                         </span>
                       ) : (
-                        <span className="text-[#94A3B8]">Unassigned</span>
+                        <span className="text-[#94A3B8] text-[11px]">Unassigned</span>
                       )}
                     </td>
-                    <td className="py-3.5 px-4 whitespace-nowrap text-[#64748B] text-[11px]">
+                    <td className="py-2.5 px-2 whitespace-nowrap text-[#64748B] text-[11px]">
                       {chg.earliest_start_at ? (
-                        <div className="space-y-0.5">
-                          <div className="flex items-center gap-1 text-[#0E1726] font-medium">
-                            <Calendar className="w-3 h-3 text-[#2563EB]" />
-                            <span>{formatDateTime(chg.earliest_start_at)}</span>
+                        <div className="space-y-0.5 leading-tight">
+                          <div className="flex items-center gap-1 text-[#0E1726] font-medium truncate" title={`Start: ${formatDateTime(chg.earliest_start_at)}`}>
+                            <Calendar className="w-3 h-3 text-[#2563EB] shrink-0" />
+                            <span className="truncate font-mono text-[10.5px]">{formatCompactWindow(chg.earliest_start_at)}</span>
                           </div>
                           {chg.latest_finish_at && (
-                            <div className="text-[#64748B] text-[10px] pl-4">
-                              until {formatDateTime(chg.latest_finish_at)}
+                            <div className="text-[#64748B] text-[10px] pl-4 truncate font-mono" title={`Until: ${formatDateTime(chg.latest_finish_at)}`}>
+                              until {formatCompactWindow(chg.latest_finish_at)}
                             </div>
                           )}
                         </div>
@@ -527,8 +567,8 @@ export default function ChangeManagementQueuePage() {
                         <span className="text-[#94A3B8]">—</span>
                       )}
                     </td>
-                    <td className="py-3.5 px-4 whitespace-nowrap text-[#6B7488]">
-                      {formatDateTime(chg.updated_at)}
+                    <td className="py-2.5 px-2 whitespace-nowrap text-[#6B7488]">
+                      <CompactDateCell createdAt={chg.created_at} updatedAt={chg.updated_at || chg.created_at} />
                     </td>
                   </tr>
                 ))}

@@ -20,9 +20,20 @@ export function useSlaCountdown(
 ): SlaCalculationResult {
   const [now, setNow] = useState<number>(() => Date.now());
 
+  const isCompleted = Boolean(
+    ticket?.resolved_at ||
+    ticket?.closed_at ||
+    ticket?.sla_resolution_met_at ||
+    ticket?.status === "RESOLVED" ||
+    ticket?.status === "CLOSED"
+  );
+
   useEffect(() => {
     // If ticket has no SLA or is closed/resolved, no need for active countdown timer
-    if (!ticket?.sla_due_at && !ticket?.sla_resolution_due_at && !ticket?.sla_response_due_at) {
+    if (
+      isCompleted ||
+      (!ticket?.sla_due_at && !ticket?.sla_resolution_due_at && !ticket?.sla_response_due_at)
+    ) {
       return;
     }
 
@@ -31,7 +42,13 @@ export function useSlaCountdown(
     }, intervalMs);
 
     return () => clearInterval(timer);
-  }, [ticket?.sla_due_at, ticket?.sla_resolution_due_at, ticket?.sla_response_due_at, intervalMs]);
+  }, [
+    isCompleted,
+    ticket?.sla_due_at,
+    ticket?.sla_resolution_due_at,
+    ticket?.sla_response_due_at,
+    intervalMs,
+  ]);
 
   return calculateSlaStatus(ticket, now);
 }
@@ -62,7 +79,11 @@ export function SlaCountdownBadge({
     );
   }
 
-  const tooltip = sla.isBreached
+  const tooltip = sla.isCompleted
+    ? sla.isBreached
+      ? `SLA Breached · ${sla.formattedRemaining}`
+      : `SLA Met · ${sla.formattedShort}`
+    : sla.isBreached
     ? `SLA Breached · Due: ${formatDateTime(sla.dueAt?.toISOString())}`
     : sla.isPaused
     ? `SLA Paused · Remaining: ${sla.formattedRemaining}`
@@ -73,17 +94,27 @@ export function SlaCountdownBadge({
       className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold border transition-colors duration-300 ${sla.colorTheme.badge}`}
       title={tooltip}
     >
-      {sla.state === "GREEN" && (
-        <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-      )}
-      {sla.state === "AMBER" && (
-        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-      )}
-      {sla.state === "RED" && (
-        <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
-      )}
-      {sla.state === "PAUSED" && (
-        <PauseCircle className="w-3 h-3 text-slate-500" />
+      {sla.isCompleted ? (
+        sla.isBreached ? (
+          <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+        ) : (
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+        )
+      ) : (
+        <>
+          {sla.state === "GREEN" && (
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          )}
+          {sla.state === "AMBER" && (
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+          )}
+          {sla.state === "RED" && (
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+          )}
+          {sla.state === "PAUSED" && (
+            <PauseCircle className="w-3 h-3 text-slate-500" />
+          )}
+        </>
       )}
 
       <span>{showLabel ? sla.formattedRemaining : sla.formattedShort}</span>
@@ -125,7 +156,15 @@ export function SlaCountdownPanel({
   // Pick state icon and headline text
   let statusIcon = <CheckCircle2 className="w-4 h-4 text-emerald-600" />;
   let headlineTitle = "SLA on track";
-  if (sla.state === "AMBER") {
+  if (sla.isCompleted) {
+    if (sla.isBreached) {
+      statusIcon = <AlertCircle className="w-4 h-4 text-red-600" />;
+      headlineTitle = "SLA Breached";
+    } else {
+      statusIcon = <CheckCircle2 className="w-4 h-4 text-emerald-600" />;
+      headlineTitle = "SLA Met";
+    }
+  } else if (sla.state === "AMBER") {
     statusIcon = <AlertTriangle className="w-4 h-4 text-amber-600" />;
     headlineTitle = "Warning: SLA breach approaching";
   } else if (sla.state === "RED") {
@@ -137,7 +176,11 @@ export function SlaCountdownPanel({
   }
 
   // Precise formatted countdown
-  const countdownText = sla.isBreached
+  const countdownText = sla.isCompleted
+    ? sla.isBreached
+      ? `${formatSlaDurationDetailed(sla.overdueSeconds)} overdue at resolution`
+      : `${formatSlaDurationDetailed(sla.remainingSeconds)} remaining at resolution`
+    : sla.isBreached
     ? `${formatSlaDurationDetailed(sla.overdueSeconds)} overdue`
     : `${formatSlaDurationDetailed(sla.remainingSeconds)} remaining`;
 
@@ -171,7 +214,13 @@ export function SlaCountdownPanel({
         <div className="flex items-center justify-between">
           <span className="text-[11px] font-semibold uppercase tracking-wider opacity-80 flex items-center gap-1.5">
             <Clock className="w-3.5 h-3.5" />
-            {sla.isBreached ? "Overdue Time" : sla.isPaused ? "Time Frozen" : "Time Remaining"}
+            {sla.isCompleted
+              ? (sla.isResolved ? `Resolved in ${sla.formattedResolvedDuration}` : `Closed in ${sla.formattedResolvedDuration}`)
+              : sla.isBreached
+              ? "Overdue Time"
+              : sla.isPaused
+              ? "Time Frozen"
+              : "Time Remaining"}
           </span>
           <span className="text-[11px] font-mono font-medium opacity-75">
             {sla.elapsedPercentage}% elapsed
@@ -210,7 +259,29 @@ export function SlaCountdownPanel({
           </div>
         )}
 
-        {sla.isPaused && (
+        {sla.isCompleted && sla.completedAt && (
+          <div className="flex items-center justify-between py-1 border-b border-slate-100">
+            <span className="text-[#6B7488]">
+              {sla.isResolved ? "Resolved:" : "Closed:"}
+            </span>
+            <span className="font-semibold text-[#0E1726]">
+              {formatDateTime(sla.completedAt.toISOString())}
+            </span>
+          </div>
+        )}
+
+        {sla.isCompleted && (
+          <div className={`flex items-center justify-between py-1 px-2 rounded-lg ${sla.isBreached ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"}`}>
+            <span>Result:</span>
+            <span className="font-bold">
+              {sla.isBreached
+                ? `SLA Breached (${formatSlaDurationDetailed(sla.overdueSeconds)} overdue)`
+                : `SLA Met (${sla.isResolved ? "Resolved in " : "Closed in "}${sla.formattedResolvedDuration})`}
+            </span>
+          </div>
+        )}
+
+        {sla.isPaused && !sla.isCompleted && (
           <div className="flex items-center justify-between py-1 text-slate-600 bg-slate-100/70 px-2 rounded-lg">
             <span>SLA Timer Paused</span>
             <span className="font-medium">Awaiting action</span>

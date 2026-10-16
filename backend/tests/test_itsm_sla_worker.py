@@ -18,7 +18,8 @@ I. Worker configuration and lifecycle helpers.
 from __future__ import annotations
 
 from datetime import datetime, timezone, timedelta
-from typing import Any
+from types import EllipsisType
+from typing import Any, cast
 import unittest
 from unittest.mock import patch, MagicMock
 from uuid import UUID, uuid4
@@ -45,6 +46,7 @@ from app.db.models import (
     Notification,
     User,
 )
+from app.services.itsm_kpi_service import ITSMKPIService
 from app.services.itsm_sla_worker import (
     dispatch_escalation_actions,
     enabled,
@@ -53,6 +55,7 @@ from app.services.itsm_sla_worker import (
     process_ticket_escalation,
     process_tenant_escalations,
     resolve_escalation_recipients,
+    retry_escalation_notifications,
     sweep,
 )
 
@@ -64,7 +67,7 @@ class TestSLAEscalationWorker(unittest.TestCase):
         # Create an isolated in-memory SQLite database per test
         self.engine = create_engine("sqlite:///:memory:")
         for tbl in (ITSMTicket, Notification, ITSMTicketActivity, ITSMTeam, ITSMTeamMember, ITSMUserAccess, User):
-            tbl.__table__.create(bind=self.engine)
+            cast(Any, tbl.__table__).create(bind=self.engine)
         self.Session = sessionmaker(bind=self.engine, autocommit=False, autoflush=False)
         self.db = self.Session()
 
@@ -123,7 +126,7 @@ class TestSLAEscalationWorker(unittest.TestCase):
         tenant_id: Any | None = None,
         status: str = "IN_PROGRESS",
         created_at: datetime | None = None,
-        due_at: datetime | None = ...,
+        due_at: datetime | None | EllipsisType = ...,
         warning_at: datetime | None = None,
         breach_at: datetime | None = None,
         paused: bool = False,
@@ -181,6 +184,7 @@ class TestSLAEscalationWorker(unittest.TestCase):
         self.db.refresh(ticket)
         self.assertIsNotNone(ticket.sla_breach_escalated_at)
         # Warning timestamp preserved as original
+        assert ticket.sla_warning_escalated_at is not None
         self.assertEqual(
             ticket.sla_warning_escalated_at.replace(tzinfo=timezone.utc),
             warning_time,
@@ -198,6 +202,7 @@ class TestSLAEscalationWorker(unittest.TestCase):
         self.assertEqual(result["breaches_escalated"], 0)
 
         self.db.refresh(ticket)
+        assert ticket.sla_warning_escalated_at is not None
         self.assertEqual(
             ticket.sla_warning_escalated_at.replace(tzinfo=timezone.utc),
             original_warning_time,
@@ -222,6 +227,7 @@ class TestSLAEscalationWorker(unittest.TestCase):
         self.assertEqual(result["breaches_escalated"], 0)
 
         self.db.refresh(ticket)
+        assert ticket.sla_breach_escalated_at is not None
         self.assertEqual(
             ticket.sla_breach_escalated_at.replace(tzinfo=timezone.utc),
             original_breach_time,
@@ -621,6 +627,177 @@ class TestSLAEscalationWorker(unittest.TestCase):
         res_2 = process_ticket_escalation(ticket, self.db, now=now)
         self.assertFalse(res_2["warning_recorded"])
         self.assertIsNone(res_2["warning_actions"])
+
+    def test_worker_restarts_preserves_persisted_timestamps(self):
+        """Worker restart: Persisted timestamps survive session close, new session queries, and prevent re-escalation."""
+        ticket = self._create_ticket(tenant_id=self.tenant_a)
+        now_1 = self.created_at + timedelta(hours=3)
+
+        # Worker run 1 in initial session
+        res_1 = sweep(self.db, now=now_1)
+        self.assertEqual(res_1["warnings_escalated"], 1)
+
+        ticket_id = ticket.id
+        # Simulate worker reboot: close session and open a fresh new session
+        self.db.close()
+        SessionLocal = sessionmaker(bind=self.engine)
+        fresh_db = SessionLocal()
+        try:
+            # Query ticket in fresh session
+            reloaded = fresh_db.query(ITSMTicket).filter(ITSMTicket.id == ticket_id).one()
+            self.assertIsNotNone(reloaded.sla_warning_escalated_at)
+
+            # Fresh worker sweep should find 0 warnings to escalate
+            res_2 = sweep(fresh_db, now=now_1 + timedelta(minutes=5))
+            self.assertEqual(res_2["warnings_escalated"], 0)
+
+            # Ticket timestamp remains untouched
+            fresh_db.refresh(reloaded)
+            self.assertIsNotNone(reloaded.sla_warning_escalated_at)
+        finally:
+            fresh_db.close()
+            # Reopen self.db for tearDown
+            self.db = SessionLocal()
+
+    def test_overdue_sla_escalation(self):
+        """Overdue SLAs: Severely overdue ticket (>100% elapsed time) triggers breach escalation and persists timestamp."""
+        ticket = self._create_ticket(tenant_id=self.tenant_a)
+        overdue_time = self.due_at + timedelta(hours=2)
+
+        res = process_ticket_escalation(ticket, self.db, now=overdue_time)
+        self.assertTrue(res["breach_recorded"])
+        self.assertEqual(res["sla_status"], "BREACHED")
+        self.assertIsNotNone(ticket.sla_breach_escalated_at)
+
+        self.db.commit()
+        reloaded = self.db.query(ITSMTicket).filter(ITSMTicket.id == ticket.id).one()
+        self.assertIsNotNone(reloaded.sla_breach_escalated_at)
+
+    def test_concurrent_workers_separate_sessions(self):
+        """Concurrent workers across separate sessions: only one worker records escalation, second does zero actions."""
+        ticket = self._create_ticket(tenant_id=self.tenant_a)
+        self.db.commit()
+
+        SessionLocal = sessionmaker(bind=self.engine)
+        session_1 = SessionLocal()
+        session_2 = SessionLocal()
+        try:
+            ticket_s1 = session_1.query(ITSMTicket).filter(ITSMTicket.id == ticket.id).one()
+            ticket_s2 = session_2.query(ITSMTicket).filter(ITSMTicket.id == ticket.id).one()
+            now = self.created_at + timedelta(hours=3)
+
+            # Worker 1 escalates
+            res_1 = process_ticket_escalation(ticket_s1, session_1, now=now)
+            session_1.commit()
+            self.assertTrue(res_1["warning_recorded"])
+            self.assertIsNotNone(res_1["warning_actions"])
+
+            # Worker 2 attempts to escalate concurrently
+            res_2 = process_ticket_escalation(ticket_s2, session_2, now=now)
+            session_2.commit()
+            self.assertFalse(res_2["warning_recorded"])
+            self.assertIsNone(res_2["warning_actions"])
+
+            # Check notifications count: exactly 1 generated
+            notifs = self.db.query(Notification).filter(Notification.tenant_id == self.tenant_a).all()
+            self.assertEqual(len(notifs), 1)
+        finally:
+            session_1.close()
+            session_2.close()
+
+    def test_duplicate_escalation_atomic_prevention(self):
+        """Duplicate escalation prevention: Multiple repeated evaluations across different times never duplicate actions."""
+        ticket = self._create_ticket(tenant_id=self.tenant_a)
+        now_1 = self.created_at + timedelta(hours=3)
+
+        res_1 = process_ticket_escalation(ticket, self.db, now=now_1)
+        self.assertTrue(res_1["warning_recorded"])
+        first_timestamp = ticket.sla_warning_escalated_at
+
+        # Repeat 5 times with increasing timestamps
+        for i in range(1, 6):
+            now_next = now_1 + timedelta(minutes=i * 2)
+            res_next = process_ticket_escalation(ticket, self.db, now=now_next)
+            self.assertFalse(res_next["warning_recorded"])
+            self.assertIsNone(res_next["warning_actions"])
+            self.assertEqual(ticket.sla_warning_escalated_at, first_timestamp)
+
+    def test_kpi_reporting_with_persisted_timestamps(self):
+        """KPI reporting reads persisted SLA escalation and breach timestamps consistently across sessions."""
+        now = self.due_at + timedelta(hours=1)
+        t_breached = self._create_ticket(tenant_id=self.tenant_a)
+        res = process_ticket_escalation(t_breached, self.db, now=now)
+        self.assertTrue(res["breach_recorded"])
+        t_breached.status = "RESOLVED"
+        t_breached.resolved_at = now
+        self.db.commit()
+
+        # Reload in a clean session and compute KPI
+        SessionLocal = sessionmaker(bind=self.engine)
+        kpi_db = SessionLocal()
+        try:
+            kpi_service = ITSMKPIService(kpi_db, self.tenant_a)
+            kpi_res = kpi_service.compute_sla_performance(end_time=now)
+            self.assertGreaterEqual(kpi_res.breached_count, 1)
+            self.assertGreater(kpi_res.breach_rate_pct, 0.0)
+        finally:
+            kpi_db.close()
+
+    def test_notification_failure_and_safe_retry(self):
+        """Notification failure and retry: Failed dispatch can be retried safely with zero duplicate activity or audit."""
+        mgr = self._create_user(self.tenant_a, "notif_retry_mgr@tenant-a.com")
+        self._assign_incident_manager(self.tenant_a, mgr.id)
+        assignee = self._create_user(self.tenant_a, "notif_retry_assignee@tenant-a.com")
+
+        ticket = self._create_ticket(tenant_id=self.tenant_a)
+        ticket.assignee_id = assignee.id
+        self.db.add(ticket)
+        self.db.commit()
+
+        now = self.created_at + timedelta(hours=3)
+
+        # 1. First run: simulate failure when delivering notification to assignee
+        from app.services import notifications as notif_module
+        orig_create = notif_module.create_notification
+
+        def failing_create(db, **kwargs):
+            if kwargs.get("user_id") == assignee.id:
+                raise RuntimeError("Simulated network blip delivering notification")
+            return orig_create(db, **kwargs)
+
+        with patch("app.services.itsm_sla_worker.create_notification", side_effect=failing_create):
+            with patch("app.services.itsm_sla_worker.append_audit_event") as mock_audit:
+                res = process_ticket_escalation(ticket, self.db, now=now)
+                self.assertTrue(res["warning_recorded"])
+                self.assertEqual(mock_audit.call_count, 1)
+
+        # Verify initial state:
+        # Timestamp is persisted
+        self.assertIsNotNone(ticket.sla_warning_escalated_at)
+        # Activity created once
+        act_count_1 = self.db.query(ITSMTicketActivity).filter(ITSMTicketActivity.ticket_id == ticket.id).count()
+        self.assertEqual(act_count_1, 1)
+        # Only mgr got notification (1 total)
+        notifs_1 = self.db.query(Notification).filter(Notification.tenant_id == self.tenant_a).all()
+        self.assertEqual(len(notifs_1), 1)
+        self.assertEqual(notifs_1[0].user_id, mgr.id)
+
+        # 2. Retry run: network recovered
+        with patch("app.services.itsm_sla_worker.append_audit_event") as mock_audit_retry:
+            retry_res = retry_escalation_notifications(self.db, ticket, "WARNING", now=now)
+            self.assertEqual(retry_res["notifications_sent"], 2)
+            # No new duplicate audit event
+            mock_audit_retry.assert_not_called()
+
+        # Activity still exactly 1 (no duplicate activity)
+        act_count_2 = self.db.query(ITSMTicketActivity).filter(ITSMTicketActivity.ticket_id == ticket.id).count()
+        self.assertEqual(act_count_2, 1)
+
+        # Total notifications is now 2 (mgr was NOT duplicated, assignee was delivered)
+        notifs_2 = self.db.query(Notification).filter(Notification.tenant_id == self.tenant_a).all()
+        self.assertEqual(len(notifs_2), 2)
+        user_ids = {n.user_id for n in notifs_2}
+        self.assertEqual(user_ids, {mgr.id, assignee.id})
 
 
 if __name__ == "__main__":

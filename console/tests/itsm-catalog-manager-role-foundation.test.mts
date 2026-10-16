@@ -118,6 +118,29 @@ test("ITSM Catalog Manager workspace and Form Builder placeholder pages exist", 
   );
   assert.ok(dashSource.includes("/itsm/profile"), "Must link to profile");
 
+  // Verify navigation cards are fully clickable across their entire area
+  assert.ok(
+    dashSource.includes('id="catalog-manager-studio-card"') &&
+      dashSource.includes('id="catalog-manager-form-builder-card"') &&
+      dashSource.includes('id="catalog-manager-profile-card"'),
+    "Must have dedicated IDs for all navigation cards"
+  );
+  assert.ok(dashSource.includes("cursor-pointer"), "Navigation cards must have cursor-pointer");
+  assert.ok(dashSource.includes("hover:border-[#6D28D9]"), "Navigation cards must have clear hover border state");
+  assert.ok(dashSource.includes("hover:shadow-md"), "Navigation cards must have hover shadow");
+  assert.ok(dashSource.includes("hover:-translate-y-0.5"), "Navigation cards must have hover elevation transform");
+
+  // Verify Catalog Item summary cards on the Catalog Manager dashboard
+  assert.ok(dashSource.includes('id="catalog-metrics-grid"'), "Must render catalog metrics grid");
+  assert.ok(dashSource.includes('id="metric-card-total-offerings"'), "Must have Total Offerings card");
+  assert.ok(dashSource.includes('id="metric-card-active-offerings"'), "Must have Active Offerings card");
+  assert.ok(dashSource.includes('id="metric-card-inactive-offerings"'), "Must have Inactive Offerings card");
+  assert.ok(dashSource.includes('id="metric-card-needs-attention"'), "Must have Needs Attention card");
+  assert.ok(dashSource.includes('id="metric-total-offerings"'), "Must display total offerings metric");
+  assert.ok(dashSource.includes('id="metric-active-offerings"'), "Must display active offerings metric");
+  assert.ok(dashSource.includes('id="metric-inactive-offerings"'), "Must display inactive offerings metric");
+  assert.ok(dashSource.includes('id="metric-needs-attention"'), "Must display needs attention metric");
+
   const formBuilderPath = path.join(
     consoleDir,
     "src/app/(console)/itsm/catalog-manager/form-builder/page.tsx"

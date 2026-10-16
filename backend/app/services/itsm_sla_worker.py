@@ -8,6 +8,7 @@ Dispatches in-app notifications, ticket activity records, and audit events for n
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import logging
 import os
@@ -18,12 +19,14 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session, sessionmaker
 
+from app.db.session import database_auth_context
 from app.db.models import (
     ITSMTeam,
     ITSMTeamMember,
     ITSMTicket,
     ITSMTicketActivity,
     ITSMUserAccess,
+    Notification,
     User,
 )
 from app.services.audit_store import append_audit_event
@@ -242,48 +245,63 @@ def dispatch_escalation_actions(
     stage_str = getattr(evaluation, "stage", None) or "RESOLUTION"
     remaining_secs = getattr(evaluation, "remaining_seconds", None)
 
-    # 1. Record ITSMTicketActivity inside a savepoint
+    # 1. Record ITSMTicketActivity inside a savepoint if not already recorded
     activity_type = "SLA_BREACH_ESCALATION" if is_breach else "SLA_WARNING_ESCALATION"
     content = (
         f"SLA {stage_name.lower()} escalation triggered for ticket {ticket.ticket_number} ({ticket.priority}). "
         f"Stage: {stage_str}. SLA Status: {evaluation.sla_status}."
     )
     activity_created = False
+    existing_activity = None
     try:
-        sp = db.begin_nested()
-        try:
-            activity = ITSMTicketActivity(
-                id=uuid4(),
-                tenant_id=ticket.tenant_id,
-                ticket_id=ticket.id,
-                activity_type=activity_type,
-                actor_type="SYSTEM",
-                actor_id=None,
-                content=content,
-                activity_metadata={
-                    "escalation_type": stage_name.upper(),
-                    "stage": stage_str,
-                    "sla_status": evaluation.sla_status,
-                    "priority": ticket.priority,
-                    "remaining_seconds": remaining_secs,
-                    "escalated_at": now.isoformat(),
-                    "recipients_count": len(recipients),
-                    "is_internal": True,
-                },
-                created_at=now,
+        existing_activity = (
+            db.query(ITSMTicketActivity.id)
+            .filter(
+                ITSMTicketActivity.ticket_id == ticket.id,
+                ITSMTicketActivity.activity_type == activity_type,
             )
-            db.add(activity)
-            db.flush()
-            sp.commit()
-            activity_created = True
-        except Exception as exc:
-            sp.rollback()
-            logger.debug("Ticket activity record skipped or failed: %s", exc)
+            .first()
+        )
     except Exception as exc:
-        logger.debug("Activity savepoint skipped or failed: %s", exc)
+        logger.debug("Could not check existing ticket activity: %s", exc)
 
-    # 2. Emit audit event
-    _emit_escalation_audit_event(db, ticket, stage_name, evaluation, now)
+    if not existing_activity:
+        try:
+            sp = db.begin_nested()
+            try:
+                activity = ITSMTicketActivity(
+                    id=uuid4(),
+                    tenant_id=ticket.tenant_id,
+                    ticket_id=ticket.id,
+                    activity_type=activity_type,
+                    actor_type="SYSTEM",
+                    actor_id=None,
+                    content=content,
+                    activity_metadata={
+                        "escalation_type": stage_name.upper(),
+                        "stage": stage_str,
+                        "sla_status": evaluation.sla_status,
+                        "priority": ticket.priority,
+                        "remaining_seconds": remaining_secs,
+                        "escalated_at": now.isoformat(),
+                        "recipients_count": len(recipients),
+                        "is_internal": True,
+                    },
+                    created_at=now,
+                )
+                db.add(activity)
+                db.flush()
+                sp.commit()
+                activity_created = True
+            except Exception as exc:
+                sp.rollback()
+                logger.debug("Ticket activity record skipped or failed: %s", exc)
+        except Exception as exc:
+            logger.debug("Activity savepoint skipped or failed: %s", exc)
+
+    # 2. Emit audit event only on fresh escalation (not on notification retry)
+    if not existing_activity:
+        _emit_escalation_audit_event(db, ticket, stage_name, evaluation, now)
 
     # Commit ticket escalation timestamp and any staged changes
     try:
@@ -291,7 +309,7 @@ def dispatch_escalation_actions(
     except Exception as exc:
         logger.warning("Failed committing escalation changes for ticket %s: %s", ticket.id, exc)
 
-    # 3. Create in-app notifications
+    # 3. Create in-app notifications (idempotent per recipient)
     notif_type = "itsm.sla.breach" if is_breach else "itsm.sla.warning"
     severity = "critical" if is_breach else "warning"
     link = (
@@ -326,6 +344,22 @@ def dispatch_escalation_actions(
     notifications_sent = 0
     for r_id in recipients:
         try:
+            # Check if notification was already delivered to avoid duplicate notifications on retry
+            user_filter = Notification.user_id.is_(None) if r_id is None else (Notification.user_id == r_id)
+            existing_notif = (
+                db.query(Notification.id)
+                .filter(
+                    Notification.tenant_id == ticket.tenant_id,
+                    user_filter,
+                    Notification.type == notif_type,
+                    Notification.link == link,
+                )
+                .first()
+            )
+            if existing_notif:
+                notifications_sent += 1
+                continue
+
             notif = create_notification(
                 db=db,
                 tenant_id=ticket.tenant_id,
@@ -348,6 +382,21 @@ def dispatch_escalation_actions(
     }
 
 
+def retry_escalation_notifications(
+    db: Session,
+    ticket: ITSMTicket,
+    stage_name: str,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Safely retry dispatching notifications for an already-escalated ticket.
+
+    Idempotent: does not duplicate ticket activities, audit logs, or already-received notifications.
+    """
+    now = now or datetime.now(timezone.utc)
+    evaluation = evaluate_ticket_escalation(ticket, now=now, tenant_id=ticket.tenant_id)
+    return dispatch_escalation_actions(db, ticket, stage_name.upper(), evaluation, now)
+
+
 def process_ticket_escalation(
     ticket: ITSMTicket,
     db: Session,
@@ -364,9 +413,38 @@ def process_ticket_escalation(
     breach_recorded = False
 
     if evaluation.warning_eligible:
-        warning_recorded = record_warning_escalation(ticket, now=now)
+        if db is not None and getattr(ticket, "id", None) is not None and ticket not in getattr(db, "new", set()):
+            stmt = (
+                ITSMTicket.__table__.update()
+                .where(ITSMTicket.id == ticket.id)
+                .where(ITSMTicket.sla_warning_escalated_at.is_(None))
+                .values(sla_warning_escalated_at=now)
+            )
+            res = db.execute(stmt)
+            if res.rowcount and res.rowcount > 0:
+                ticket.sla_warning_escalated_at = now
+                warning_recorded = True
+            else:
+                warning_recorded = False
+        else:
+            warning_recorded = record_warning_escalation(ticket, now=now)
+
     if evaluation.breach_eligible:
-        breach_recorded = record_breach_escalation(ticket, now=now)
+        if db is not None and getattr(ticket, "id", None) is not None and ticket not in getattr(db, "new", set()):
+            stmt = (
+                ITSMTicket.__table__.update()
+                .where(ITSMTicket.id == ticket.id)
+                .where(ITSMTicket.sla_breach_escalated_at.is_(None))
+                .values(sla_breach_escalated_at=now)
+            )
+            res = db.execute(stmt)
+            if res.rowcount and res.rowcount > 0:
+                ticket.sla_breach_escalated_at = now
+                breach_recorded = True
+            else:
+                breach_recorded = False
+        else:
+            breach_recorded = record_breach_escalation(ticket, now=now)
 
     warning_actions = None
     breach_actions = None
@@ -392,50 +470,65 @@ def process_ticket_escalation(
     }
 
 
-def process_tenant_escalations(
-    db: Session,
-    tenant_id: Any,
-    now: datetime | None = None,
-) -> dict[str, Any]:
-    """Process all candidate tickets for a single tenant in isolated context.
+@contextmanager
+def worker_tenant_context(db: Session, tenant_id: Any):
+    """Context manager to establish bounded tenant context for worker sweep.
 
-    Fault-tolerant: individual ticket errors do not abort subsequent tickets.
+    Enforces PostgreSQL RLS for tenant_id using the worker_maintenance security boundary.
+    In SQLite, gracefully yields without PostgreSQL-specific context calls.
     """
-    candidates = get_candidate_tickets_query(db, tenant_id=tenant_id, for_update=True).all()
-    stats = {
-        "tenant_id": str(tenant_id),
-        "candidates_evaluated": len(candidates),
-        "warnings_escalated": 0,
-        "breaches_escalated": 0,
-        "failed_tickets": 0,
-    }
-
-    for ticket in candidates:
+    bind = getattr(db, "bind", None)
+    is_postgres = False
+    if bind is not None and getattr(bind, "dialect", None) is not None:
+        is_postgres = bind.dialect.name == "postgresql"
+    else:
         try:
-            res = process_ticket_escalation(ticket, db, now=now)
-            if res["warning_recorded"]:
-                stats["warnings_escalated"] += 1
-            if res["breach_recorded"]:
-                stats["breaches_escalated"] += 1
-        except Exception as exc:
-            stats["failed_tickets"] += 1
-            logger.error(
-                "Error processing SLA escalation for ticket %s (tenant %s): %s",
-                ticket.id,
-                tenant_id,
-                exc,
-                exc_info=True,
+            is_postgres = db.get_bind().dialect.name == "postgresql"
+        except Exception:
+            is_postgres = False
+
+    with database_auth_context("worker", str(tenant_id)):
+        if is_postgres:
+            db.execute(
+                text("SELECT tenant_id FROM worker_maintenance.bind_sla_worker_tenant_context(:tenant_id)"),
+                {"tenant_id": str(tenant_id)},
             )
+        try:
+            yield
+        finally:
+            if is_postgres:
+                try:
+                    db.execute(text("SELECT worker_maintenance.bind_sla_worker_tenant_context(NULL)"))
+                except Exception:
+                    pass
 
-    db.commit()
-    return stats
 
+def discover_candidate_tenants(db: Session) -> list[Any]:
+    """Discover distinct tenant IDs having candidate tickets for SLA escalation.
 
-def _sweep_with_session(db: Session, now: datetime | None = None) -> dict[str, Any]:
-    """Run escalation sweep with an active database session."""
-    started = time.monotonic()
+    Uses worker_maintenance.discover_sla_candidate_tenants() in PostgreSQL to discover
+    candidate tenants securely under RLS without cross-tenant data exposure.
+    Falls back to direct filtered query in SQLite/non-PostgreSQL environments.
+    """
+    bind = getattr(db, "bind", None)
+    is_postgres = False
+    if bind is not None and getattr(bind, "dialect", None) is not None:
+        is_postgres = bind.dialect.name == "postgresql"
+    else:
+        try:
+            is_postgres = db.get_bind().dialect.name == "postgresql"
+        except Exception:
+            is_postgres = False
 
-    # Query distinct tenant IDs having candidate tickets
+    if is_postgres:
+        try:
+            rows = db.execute(
+                text("SELECT tenant_id FROM worker_maintenance.discover_sla_candidate_tenants()")
+            ).fetchall()
+            return [row[0] for row in rows]
+        except Exception as exc:
+            logger.warning("worker_maintenance.discover_sla_candidate_tenants failed, falling back: %s", exc)
+
     tenant_filters = [
         ITSMTicket.status.notin_(TERMINAL_STATUSES),
         or_(
@@ -458,7 +551,54 @@ def _sweep_with_session(db: Session, now: datetime | None = None) -> dict[str, A
         .distinct()
         .all()
     )
-    tenant_ids = [row[0] for row in tenant_rows]
+    return [row[0] for row in tenant_rows]
+
+
+def process_tenant_escalations(
+    db: Session,
+    tenant_id: Any,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Process all candidate tickets for a single tenant in isolated context.
+
+    Fault-tolerant: individual ticket errors do not abort subsequent tickets.
+    Enforces per-tenant isolation context in PostgreSQL under RLS.
+    """
+    with worker_tenant_context(db, tenant_id):
+        candidates = get_candidate_tickets_query(db, tenant_id=tenant_id, for_update=True).all()
+        stats = {
+            "tenant_id": str(tenant_id),
+            "candidates_evaluated": len(candidates),
+            "warnings_escalated": 0,
+            "breaches_escalated": 0,
+            "failed_tickets": 0,
+        }
+
+        for ticket in candidates:
+            try:
+                res = process_ticket_escalation(ticket, db, now=now)
+                if res["warning_recorded"]:
+                    stats["warnings_escalated"] += 1
+                if res["breach_recorded"]:
+                    stats["breaches_escalated"] += 1
+            except Exception as exc:
+                stats["failed_tickets"] += 1
+                logger.error(
+                    "Error processing SLA escalation for ticket %s (tenant %s): %s",
+                    ticket.id,
+                    tenant_id,
+                    exc,
+                    exc_info=True,
+                )
+
+        db.commit()
+        return stats
+
+
+def _sweep_with_session(db: Session, now: datetime | None = None) -> dict[str, Any]:
+    """Run escalation sweep with an active database session."""
+    started = time.monotonic()
+    tenant_ids = discover_candidate_tenants(db)
 
     total_candidates = 0
     total_warnings = 0

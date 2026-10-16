@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class ITSMApprovalActionRequest(BaseModel):
     """Payload for approving or rejecting a pending request."""
     reason: Optional[str] = Field(default=None, description="Optional explanation or resolution reason")
+    idempotency_key: Optional[str] = Field(default=None, description="Optional idempotency key for safe retries")
 
 
 class ITSMApprovalResponse(BaseModel):

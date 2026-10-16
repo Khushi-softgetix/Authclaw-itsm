@@ -7,7 +7,7 @@ from typing import Any, Optional
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import or_, text
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session, joinedload
 
 from app.core.auth import deny_itsm_auditor_mutation, get_current_tenant, get_tenant_db
@@ -357,61 +357,135 @@ def list_approvals(
     return [_build_approval_response(a, db) for a in approvals]
 
 
-@router.post(
-    "/{approval_id}/approve",
-    response_model=ITSMApprovalResponse,
-    summary="Approve an ITSM request",
-    description="Approve a pending catalog service request and transition the ticket to IN_PROGRESS.",
-)
-def approve_request(
+def _process_approval_decision(
+    *,
     approval_id: str,
+    target_action: str,  # "APPROVED" or "REJECTED"
     request: Request,
-    body: Optional[ITSMApprovalActionRequest] = None,
-    db: Session = Depends(get_tenant_db),
-    tenant_id: str = Depends(get_current_tenant),
-):
+    body: Optional[ITSMApprovalActionRequest],
+    db: Session,
+    tenant_id: str,
+) -> ITSMApprovalResponse:
     actor_id = UUID(str(request.state.user_id))
     t_id = UUID(tenant_id)
     user_role = _get_user_role_and_validate(db, t_id, actor_id)
     platform_role = str(getattr(request.state, "platform_role", "") or "").upper()
 
-    # Lookup approval by ID or action_id (ticket_id)
+    # Extract client-supplied idempotency key from headers or request body
+    client_idempotency_key = (
+        request.headers.get("Idempotency-Key")
+        or request.headers.get("X-Idempotency-Key")
+        or (body.idempotency_key if body and hasattr(body, "idempotency_key") else None)
+    )
+    if client_idempotency_key:
+        client_idempotency_key = client_idempotency_key.strip() or None
+
+    # Normalize reasons
+    if target_action == "APPROVED":
+        raw_reason = body.reason.strip() if body and body.reason else ""
+        saved_reason = raw_reason if raw_reason else None
+        audit_reason = raw_reason if raw_reason else "Request approved"
+    else:
+        raw_reason = body.reason.strip() if body and body.reason else ""
+        saved_reason = raw_reason if raw_reason else "Request rejected by manager"
+        audit_reason = saved_reason
+
+    # Row-lock PendingApproval using with_for_update() to guarantee atomic decisions
     approval = None
     try:
         app_uuid = UUID(approval_id)
-        approval = db.query(PendingApproval).filter(
-            PendingApproval.tenant_id == t_id,
-            PendingApproval.id == app_uuid,
-        ).first()
+        approval = (
+            db.query(PendingApproval)
+            .filter(
+                PendingApproval.tenant_id == t_id,
+                PendingApproval.id == app_uuid,
+            )
+            .with_for_update()
+            .first()
+        )
     except ValueError:
         pass
 
     if not approval:
-        approval = db.query(PendingApproval).filter(
-            PendingApproval.tenant_id == t_id,
-            PendingApproval.action_id == approval_id,
-        ).first()
-
-    if not approval:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval request not found")
-
-    if approval.status != "PENDING":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Approval already resolved: {approval.status}",
+        approval = (
+            db.query(PendingApproval)
+            .filter(
+                PendingApproval.tenant_id == t_id,
+                PendingApproval.action_id == approval_id,
+            )
+            .with_for_update()
+            .first()
         )
 
-    # Find underlying ticket
+    if not approval:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Approval request not found",
+        )
+
+    # Find and row-lock underlying ticket if present
     ticket_id = approval.action_id or (approval.action_payload or {}).get("ticket_id")
     ticket = None
     if ticket_id:
         try:
-            ticket = db.query(ITSMTicket).filter(
-                ITSMTicket.tenant_id == t_id,
-                ITSMTicket.id == UUID(str(ticket_id)),
-            ).first()
+            ticket = (
+                db.query(ITSMTicket)
+                .filter(
+                    ITSMTicket.tenant_id == t_id,
+                    ITSMTicket.id == UUID(str(ticket_id)),
+                )
+                .with_for_update()
+                .first()
+            )
         except ValueError:
             ticket = None
+
+    # Check for existing idempotency key across the tenant
+    if client_idempotency_key:
+        prior_audit = (
+            db.query(ApprovalAudit)
+            .filter(
+                ApprovalAudit.tenant_id == t_id,
+                func.json_extract_path_text(ApprovalAudit.details, "idempotency_key") == client_idempotency_key,
+            )
+            .first()
+        )
+        if prior_audit:
+            # Reused across different approval requests -> 409 Conflict
+            if prior_audit.approval_id != approval.id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Idempotency key collision: key already used with a different approval request",
+                )
+            # Reused on the same approval: verify identical decision action and reason
+            prior_reason = (prior_audit.reason or "").strip()
+            req_reason = (raw_reason or "").strip()
+            if prior_audit.action == target_action and prior_reason == req_reason:
+                # Exact replay: return saved result without duplicate side-effects
+                return _build_approval_response(approval, db, ticket)
+            else:
+                # Reused key with conflicting decision action or payload -> 409 Conflict
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Idempotency key collision: key already used with a different payload",
+                )
+
+    # Check if approval has already been resolved
+    if approval.status != "PENDING":
+        # Check if identical repeat (double-click without explicit idempotency key)
+        norm_saved_reason = (approval.resolution_reason or "").strip()
+        norm_req_reason = (raw_reason or "").strip()
+        if approval.status == target_action and (
+            norm_saved_reason == norm_req_reason
+            or (target_action == "REJECTED" and norm_saved_reason == "Request rejected by manager" and not norm_req_reason)
+        ):
+            return _build_approval_response(approval, db, ticket)
+
+        # Conflicting decision on an already resolved approval -> 409 Conflict
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Approval already resolved: {approval.status}",
+        )
 
     # Validate approval authority and enforce Segregation of Duties (SoD)
     _validate_approval_decision_authority(
@@ -425,44 +499,85 @@ def approve_request(
     )
 
     now = datetime.now(timezone.utc)
-    approval.status = "APPROVED"
+    payload_copy = dict(approval.action_payload or {})
+    if client_idempotency_key:
+        payload_copy["idempotency_key"] = client_idempotency_key
+    payload_copy["decision_action"] = target_action
+    payload_copy["decision_reason"] = raw_reason
+    approval.action_payload = payload_copy
+
+    approval.status = target_action
     approval.approver_id = actor_id
-    approval.approved_at = now
     approval.updated_at = now
-    if body and body.reason:
-        approval.resolution_reason = body.reason.strip()
+    if target_action == "APPROVED":
+        approval.approved_at = now
+        approval.resolution_reason = saved_reason
+    else:
+        approval.resolution_reason = saved_reason
 
     if ticket:
         prev_status = ticket.status
-        ticket.status = "IN_PROGRESS"
-        ticket.status_reason = "Approved by manager"
-        ticket.updated_at = now
-
-        activity = ITSMTicketActivity(
-            id=uuid4(),
-            tenant_id=t_id,
-            ticket_id=ticket.id,
-            activity_type="STATUS_CHANGE",
-            content=f"Request approved. Status changed from {prev_status} to IN_PROGRESS",
-            activity_metadata={
-                "old_status": prev_status,
-                "new_status": "IN_PROGRESS",
-                "status_reason": "Approved by manager",
-            },
-            actor_id=actor_id,
-            created_at=now,
-        )
+        if target_action == "APPROVED":
+            ticket.status = "IN_PROGRESS"
+            ticket.status_reason = "Approved by manager"
+            ticket.updated_at = now
+            activity = ITSMTicketActivity(
+                id=uuid4(),
+                tenant_id=t_id,
+                ticket_id=ticket.id,
+                activity_type="STATUS_CHANGE",
+                content=f"Request approved. Status changed from {prev_status} to IN_PROGRESS",
+                activity_metadata={
+                    "old_status": prev_status,
+                    "new_status": "IN_PROGRESS",
+                    "status_reason": "Approved by manager",
+                },
+                actor_id=actor_id,
+                created_at=now,
+            )
+        else:
+            ticket.status = "CANCELLED"
+            ticket.status_reason = saved_reason
+            ticket.updated_at = now
+            activity = ITSMTicketActivity(
+                id=uuid4(),
+                tenant_id=t_id,
+                ticket_id=ticket.id,
+                activity_type="STATUS_CHANGE",
+                content=f"Request rejected ({saved_reason}). Status changed from {prev_status} to CANCELLED",
+                activity_metadata={
+                    "old_status": prev_status,
+                    "new_status": "CANCELLED",
+                    "status_reason": saved_reason,
+                },
+                actor_id=actor_id,
+                created_at=now,
+            )
         db.add(activity)
 
-    # Immutable approval audit log
+    # Immutable approval audit log with idempotency metadata
     audit = ApprovalAudit(
         id=uuid4(),
         tenant_id=t_id,
         approval_id=approval.id,
         actor_id=actor_id,
-        action="APPROVED",
+        action=target_action,
+        reason=raw_reason,
+        details={
+            "idempotency_key": client_idempotency_key,
+            "reason": raw_reason,
+            "action": target_action,
+        },
+        created_at=now,
     )
     db.add(audit)
+
+    # Stable audit log idempotency key (no timestamp)
+    stable_audit_key = (
+        f"itsm:approval:{approval.id}:{client_idempotency_key}"
+        if client_idempotency_key
+        else f"itsm:approval:{approval.id}:{target_action.lower()}"
+    )
 
     try:
         sp = db.begin_nested()
@@ -475,21 +590,21 @@ def approve_request(
                 db,
                 {
                     "id": str(uuid4()),
-                    "idempotency_key": f"itsm:approval:{approval.id}:approved:{now.timestamp()}",
+                    "idempotency_key": stable_audit_key,
                     "tenant_id": str(t_id),
                     "timestamp": now,
                     "actor_id": str(actor_id),
                     "actor_type": "user",
-                    "action": "itsm.approval.approved",
+                    "action": f"itsm.approval.{target_action.lower()}",
                     "request_id": str(ticket.id) if ticket else str(approval.id),
                     "provider": "itsm",
-                    "reason": (body.reason.strip() if body and body.reason else "Request approved"),
+                    "reason": audit_reason,
                     "response_status": 200,
                     "frameworks_affected": ["ITIL"],
                     "execution_trace": [
                         f"approval_id={approval.id}",
                         f"ticket_id={ticket.id if ticket else None}",
-                        f"status=APPROVED",
+                        f"status={target_action}",
                     ],
                 },
             )
@@ -505,12 +620,13 @@ def approve_request(
     if recipient_id:
         try:
             recent_cutoff = now - timedelta(seconds=10)
+            notif_type = "itsm.request.approval" if target_action == "APPROVED" else "itsm.request.rejection"
             existing = (
                 db.query(Notification)
                 .filter(
                     Notification.tenant_id == t_id,
                     Notification.user_id == recipient_id,
-                    Notification.type == "itsm.request.approval",
+                    Notification.type == notif_type,
                     Notification.link == f"/itsm/requests/{ticket.id if ticket else approval.id}",
                     Notification.created_at >= recent_cutoff,
                 )
@@ -519,25 +635,68 @@ def approve_request(
             if not existing:
                 ticket_ref = ticket.ticket_number if (ticket and ticket.ticket_number) else (f"Request {ticket.id}" if ticket else "Service Request")
                 ticket_title = ticket.title if (ticket and ticket.title) else ticket_ref
-                add_notification(
-                    db,
-                    tenant_id=t_id,
-                    user_id=recipient_id,
-                    type="itsm.request.approval",
-                    severity="info",
-                    title=f"Service Request Approved: {ticket_ref}",
-                    body=f"Your request '{ticket_title}' has been approved and moved to in-progress fulfillment.",
-                    link=f"/itsm/requests/{ticket.id if ticket else approval.id}",
-                )
+                if target_action == "APPROVED":
+                    add_notification(
+                        db,
+                        tenant_id=t_id,
+                        user_id=recipient_id,
+                        type=notif_type,
+                        severity="info",
+                        title=f"Service Request Approved: {ticket_ref}",
+                        body=f"Your request '{ticket_title}' has been approved and moved to in-progress fulfillment.",
+                        link=f"/itsm/requests/{ticket.id if ticket else approval.id}",
+                    )
+                else:
+                    body_msg = f"Your request '{ticket_title}' was rejected."
+                    if saved_reason:
+                        body_msg += f" Reason: {saved_reason}"
+                    add_notification(
+                        db,
+                        tenant_id=t_id,
+                        user_id=recipient_id,
+                        type=notif_type,
+                        severity="warning",
+                        title=f"Service Request Rejected: {ticket_ref}",
+                        body=body_msg,
+                        link=f"/itsm/requests/{ticket.id if ticket else approval.id}",
+                    )
         except Exception as e:
             logger.warning("Failed to dispatch approval notification: %s", e)
 
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
     db.refresh(approval)
     if ticket:
         db.refresh(ticket)
 
     return _build_approval_response(approval, db, ticket)
+
+
+@router.post(
+    "/{approval_id}/approve",
+    response_model=ITSMApprovalResponse,
+    summary="Approve an ITSM request",
+    description="Approve a pending catalog service request and transition the ticket to IN_PROGRESS.",
+)
+def approve_request(
+    approval_id: str,
+    request: Request,
+    body: Optional[ITSMApprovalActionRequest] = None,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    return _process_approval_decision(
+        approval_id=approval_id,
+        target_action="APPROVED",
+        request=request,
+        body=body,
+        db=db,
+        tenant_id=tenant_id,
+    )
 
 
 @router.post(
@@ -553,173 +712,11 @@ def reject_request(
     db: Session = Depends(get_tenant_db),
     tenant_id: str = Depends(get_current_tenant),
 ):
-    actor_id = UUID(str(request.state.user_id))
-    t_id = UUID(tenant_id)
-    user_role = _get_user_role_and_validate(db, t_id, actor_id)
-    platform_role = str(getattr(request.state, "platform_role", "") or "").upper()
-
-    # Lookup approval by ID or action_id (ticket_id)
-    approval = None
-    try:
-        app_uuid = UUID(approval_id)
-        approval = db.query(PendingApproval).filter(
-            PendingApproval.tenant_id == t_id,
-            PendingApproval.id == app_uuid,
-        ).first()
-    except ValueError:
-        pass
-
-    if not approval:
-        approval = db.query(PendingApproval).filter(
-            PendingApproval.tenant_id == t_id,
-            PendingApproval.action_id == approval_id,
-        ).first()
-
-    if not approval:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Approval request not found")
-
-    if approval.status != "PENDING":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Approval already resolved: {approval.status}",
-        )
-
-    # Find underlying ticket
-    ticket_id = approval.action_id or (approval.action_payload or {}).get("ticket_id")
-    ticket = None
-    if ticket_id:
-        try:
-            ticket = db.query(ITSMTicket).filter(
-                ITSMTicket.tenant_id == t_id,
-                ITSMTicket.id == UUID(str(ticket_id)),
-            ).first()
-        except ValueError:
-            ticket = None
-
-    # Validate approval authority and enforce Segregation of Duties (SoD)
-    _validate_approval_decision_authority(
-        db=db,
-        approval=approval,
-        ticket=ticket,
-        actor_id=actor_id,
-        user_role=user_role,
-        platform_role=platform_role,
+    return _process_approval_decision(
+        approval_id=approval_id,
+        target_action="REJECTED",
         request=request,
+        body=body,
+        db=db,
+        tenant_id=tenant_id,
     )
-
-    now = datetime.now(timezone.utc)
-    reason = body.reason.strip() if body and body.reason else "Request rejected by manager"
-    approval.status = "REJECTED"
-    approval.approver_id = actor_id
-    approval.resolution_reason = reason
-    approval.updated_at = now
-
-    if ticket:
-        prev_status = ticket.status
-        ticket.status = "CANCELLED"
-        ticket.status_reason = reason
-        ticket.updated_at = now
-
-        activity = ITSMTicketActivity(
-            id=uuid4(),
-            tenant_id=t_id,
-            ticket_id=ticket.id,
-            activity_type="STATUS_CHANGE",
-            content=f"Request rejected ({reason}). Status changed from {prev_status} to CANCELLED",
-            activity_metadata={
-                "old_status": prev_status,
-                "new_status": "CANCELLED",
-                "status_reason": reason,
-            },
-            actor_id=actor_id,
-            created_at=now,
-        )
-        db.add(activity)
-
-    # Immutable approval audit log
-    audit = ApprovalAudit(
-        id=uuid4(),
-        tenant_id=t_id,
-        approval_id=approval.id,
-        actor_id=actor_id,
-        action="REJECTED",
-    )
-    db.add(audit)
-
-    try:
-        sp = db.begin_nested()
-        try:
-            db.execute(
-                text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
-                {"tenant_id": str(t_id)},
-            )
-            append_audit_event(
-                db,
-                {
-                    "id": str(uuid4()),
-                    "idempotency_key": f"itsm:approval:{approval.id}:rejected:{now.timestamp()}",
-                    "tenant_id": str(t_id),
-                    "timestamp": now,
-                    "actor_id": str(actor_id),
-                    "actor_type": "user",
-                    "action": "itsm.approval.rejected",
-                    "request_id": str(ticket.id) if ticket else str(approval.id),
-                    "provider": "itsm",
-                    "reason": reason,
-                    "response_status": 200,
-                    "frameworks_affected": ["ITIL"],
-                    "execution_trace": [
-                        f"approval_id={approval.id}",
-                        f"ticket_id={ticket.id if ticket else None}",
-                        f"status=REJECTED",
-                    ],
-                },
-            )
-            sp.commit()
-        except Exception as e:
-            sp.rollback()
-            logger.warning("Audit event emission failed for rejection: %s", e)
-    except Exception as e:
-        logger.warning("Audit savepoint failed: %s", e)
-
-    # Dispatch in-app notification to requester
-    recipient_id = approval.requester_id or (ticket.requester_id if ticket else None)
-    if recipient_id:
-        try:
-            recent_cutoff = now - timedelta(seconds=10)
-            existing = (
-                db.query(Notification)
-                .filter(
-                    Notification.tenant_id == t_id,
-                    Notification.user_id == recipient_id,
-                    Notification.type == "itsm.request.rejection",
-                    Notification.link == f"/itsm/requests/{ticket.id if ticket else approval.id}",
-                    Notification.created_at >= recent_cutoff,
-                )
-                .first()
-            )
-            if not existing:
-                ticket_ref = ticket.ticket_number if (ticket and ticket.ticket_number) else (f"Request {ticket.id}" if ticket else "Service Request")
-                ticket_title = ticket.title if (ticket and ticket.title) else ticket_ref
-                body_msg = f"Your request '{ticket_title}' was rejected."
-                if reason:
-                    body_msg += f" Reason: {reason}"
-                add_notification(
-                    db,
-                    tenant_id=t_id,
-                    user_id=recipient_id,
-                    type="itsm.request.rejection",
-                    severity="warning",
-                    title=f"Service Request Rejected: {ticket_ref}",
-                    body=body_msg,
-                    link=f"/itsm/requests/{ticket.id if ticket else approval.id}",
-                )
-        except Exception as e:
-            logger.warning("Failed to dispatch rejection notification: %s", e)
-
-    db.commit()
-    db.refresh(approval)
-    if ticket:
-        db.refresh(ticket)
-
-    return _build_approval_response(approval, db, ticket)

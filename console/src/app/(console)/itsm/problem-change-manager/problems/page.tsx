@@ -18,6 +18,7 @@ import { formatDateTime } from "@/lib/itsm-format";
 import { ProblemStats, ProblemSummary } from "@/lib/itsm-types";
 import IncidentPriorityBadge from "@/components/itsm/incident-priority-badge";
 import IncidentStatusBadge from "@/components/itsm/incident-status-badge";
+import CompactDateCell from "@/components/itsm/compact-date-cell";
 
 type FilterStatus = "ALL" | "OPEN" | "IN_PROGRESS" | "RESOLVED" | "CLOSED";
 
@@ -74,7 +75,7 @@ export default function ProblemManagementPage() {
   }, [fetchData]);
 
   return (
-    <div className="space-y-8 max-w-7xl mx-auto" id="pcm-problems-page">
+    <div className="w-full space-y-8" id="pcm-problems-page">
       {/* Top Header Banner matching My Tickets header style */}
       <div
         className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm"
@@ -277,31 +278,31 @@ export default function ProblemManagementPage() {
           </div>
         ) : (
           /* Clean Problems Table */
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-21rem)] min-h-[350px]">
             <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="border-b border-[#E6E9F0] bg-[#F8FAFC] text-[#6B7488] font-semibold">
-                  <th className="py-3 px-4">Problem #</th>
-                  <th className="py-3 px-4">Short Description</th>
-                  <th className="py-3 px-4">Status</th>
-                  <th className="py-3 px-4">Priority</th>
-                  <th className="py-3 px-4">Service</th>
-                  <th className="py-3 px-4">Assigned Team</th>
-                  <th className="py-3 px-4">Assignee</th>
-                  <th className="py-3 px-4">Incidents</th>
-                  <th className="py-3 px-4">Updated</th>
+              <thead className="sticky top-0 z-10 bg-[#FBFAF9] shadow-[0_1px_0_0_#E6E9F0]">
+                <tr className="border-b border-[#E6E9F0] bg-[#FBFAF9] text-[11px] font-bold text-[#6B7488] uppercase tracking-wider">
+                  <th className="py-3 px-3.5 whitespace-nowrap w-[95px]">Problem #</th>
+                  <th className="py-3 px-3.5 min-w-[180px]">Short Description</th>
+                  <th className="py-3 px-3.5 whitespace-nowrap w-[105px]">Status</th>
+                  <th className="py-3 px-3.5 whitespace-nowrap w-[115px]">Priority</th>
+                  <th className="py-3 px-3.5 whitespace-nowrap w-[115px]">Service</th>
+                  <th className="py-3 px-3.5 whitespace-nowrap max-w-[110px]">Assigned Team</th>
+                  <th className="py-3 px-3.5 whitespace-nowrap max-w-[125px]">Assignee</th>
+                  <th className="py-3 px-3.5 whitespace-nowrap w-[70px] text-center">Incidents</th>
+                  <th className="py-3 px-3.5 whitespace-nowrap w-[170px]">Created / Updated</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#E6E9F0]">
+              <tbody className="divide-y divide-[#F0F2F5]">
                 {problems.map((prob) => (
                   <tr
                     key={prob.id}
-                    className="hover:bg-[#F8FAFC] transition-colors group cursor-pointer"
+                    className="hover:bg-[#F9FAFB] transition-colors group cursor-pointer"
                     onClick={() => {
                       window.location.href = `/itsm/problem-change-manager/problems/${prob.id}`;
                     }}
                   >
-                    <td className="py-3.5 px-4 font-semibold text-[#6D28D9]">
+                    <td className="py-3 px-3.5 font-semibold text-[#6D28D9] font-mono whitespace-nowrap">
                       <Link
                         href={`/itsm/problem-change-manager/problems/${prob.id}`}
                         className="hover:underline"
@@ -310,25 +311,27 @@ export default function ProblemManagementPage() {
                         {prob.ticket_number}
                       </Link>
                     </td>
-                    <td className="py-3.5 px-4 font-medium text-[#0E1726] max-w-xs truncate">
-                      {prob.title}
+                    <td className="py-3 px-3.5 min-w-0">
+                      <div className="font-semibold text-[#0E1726] line-clamp-2 leading-snug" title={prob.title}>
+                        {prob.title}
+                      </div>
                     </td>
-                    <td className="py-3.5 px-4">
+                    <td className="py-3 px-3.5 whitespace-nowrap">
                       <IncidentStatusBadge status={prob.status} />
                     </td>
-                    <td className="py-3.5 px-4">
+                    <td className="py-3 px-3.5 whitespace-nowrap">
                       <IncidentPriorityBadge priority={prob.priority} />
                     </td>
-                    <td className="py-3.5 px-4 text-[#475569]">
-                      {prob.service_name || "—"}
+                    <td className="py-3 px-3.5 text-[#475069] whitespace-nowrap w-[115px] max-w-[125px]">
+                      <span className="truncate block" title={prob.service_name || undefined}>{prob.service_name || "—"}</span>
                     </td>
-                    <td className="py-3.5 px-4 text-[#475569]">
-                      {prob.assignment_group || "—"}
+                    <td className="py-3 px-3.5 text-[#475069] whitespace-nowrap max-w-[110px]">
+                      <span className="truncate block" title={prob.assignment_group || undefined}>{prob.assignment_group || "—"}</span>
                     </td>
-                    <td className="py-3.5 px-4 text-[#475569]">
-                      {prob.assignee_email || "Unassigned"}
+                    <td className="py-3 px-3.5 text-[#475069] whitespace-nowrap max-w-[125px]">
+                      <span className="truncate block" title={prob.assignee_email || undefined}>{prob.assignee_email || "Unassigned"}</span>
                     </td>
-                    <td className="py-3.5 px-4">
+                    <td className="py-3 px-3.5 whitespace-nowrap text-center">
                       {prob.related_incidents_count > 0 ? (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#EFF6FF] text-[#2563EB] border border-[#DBEAFE] text-[11px] font-medium">
                           <Link2 className="w-3 h-3" />
@@ -338,8 +341,8 @@ export default function ProblemManagementPage() {
                         <span className="text-[#94A3B8]">—</span>
                       )}
                     </td>
-                    <td className="py-3.5 px-4 text-[#6B7488]">
-                      {formatDateTime(prob.updated_at || prob.created_at)}
+                    <td className="py-3 px-3.5 whitespace-nowrap text-[#6B7488]">
+                      <CompactDateCell createdAt={prob.created_at} updatedAt={prob.updated_at || prob.created_at} />
                     </td>
                   </tr>
                 ))}

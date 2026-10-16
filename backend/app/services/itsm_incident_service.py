@@ -41,7 +41,7 @@ from app.schemas.itsm_incidents import (
     VALID_URGENCIES,
 )
 from app.services.audit_store import append_audit_event
-from app.services.itsm_sla_service import apply_sla_policy, pause_sla, resume_sla
+from app.services.itsm_sla_service import apply_sla_policy, compute_sla_details, pause_sla, resume_sla
 from app.services.notifications import create_notification
 
 logger = logging.getLogger("authclaw.itsm.incidents")
@@ -1342,7 +1342,7 @@ class IncidentService:
             pause_sla(ticket, transition_time)
         elif current_status == "PENDING" and target_status in {"IN_PROGRESS", "RESOLVED"}:
             resume_sla(ticket, transition_time)
-        if target_status in {"IN_PROGRESS", "RESOLVED"} and getattr(ticket, "sla_response_met_at", None) is None:
+        if target_status in {"IN_PROGRESS", "RESOLVED", "CLOSED"} and getattr(ticket, "sla_response_met_at", None) is None:
             ticket.sla_response_met_at = transition_time
         if target_status == "RESOLVED":
             res_code = payload.resolution_code or ticket.resolution_code
@@ -1361,8 +1361,15 @@ class IncidentService:
             ticket.resolution_summary = res_summary.strip()
             ticket.resolved_at = transition_time
             ticket.sla_resolution_met_at = transition_time
+            final_sla = compute_sla_details(ticket, transition_time)
+            ticket.sla_status = final_sla.get("status", "WITHIN_SLA")
 
         if target_status == "CLOSED":
+            if ticket.resolved_at is None:
+                ticket.resolved_at = transition_time
+                ticket.sla_resolution_met_at = transition_time
+                final_sla = compute_sla_details(ticket, transition_time)
+                ticket.sla_status = final_sla.get("status", "WITHIN_SLA")
             ticket.closed_at = transition_time
             ticket.closed_by = actor_id
 
@@ -1372,6 +1379,10 @@ class IncidentService:
             ticket.sla_resolution_met_at = None
             if payload.status_reason and payload.status_reason.strip():
                 ticket.status_reason = payload.status_reason.strip()
+            if getattr(ticket, "sla_breach_escalated_at", None) is not None:
+                ticket.sla_status = "BREACHED"
+            else:
+                ticket.sla_status = compute_sla_details(ticket, transition_time).get("status", "WITHIN_SLA")
 
         ticket.status = target_status
         ticket.updated_at = transition_time

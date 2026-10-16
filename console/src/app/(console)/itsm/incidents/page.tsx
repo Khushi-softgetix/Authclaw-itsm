@@ -12,13 +12,13 @@ import {
   RefreshCw,
   Search,
   Ticket as TicketIcon,
-  ChevronRight,
   XCircle,
 } from "lucide-react";
 import { formatDateTime } from "@/lib/itsm-format";
 import { Incident } from "@/lib/itsm-types";
 import IncidentPriorityBadge from "@/components/itsm/incident-priority-badge";
 import IncidentStatusBadge from "@/components/itsm/incident-status-badge";
+import CompactDateCell from "@/components/itsm/compact-date-cell";
 
 type FilterStatus = "ALL" | "OPEN" | "IN_PROGRESS" | "PENDING" | "RESOLVED" | "CLOSED";
 
@@ -125,7 +125,7 @@ export default function IncidentListPage() {
   };
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
+    <div className="w-full space-y-6">
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm">
         <div className="flex items-center gap-4">
@@ -157,17 +157,15 @@ export default function IncidentListPage() {
             <button
               key={tab.key}
               onClick={() => setActiveFilter(tab.key)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all duration-150 flex items-center gap-1.5 ${
-                activeFilter === tab.key
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-all duration-150 flex items-center gap-1.5 ${activeFilter === tab.key
                   ? "bg-[#F1ECFE] text-[#6D28D9] border border-[#A78BFA]"
                   : "text-[#6B7488] hover:text-[#0E1726] hover:bg-[#F5F7FA]"
-              }`}
+                }`}
             >
               <span>{tab.label}</span>
               <span
-                className={`px-1.5 py-0.2 text-[10px] rounded-full font-mono ${
-                  activeFilter === tab.key ? "bg-[#6D28D9] text-white" : "bg-[#E6E9F0] text-[#6B7488]"
-                }`}
+                className={`px-1.5 py-0.2 text-[10px] rounded-full font-mono ${activeFilter === tab.key ? "bg-[#6D28D9] text-white" : "bg-[#E6E9F0] text-[#6B7488]"
+                  }`}
               >
                 {tab.count ?? 0}
               </span>
@@ -231,45 +229,58 @@ export default function IncidentListPage() {
             </div>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-[#F0F2F6] text-[#8C95A8] font-bold uppercase tracking-wider bg-[#FBFAF9]">
-                  <th className="py-3.5 px-4">Ticket ID</th>
-                  <th className="py-3.5 px-4">Title / Problem</th>
-                  <th className="py-3.5 px-4">Type</th>
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-21rem)] min-h-[350px]">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead className="sticky top-0 z-10 bg-[#FBFAF9] shadow-[0_1px_0_0_#E6E9F0]">
+                <tr className="border-b border-[#E6E9F0] bg-[#FBFAF9] text-[11px] font-bold text-[#6B7488] uppercase tracking-wider">
+                  <th className="py-3 px-3.5 whitespace-nowrap w-[95px]">Ticket ID</th>
+                  <th className="py-3 px-3.5 min-w-[180px]">Title / Problem</th>
+                  <th className="py-3 px-3.5 whitespace-nowrap w-[80px]">Type</th>
                   <th className="py-3.5 px-4">Approval</th>
                   <th className="py-3.5 px-4">Status</th>
-                  <th className="py-3.5 px-4">Priority</th>
-                  <th className="py-3.5 px-4">Created</th>
-                  <th className="py-3.5 px-4">Updated</th>
-                  <th className="py-3.5 px-4 text-right">Action</th>
+                  <th className="py-3.5 px-4 whitespace-nowrap w-[115px]">Priority</th>
+                  <th className="py-3 px-3.5 whitespace-nowrap w-[170px]">Created / Updated</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#F0F2F6]">
+              <tbody className="divide-y divide-[#F0F2F5]">
                 {filteredIncidents.map((incident) => (
-                  <tr key={incident.id} className="hover:bg-[#FBFAF9] transition">
-                    <td className="py-3.5 px-4 font-mono font-bold text-[#6D28D9]">
-                      <Link href={getTicketHref(incident)} className="hover:underline">
+                  <tr
+                    key={incident.id}
+                    className="hover:bg-[#F9FAFB] transition-colors cursor-pointer"
+                    onClick={() => {
+                      window.location.href = getTicketHref(incident);
+                    }}
+                  >
+                    <td className="py-3 px-3.5 font-mono font-semibold text-[#6D28D9] whitespace-nowrap">
+                      <Link
+                        href={getTicketHref(incident)}
+                        className="hover:underline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         {incident.ticket_number}
                       </Link>
                     </td>
-                    <td className="py-3.5 px-4 font-medium text-[#0E1726] max-w-[240px]">
-                      <Link href={getTicketHref(incident)} className="hover:text-[#6D28D9] block truncate">
+                    <td className="py-3 px-3.5 min-w-0">
+                      <Link
+                        href={getTicketHref(incident)}
+                        className="font-semibold text-[#0E1726] hover:text-[#6D28D9] block line-clamp-2 leading-snug"
+                        title={incident.title}
+                        onClick={(e) => e.stopPropagation()}
+                      >
                         {incident.title}
                       </Link>
                       {incident.rejection_reason && (
-                        <p className="text-[11px] text-rose-600 font-medium truncate mt-0.5">
+                        <p className="text-[11px] text-rose-600 font-medium truncate mt-0.5" title={`Reason: ${incident.rejection_reason}`}>
                           Reason: {incident.rejection_reason}
                         </p>
                       )}
                     </td>
-                    <td className="py-3.5 px-4 text-[#6B7488]">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded bg-slate-100 text-[#475069] text-[11px] font-semibold">
+                    <td className="py-3 px-3.5 text-[#6B7488] whitespace-nowrap">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-[#F1ECFE] text-[#6D28D9] text-[11px] font-medium">
                         {incident.ticket_type || "Incident"}
                       </span>
                     </td>
-                    <td className="py-3.5 px-4">
+                    <td className="py-3 px-3.5 whitespace-nowrap">
                       {incident.approval_required || incident.approval_status ? (
                         incident.approval_status === "PENDING" || (!incident.approval_status && incident.status === "PENDING") ? (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[11px] font-semibold">
@@ -290,26 +301,14 @@ export default function IncidentListPage() {
                         <span className="text-[#8C95A8] text-[11px]">—</span>
                       )}
                     </td>
-                    <td className="py-3.5 px-4">
+                    <td className="py-3 px-3.5 whitespace-nowrap">
                       <IncidentStatusBadge status={incident.status} />
                     </td>
-                    <td className="py-3.5 px-4">
+                    <td className="py-3 px-3.5 whitespace-nowrap">
                       <IncidentPriorityBadge priority={incident.priority} />
                     </td>
-                    <td className="py-3.5 px-4 text-[#6B7488] whitespace-nowrap">
-                      {formatDateTime(incident.created_at)}
-                    </td>
-                    <td className="py-3.5 px-4 text-[#6B7488] whitespace-nowrap">
-                      {formatDateTime(incident.updated_at || incident.created_at)}
-                    </td>
-                    <td className="py-3.5 px-4 text-right">
-                      <Link
-                        href={getTicketHref(incident)}
-                        className="inline-flex items-center gap-1 text-xs font-semibold text-[#6D28D9] hover:text-[#5B21B6] bg-[#F1ECFE] hover:bg-[#E9D8FD] px-3 py-1 rounded-lg transition"
-                      >
-                        <span>View Details</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </Link>
+                    <td className="py-3 px-3.5 whitespace-nowrap">
+                      <CompactDateCell createdAt={incident.created_at} updatedAt={incident.updated_at || incident.created_at} />
                     </td>
                   </tr>
                 ))}

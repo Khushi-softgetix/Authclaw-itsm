@@ -34,6 +34,7 @@ import {
   CreateKBArticlePayload,
   UpdateKBArticlePayload,
 } from "@/lib/itsm-types";
+import CompactDateCell from "@/components/itsm/compact-date-cell";
 
 function formatDate(isoString?: string | null): string {
   if (!isoString) return "Recently updated";
@@ -403,7 +404,7 @@ function KnowledgePageContent() {
   };
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto" id="itsm-knowledge-container">
+    <div className="w-full space-y-6" id="itsm-knowledge-container">
       {/* Context Banners for Incident / Request References */}
       {incidentParam && (
         <div
@@ -682,69 +683,81 @@ function KnowledgePageContent() {
         </div>
       ) : isPCM ? (
         /* Problem and Change Manager Governance Queue Table */
-        <div className="bg-white rounded-2xl border border-[#E6E9F0] shadow-xs overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse" id="pcm-knowledge-queue-table">
-              <thead>
-                <tr className="border-b border-[#E6E9F0] bg-[#FAFBFD] text-[11px] font-bold text-[#6B7488] uppercase tracking-wider">
-                  <th className="py-3 px-4">Article</th>
-                  <th className="py-3 px-3">Status</th>
-                  <th className="py-3 px-3">Category</th>
-                  <th className="py-3 px-3">Version</th>
-                  <th className="py-3 px-3">Author</th>
-                  <th className="py-3 px-3">Views</th>
-                  <th className="py-3 px-3">Updated</th>
-                  <th className="py-3 px-4 text-right">Actions</th>
+        <div className="rounded-[20px] border border-[#E6E9F0] bg-white shadow-[0_1px_2px_rgba(11,31,63,.05)] overflow-hidden">
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-21rem)] min-h-[350px]">
+            <table className="w-full text-left border-collapse table-fixed min-w-[700px] lg:min-w-0" id="pcm-knowledge-queue-table">
+              <colgroup>
+                <col className="w-[300px]" />
+                <col className="w-[92px]" />
+                <col className="w-[115px]" />
+                <col className="w-[72px]" />
+                <col className="w-[125px]" />
+                <col className="w-[58px]" />
+                <col className="w-[175px]" />
+                <col className="w-[110px]" />
+              </colgroup>
+              <thead className="sticky top-0 z-10 bg-[#FBFAF9] shadow-[0_1px_0_0_#E6E9F0]">
+                <tr className="border-b border-[#E6E9F0] bg-[#FBFAF9] text-[11px] font-bold text-[#6B7488] uppercase tracking-wider">
+                  <th className="py-3 px-3">Article</th>
+                  <th className="py-3 px-2 whitespace-nowrap">Status</th>
+                  <th className="py-3 px-2 whitespace-nowrap">Category</th>
+                  <th className="py-3 px-2 whitespace-nowrap text-center">Version</th>
+                  <th className="py-3 px-2 whitespace-nowrap">Author</th>
+                  <th className="py-3 px-1.5 whitespace-nowrap text-center">Views</th>
+                  <th className="py-3 px-2 whitespace-nowrap">Created / Updated</th>
+                  <th className="py-3 px-2 text-right whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#F0F2F6] text-xs">
+              <tbody className="divide-y divide-[#F0F2F5] text-xs">
                 {articles.map((article) => (
                   <tr
                     key={article.id}
                     id={`pcm-article-row-${article.id}`}
-                    className="hover:bg-[#F9FAFC] transition cursor-pointer"
+                    className="hover:bg-[#F9FAFB] transition-colors cursor-pointer"
                     onClick={() => openArticle(article.id)}
                   >
-                    <td className="py-3 px-4">
-                      <div className="font-bold text-[#0E1726] hover:text-[#6D28D9] transition">
+                    <td className="py-3 px-3 min-w-0">
+                      <div className="font-semibold text-[#0E1726] hover:text-[#6D28D9] transition line-clamp-2 leading-snug" title={article.title}>
                         {article.title}
                       </div>
-                      <div className="text-[11px] text-[#6B7488] font-mono mt-0.5 truncate max-w-xs">
+                      <div className="text-[11px] text-[#6B7488] font-mono mt-0.5 truncate" title={article.slug}>
                         {article.slug}
                       </div>
                     </td>
-                    <td className="py-3 px-3 whitespace-nowrap">
+                    <td className="py-3 px-2 whitespace-nowrap">
                       {renderStatusBadge(article.status)}
                     </td>
-                    <td className="py-3 px-3 whitespace-nowrap">
-                      <span className="font-semibold text-[#6D28D9] bg-[#F1ECFE] px-2.5 py-0.5 rounded-full text-[11px]">
+                    <td className="py-3 px-2 whitespace-nowrap">
+                      <span className="font-semibold text-[#6D28D9] bg-[#F1ECFE] px-2 py-0.5 rounded-full text-[10.5px] truncate max-w-[105px] inline-block" title={article.category}>
                         {article.category}
                       </span>
                     </td>
-                    <td className="py-3 px-3 whitespace-nowrap font-mono text-[11px] text-[#475069]">
+                    <td className="py-3 px-2 whitespace-nowrap font-mono text-[11px] text-[#475069] text-center">
                       v{article.current_published_version || article.version_number || 1}
                     </td>
-                    <td className="py-3 px-3 whitespace-nowrap text-[#475069] text-[11px]">
-                      {article.author_email || "System"}
+                    <td className="py-3 px-2 whitespace-nowrap">
+                      <span className="truncate block max-w-[115px] text-[11px] text-[#475069]" title={article.author_email || "System"}>
+                        {article.author_email || "System"}
+                      </span>
                     </td>
-                    <td className="py-3 px-3 whitespace-nowrap text-[#475069] text-[11px]">
+                    <td className="py-3 px-1.5 whitespace-nowrap text-[#475069] text-[11px] text-center">
                       {article.view_count || 0}
                     </td>
-                    <td className="py-3 px-3 whitespace-nowrap text-[#6B7488] text-[11px]">
-                      {formatDate(article.updated_at)}
+                    <td className="py-3 px-2 whitespace-nowrap">
+                      <CompactDateCell createdAt={article.created_at} updatedAt={article.updated_at} />
                     </td>
-                    <td className="py-3 px-4 text-right whitespace-nowrap space-x-2" onClick={(e) => e.stopPropagation()}>
+                    <td className="py-3 px-2 text-right whitespace-nowrap space-x-1.5" onClick={(e) => e.stopPropagation()}>
                       <button
                         id={`pcm-view-article-btn-${article.id}`}
                         onClick={() => openArticle(article.id)}
-                        className="px-2.5 py-1 bg-white hover:bg-slate-50 border border-[#E6E9F0] text-[#0E1726] font-semibold rounded-lg text-[11px] transition shadow-2xs"
+                        className="inline-flex items-center px-2 py-0.5 rounded-md border border-[#E6E9F0] bg-white text-xs font-medium text-[#475069] hover:text-[#0E1726] hover:bg-[#F5F7FA] transition shadow-xs"
                       >
                         Review
                       </button>
                       <button
                         id={`pcm-edit-article-btn-${article.id}`}
                         onClick={() => handleOpenEdit(article)}
-                        className="px-2.5 py-1 bg-[#F1ECFE] hover:bg-[#E4DAFB] text-[#6D28D9] font-semibold rounded-lg text-[11px] transition shadow-2xs"
+                        className="inline-flex items-center px-2 py-0.5 rounded-md border border-[#E6E9F0] bg-white text-xs font-medium text-[#6D28D9] hover:bg-[#F1ECFE] hover:border-[#DDD6FE] transition shadow-xs"
                       >
                         Edit
                       </button>

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import logging
 from typing import Optional
 from uuid import UUID, uuid4
 
@@ -31,12 +32,17 @@ from app.schemas.itsm_problems import (
     RelatedIncidentItem,
     ReportRecurringProblemRequest,
     ReportRecurringProblemResponse,
+    KnownErrorLookupItem,
+    LinkIncidentProblemResponse,
+    PublishWorkaroundRequest,
+    RetireWorkaroundRequest,
+    WorkaroundGovernanceResponse,
 )
 from app.services.audit_store import append_audit_event
 from app.services.itsm_change_service import ITSMChangeService
 from app.services.itsm_incident_service import IncidentService
 
-
+logger = logging.getLogger("authclaw.itsm.problems")
 
 
 class ProblemService:
@@ -235,8 +241,14 @@ class ProblemService:
         if problem_detail_rec:
             detail_data = ProblemDetailData(
                 known_error=problem_detail_rec.known_error,
+                symptoms=problem_detail_rec.symptoms,
                 root_cause_summary=problem_detail_rec.root_cause_summary,
                 workaround_summary=problem_detail_rec.workaround_summary,
+                workaround_status=problem_detail_rec.workaround_status,
+                workaround_approved_at=problem_detail_rec.workaround_approved_at,
+                workaround_approved_by_id=problem_detail_rec.workaround_approved_by_id,
+                workaround_expires_at=problem_detail_rec.workaround_expires_at,
+                review_due_at=problem_detail_rec.review_due_at,
                 permanent_solution=problem_detail_rec.permanent_solution,
                 rca_document_url=problem_detail_rec.rca_document_url,
                 assigned_investigator_id=problem_detail_rec.assigned_investigator_id,
@@ -314,11 +326,16 @@ class ProblemService:
         # 1. Update ticket status if provided
         if payload.status:
             new_status = payload.status.strip().upper()
-            allowed_statuses = {"OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"}
+            allowed_statuses = {"NEW", "OPEN", "IN_PROGRESS", "RESOLVED", "CLOSED"}
             if new_status not in allowed_statuses:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid status '{payload.status}'. Allowed statuses: {', '.join(sorted(allowed_statuses))}",
+                )
+            if old_status == "CLOSED" and new_status != "CLOSED":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot reopen a CLOSED problem. Problem lifecycle has concluded.",
                 )
             if new_status != old_status:
                 ticket.status = new_status
@@ -371,19 +388,29 @@ class ProblemService:
             db.add(detail_rec)
 
         investigation_fields_updated = False
-        if payload.root_cause_summary is not None:
+        fields_set = payload.model_fields_set
+        if "root_cause_summary" in fields_set:
             detail_rec.root_cause_summary = payload.root_cause_summary
             investigation_fields_updated = True
-        if payload.workaround_summary is not None:
+        if "workaround_summary" in fields_set:
             detail_rec.workaround_summary = payload.workaround_summary
             investigation_fields_updated = True
-        if payload.known_error is not None:
-            detail_rec.known_error = payload.known_error
+        if "known_error" in fields_set:
+            detail_rec.known_error = payload.known_error if payload.known_error is not None else False
             investigation_fields_updated = True
-        if payload.permanent_solution is not None:
+        if "permanent_solution" in fields_set:
             detail_rec.permanent_solution = payload.permanent_solution
             investigation_fields_updated = True
-        if payload.rca_document_url is not None:
+        if "symptoms" in fields_set:
+            detail_rec.symptoms = payload.symptoms
+            investigation_fields_updated = True
+        if "workaround_expires_at" in fields_set:
+            detail_rec.workaround_expires_at = payload.workaround_expires_at
+            investigation_fields_updated = True
+        if "review_due_at" in fields_set:
+            detail_rec.review_due_at = payload.review_due_at
+            investigation_fields_updated = True
+        if "rca_document_url" in fields_set:
             detail_rec.rca_document_url = payload.rca_document_url
             investigation_fields_updated = True
 
@@ -1438,6 +1465,654 @@ class ProblemService:
             problem_ticket_number=problem_ticket.ticket_number,
             already_reported=False,
             message="Recurring problem reported successfully.",
+        )
+
+    @classmethod
+    def search_known_errors(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        *,
+        search: Optional[str] = None,
+        service_id: Optional[UUID] = None,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> list[KnownErrorLookupItem]:
+        """Tenant-scoped search for approved Known Errors and active workarounds.
+
+        LIFECYCLE & GOVERNANCE SAFEGUARDS (FAIL-CLOSED):
+        1. Only tickets with known_error == True are considered.
+        2. Workaround must be explicitly APPROVED (workaround_status == 'APPROVED').
+           Legacy records without explicit approval action (defaulting to 'DRAFT') are excluded.
+        3. Excludes expired workarounds (workaround_expires_at is None or > now()).
+        4. Excludes overdue review records (review_due_at is None or >= now()).
+        5. Workaround must be non-null and non-empty after trimming.
+        6. Permitted active lifecycle statuses: 'OPEN', 'IN_PROGRESS', 'RESOLVED'.
+        7. Excludes unassessed/pre-investigation tickets (status in ('NEW', 'ASSIGNED')).
+        8. Excludes closed or cancelled tickets (status in ('CLOSED', 'CANCELLED')).
+        """
+        now = datetime.now(timezone.utc)
+        query = (
+            db.query(ITSMTicket, ITSMProblemDetail)
+            .join(ITSMProblemDetail, ITSMProblemDetail.ticket_id == ITSMTicket.id)
+            .options(joinedload(ITSMTicket.service))
+            .filter(
+                ITSMTicket.tenant_id == tenant_id,
+                ITSMProblemDetail.tenant_id == tenant_id,
+                ITSMTicket.ticket_type == "PROBLEM",
+                ITSMProblemDetail.known_error.is_(True),
+                ITSMProblemDetail.workaround_status == "APPROVED",
+                or_(
+                    ITSMProblemDetail.workaround_expires_at.is_(None),
+                    ITSMProblemDetail.workaround_expires_at > now,
+                ),
+                or_(
+                    ITSMProblemDetail.review_due_at.is_(None),
+                    ITSMProblemDetail.review_due_at >= now,
+                ),
+                ITSMProblemDetail.workaround_summary.isnot(None),
+                func.trim(ITSMProblemDetail.workaround_summary) != "",
+                ITSMTicket.status.in_(["OPEN", "IN_PROGRESS", "RESOLVED"]),
+            )
+        )
+
+        if service_id:
+            query = query.filter(ITSMTicket.service_id == service_id)
+
+        if search and search.strip():
+            term = f"%{search.strip()}%"
+            query = query.filter(
+                or_(
+                    ITSMTicket.ticket_number.ilike(term),
+                    ITSMTicket.title.ilike(term),
+                    ITSMTicket.description.ilike(term),
+                    ITSMProblemDetail.workaround_summary.ilike(term),
+                    ITSMProblemDetail.root_cause_summary.ilike(term),
+                    ITSMProblemDetail.permanent_solution.ilike(term),
+                    ITSMProblemDetail.symptoms.ilike(term),
+                )
+            )
+
+        rows = (
+            query.order_by(ITSMTicket.updated_at.desc(), ITSMTicket.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .all()
+        )
+
+        results: list[KnownErrorLookupItem] = []
+        for ticket, detail in rows:
+            service_name = ticket.service.name if ticket.service else None
+            results.append(
+                KnownErrorLookupItem(
+                    id=ticket.id,
+                    ticket_number=ticket.ticket_number,
+                    title=ticket.title,
+                    description=ticket.description,
+                    symptoms=detail.symptoms,
+                    status=ticket.status,
+                    service_id=ticket.service_id,
+                    service_name=service_name,
+                    workaround_summary=detail.workaround_summary.strip(),
+                    workaround_status=detail.workaround_status,
+                    workaround_approved_at=detail.workaround_approved_at,
+                    workaround_expires_at=detail.workaround_expires_at,
+                    review_due_at=detail.review_due_at,
+                    root_cause_summary=detail.root_cause_summary,
+                    permanent_solution=detail.permanent_solution,
+                    identified_at=detail.identified_at,
+                    resolved_at=detail.resolved_at,
+                    created_at=ticket.created_at,
+                    updated_at=ticket.updated_at,
+                )
+            )
+        return results
+
+    @classmethod
+    def publish_workaround(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        problem_id: UUID,
+        actor_id: UUID,
+        payload: Optional[PublishWorkaroundRequest] = None,
+    ) -> WorkaroundGovernanceResponse:
+        """Publish and approve a Known Error workaround.
+
+        Requires non-empty workaround_summary. Sets workaround_status='APPROVED',
+        records approval timestamp, approver ID, and emits activity/audit records.
+        """
+        ticket = (
+            db.query(ITSMTicket)
+            .filter(
+                ITSMTicket.id == problem_id,
+                ITSMTicket.tenant_id == tenant_id,
+                ITSMTicket.ticket_type == "PROBLEM",
+            )
+            .with_for_update()
+            .first()
+        )
+        if not ticket:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Problem ticket '{problem_id}' not found",
+            )
+
+        if ticket.status == "CLOSED":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot publish workaround for a CLOSED problem. Problem lifecycle has concluded.",
+            )
+
+        detail_rec = (
+            db.query(ITSMProblemDetail)
+            .filter(
+                ITSMProblemDetail.tenant_id == tenant_id,
+                ITSMProblemDetail.ticket_id == problem_id,
+            )
+            .with_for_update()
+            .first()
+        )
+        if not detail_rec or not detail_rec.workaround_summary or not detail_rec.workaround_summary.strip():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot publish workaround: workaround_summary is required and cannot be empty",
+            )
+
+        now = datetime.now(timezone.utc)
+        actor_user = db.query(User).filter(User.id == actor_id).first()
+        actor_email = actor_user.email if actor_user else None
+
+        detail_rec.known_error = True
+        detail_rec.workaround_status = "APPROVED"
+        detail_rec.workaround_approved_at = now
+        detail_rec.workaround_approved_by_id = actor_id
+        if payload:
+            if payload.workaround_expires_at is not None:
+                detail_rec.workaround_expires_at = payload.workaround_expires_at
+            if payload.review_due_at is not None:
+                detail_rec.review_due_at = payload.review_due_at
+            if payload.symptoms is not None:
+                detail_rec.symptoms = payload.symptoms
+        detail_rec.updated_at = now
+        ticket.updated_at = now
+
+        note_text = f" Note: {payload.notes.strip()}" if (payload and payload.notes and payload.notes.strip()) else ""
+        activity = ITSMTicketActivity(
+            id=uuid4(),
+            tenant_id=tenant_id,
+            ticket_id=problem_id,
+            actor_type="USER",
+            actor_id=actor_id,
+            activity_type="WORKAROUND_PUBLISHED",
+            content=f"Workaround published and approved for Problem {ticket.ticket_number}.{note_text}",
+            activity_metadata={
+                "action": "publish_workaround",
+                "actor_id": str(actor_id),
+                "actor_email": actor_email,
+                "workaround_status": "APPROVED",
+                "workaround_approved_at": now.isoformat(),
+                "workaround_expires_at": detail_rec.workaround_expires_at.isoformat() if detail_rec.workaround_expires_at else None,
+                "review_due_at": detail_rec.review_due_at.isoformat() if detail_rec.review_due_at else None,
+            },
+            created_at=now,
+        )
+        db.add(activity)
+
+        try:
+            sp = db.begin_nested()
+            try:
+                db.execute(
+                    text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                    {"tenant_id": str(tenant_id)},
+                )
+                append_audit_event(
+                    db,
+                    {
+                        "id": str(uuid4()),
+                        "idempotency_key": f"itsm:problem:{problem_id}:publish_workaround:{now.timestamp()}",
+                        "tenant_id": str(tenant_id),
+                        "timestamp": now,
+                        "actor_id": str(actor_id),
+                        "actor_type": "user",
+                        "action": "itsm.problem.workaround_published",
+                        "request_id": str(problem_id),
+                        "provider": "itsm",
+                        "reason": f"Workaround for Problem {ticket.ticket_number} published",
+                        "response_status": 200,
+                        "frameworks_affected": ["ITIL"],
+                        "execution_trace": [
+                            f"problem_id={problem_id}",
+                            "workaround_status=APPROVED",
+                        ],
+                    },
+                )
+                sp.commit()
+            except Exception as e:
+                sp.rollback()
+                logger.warning(f"Failed to record audit event for workaround publish: {e}")
+        except Exception:
+            pass
+
+        db.commit()
+
+        return WorkaroundGovernanceResponse(
+            problem_id=ticket.id,
+            problem_ticket_number=ticket.ticket_number,
+            known_error=detail_rec.known_error,
+            workaround_status=detail_rec.workaround_status,
+            workaround_summary=detail_rec.workaround_summary,
+            workaround_approved_at=detail_rec.workaround_approved_at,
+            workaround_approved_by_id=detail_rec.workaround_approved_by_id,
+            workaround_expires_at=detail_rec.workaround_expires_at,
+            review_due_at=detail_rec.review_due_at,
+            symptoms=detail_rec.symptoms,
+            message=f"Workaround for Problem {ticket.ticket_number} published and approved successfully.",
+        )
+
+    @classmethod
+    def retire_workaround(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        problem_id: UUID,
+        actor_id: UUID,
+        payload: Optional[RetireWorkaroundRequest] = None,
+    ) -> WorkaroundGovernanceResponse:
+        """Retire a Known Error workaround.
+
+        Transitions workaround_status to 'RETIRED'.
+        CRITICAL: Retiring a workaround does NOT close or alter the problem ticket status.
+        """
+        ticket = (
+            db.query(ITSMTicket)
+            .filter(
+                ITSMTicket.id == problem_id,
+                ITSMTicket.tenant_id == tenant_id,
+                ITSMTicket.ticket_type == "PROBLEM",
+            )
+            .with_for_update()
+            .first()
+        )
+        if not ticket:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Problem ticket '{problem_id}' not found",
+            )
+
+        detail_rec = (
+            db.query(ITSMProblemDetail)
+            .filter(
+                ITSMProblemDetail.tenant_id == tenant_id,
+                ITSMProblemDetail.ticket_id == problem_id,
+            )
+            .with_for_update()
+            .first()
+        )
+        if not detail_rec:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Problem details for Problem '{problem_id}' not found",
+            )
+
+        now = datetime.now(timezone.utc)
+        actor_user = db.query(User).filter(User.id == actor_id).first()
+        actor_email = actor_user.email if actor_user else None
+
+        reason = payload.reason.strip() if (payload and payload.reason and payload.reason.strip()) else "No reason provided"
+        detail_rec.workaround_status = "RETIRED"
+        detail_rec.updated_at = now
+        ticket.updated_at = now
+        # Crucial: ticket.status is preserved!
+
+        activity = ITSMTicketActivity(
+            id=uuid4(),
+            tenant_id=tenant_id,
+            ticket_id=problem_id,
+            actor_type="USER",
+            actor_id=actor_id,
+            activity_type="WORKAROUND_RETIRED",
+            content=f"Workaround retired for Problem {ticket.ticket_number}. Reason: {reason}",
+            activity_metadata={
+                "action": "retire_workaround",
+                "actor_id": str(actor_id),
+                "actor_email": actor_email,
+                "workaround_status": "RETIRED",
+                "reason": reason,
+            },
+            created_at=now,
+        )
+        db.add(activity)
+
+        try:
+            sp = db.begin_nested()
+            try:
+                db.execute(
+                    text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                    {"tenant_id": str(tenant_id)},
+                )
+                append_audit_event(
+                    db,
+                    {
+                        "id": str(uuid4()),
+                        "idempotency_key": f"itsm:problem:{problem_id}:retire_workaround:{now.timestamp()}",
+                        "tenant_id": str(tenant_id),
+                        "timestamp": now,
+                        "actor_id": str(actor_id),
+                        "actor_type": "user",
+                        "action": "itsm.problem.workaround_retired",
+                        "request_id": str(problem_id),
+                        "provider": "itsm",
+                        "reason": f"Workaround for Problem {ticket.ticket_number} retired: {reason}",
+                        "response_status": 200,
+                        "frameworks_affected": ["ITIL"],
+                        "execution_trace": [
+                            f"problem_id={problem_id}",
+                            "workaround_status=RETIRED",
+                        ],
+                    },
+                )
+                sp.commit()
+            except Exception as e:
+                sp.rollback()
+                logger.warning(f"Failed to record audit event for workaround retirement: {e}")
+        except Exception:
+            pass
+
+        db.commit()
+
+        return WorkaroundGovernanceResponse(
+            problem_id=ticket.id,
+            problem_ticket_number=ticket.ticket_number,
+            known_error=detail_rec.known_error,
+            workaround_status=detail_rec.workaround_status,
+            workaround_summary=detail_rec.workaround_summary or "",
+            workaround_approved_at=detail_rec.workaround_approved_at,
+            workaround_approved_by_id=detail_rec.workaround_approved_by_id,
+            workaround_expires_at=detail_rec.workaround_expires_at,
+            review_due_at=detail_rec.review_due_at,
+            symptoms=detail_rec.symptoms,
+            message=f"Workaround for Problem {ticket.ticket_number} retired successfully.",
+        )
+
+    @classmethod
+    def link_incident_to_problem(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        incident_id: UUID,
+        problem_id: UUID,
+        actor_id: UUID,
+        actor_email: Optional[str] = None,
+    ) -> LinkIncidentProblemResponse:
+        """Associate an Incident ticket with an existing Problem ticket."""
+        incident = (
+            db.query(ITSMTicket)
+            .filter(
+                ITSMTicket.id == incident_id,
+                ITSMTicket.tenant_id == tenant_id,
+                ITSMTicket.ticket_type == "INCIDENT",
+            )
+            .with_for_update()
+            .first()
+        )
+        if not incident:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Incident '{incident_id}' not found",
+            )
+
+        problem = (
+            db.query(ITSMTicket)
+            .filter(
+                ITSMTicket.id == problem_id,
+                ITSMTicket.tenant_id == tenant_id,
+                ITSMTicket.ticket_type == "PROBLEM",
+            )
+            .first()
+        )
+        if not problem:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Problem '{problem_id}' not found",
+            )
+
+        # Idempotency check
+        if incident.linked_problem_id == problem_id:
+            return LinkIncidentProblemResponse(
+                incident_id=incident.id,
+                incident_ticket_number=incident.ticket_number,
+                linked_problem_id=problem.id,
+                linked_problem_ticket_number=problem.ticket_number,
+                already_linked=True,
+                message=f"Incident is already linked to Problem {problem.ticket_number}.",
+            )
+
+        now = datetime.now(timezone.utc)
+        old_problem_id = incident.linked_problem_id
+        incident.linked_problem_id = problem.id
+        incident.updated_at = now
+
+        # Incident activity
+        inc_act = ITSMTicketActivity(
+            id=uuid4(),
+            tenant_id=tenant_id,
+            ticket_id=incident.id,
+            actor_type="USER",
+            actor_id=actor_id,
+            activity_type="UPDATE",
+            content=f"Linked to Problem {problem.ticket_number} ({problem.title}).",
+            activity_metadata={
+                "actor_email": actor_email,
+                "linked_problem_id": str(problem.id),
+                "linked_problem_ticket_number": problem.ticket_number,
+                "old_linked_problem_id": str(old_problem_id) if old_problem_id else None,
+                "action": "link_problem",
+            },
+            created_at=now,
+        )
+        db.add(inc_act)
+
+        # Problem activity
+        prb_act = ITSMTicketActivity(
+            id=uuid4(),
+            tenant_id=tenant_id,
+            ticket_id=problem.id,
+            actor_type="USER",
+            actor_id=actor_id,
+            activity_type="UPDATE",
+            content=f"Incident {incident.ticket_number} linked to this Problem.",
+            activity_metadata={
+                "actor_email": actor_email,
+                "linked_incident_id": str(incident.id),
+                "linked_incident_ticket_number": incident.ticket_number,
+                "action": "incident_linked",
+            },
+            created_at=now,
+        )
+        db.add(prb_act)
+
+        db.commit()
+        db.refresh(incident)
+
+        # Audit trail
+        try:
+            sp = db.begin_nested()
+            try:
+                db.execute(
+                    text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                    {"tenant_id": str(tenant_id)},
+                )
+                append_audit_event(
+                    db,
+                    {
+                        "id": str(uuid4()),
+                        "idempotency_key": f"itsm:incident:{incident.id}:link_problem:{problem.id}:{now.timestamp()}",
+                        "tenant_id": str(tenant_id),
+                        "timestamp": now,
+                        "actor_id": str(actor_id),
+                        "actor_type": "user",
+                        "action": "itsm.incident.linked_problem",
+                        "request_id": str(incident.id),
+                        "provider": "itsm",
+                        "reason": f"Incident {incident.ticket_number} linked to Problem {problem.ticket_number}",
+                        "response_status": 200,
+                        "frameworks_affected": ["ITIL"],
+                        "execution_trace": [
+                            f"incident_id={incident.id}",
+                            f"problem_id={problem.id}",
+                            f"old_problem_id={old_problem_id}",
+                        ],
+                    },
+                )
+                sp.commit()
+            except Exception:
+                sp.rollback()
+        except Exception:
+            pass
+
+        return LinkIncidentProblemResponse(
+            incident_id=incident.id,
+            incident_ticket_number=incident.ticket_number,
+            linked_problem_id=problem.id,
+            linked_problem_ticket_number=problem.ticket_number,
+            already_linked=False,
+            message=f"Incident successfully linked to Problem {problem.ticket_number}.",
+        )
+
+    @classmethod
+    def unlink_incident_from_problem(
+        cls,
+        db: Session,
+        tenant_id: UUID,
+        incident_id: UUID,
+        actor_id: UUID,
+        actor_email: Optional[str] = None,
+    ) -> LinkIncidentProblemResponse:
+        """Remove link between an Incident ticket and its linked Problem ticket."""
+        incident = (
+            db.query(ITSMTicket)
+            .filter(
+                ITSMTicket.id == incident_id,
+                ITSMTicket.tenant_id == tenant_id,
+                ITSMTicket.ticket_type == "INCIDENT",
+            )
+            .with_for_update()
+            .first()
+        )
+        if not incident:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Incident '{incident_id}' not found",
+            )
+
+        if incident.linked_problem_id is None:
+            return LinkIncidentProblemResponse(
+                incident_id=incident.id,
+                incident_ticket_number=incident.ticket_number,
+                linked_problem_id=None,
+                linked_problem_ticket_number=None,
+                already_linked=False,
+                message="Incident is not linked to any problem.",
+            )
+
+        now = datetime.now(timezone.utc)
+        old_problem_id = incident.linked_problem_id
+        old_problem = (
+            db.query(ITSMTicket)
+            .filter(
+                ITSMTicket.id == old_problem_id,
+                ITSMTicket.tenant_id == tenant_id,
+            )
+            .first()
+        )
+        old_prb_num = old_problem.ticket_number if old_problem else str(old_problem_id)
+
+        incident.linked_problem_id = None
+        incident.updated_at = now
+
+        # Incident activity
+        inc_act = ITSMTicketActivity(
+            id=uuid4(),
+            tenant_id=tenant_id,
+            ticket_id=incident.id,
+            actor_type="USER",
+            actor_id=actor_id,
+            activity_type="UPDATE",
+            content=f"Unlinked from Problem {old_prb_num}.",
+            activity_metadata={
+                "actor_email": actor_email,
+                "unlinked_problem_id": str(old_problem_id),
+                "action": "unlink_problem",
+            },
+            created_at=now,
+        )
+        db.add(inc_act)
+
+        # Problem activity
+        if old_problem:
+            prb_act = ITSMTicketActivity(
+                id=uuid4(),
+                tenant_id=tenant_id,
+                ticket_id=old_problem.id,
+                actor_type="USER",
+                actor_id=actor_id,
+                activity_type="UPDATE",
+                content=f"Incident {incident.ticket_number} unlinked from this Problem.",
+                activity_metadata={
+                    "actor_email": actor_email,
+                    "unlinked_incident_id": str(incident.id),
+                    "action": "incident_unlinked",
+                },
+                created_at=now,
+            )
+            db.add(prb_act)
+
+        db.commit()
+        db.refresh(incident)
+
+        # Audit trail
+        try:
+            sp = db.begin_nested()
+            try:
+                db.execute(
+                    text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                    {"tenant_id": str(tenant_id)},
+                )
+                append_audit_event(
+                    db,
+                    {
+                        "id": str(uuid4()),
+                        "idempotency_key": f"itsm:incident:{incident.id}:unlink_problem:{old_problem_id}:{now.timestamp()}",
+                        "tenant_id": str(tenant_id),
+                        "timestamp": now,
+                        "actor_id": str(actor_id),
+                        "actor_type": "user",
+                        "action": "itsm.incident.unlinked_problem",
+                        "request_id": str(incident.id),
+                        "provider": "itsm",
+                        "reason": f"Incident {incident.ticket_number} unlinked from Problem {old_prb_num}",
+                        "response_status": 200,
+                        "frameworks_affected": ["ITIL"],
+                        "execution_trace": [
+                            f"incident_id={incident.id}",
+                            f"old_problem_id={old_problem_id}",
+                        ],
+                    },
+                )
+                sp.commit()
+            except Exception:
+                sp.rollback()
+        except Exception:
+            pass
+
+        return LinkIncidentProblemResponse(
+            incident_id=incident.id,
+            incident_ticket_number=incident.ticket_number,
+            linked_problem_id=None,
+            linked_problem_ticket_number=None,
+            already_linked=False,
+            message=f"Incident unlinked from Problem {old_prb_num} successfully.",
         )
 
 

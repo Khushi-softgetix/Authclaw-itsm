@@ -210,17 +210,43 @@ def validate_production_environment() -> None:
         joined = "; ".join(errors)
         raise RuntimeError(f"Production environment validation failed: {joined}")
 
+def _is_alembic_revision_satisfied(expected_revision: str, current_revisions: list[str]) -> bool:
+    if expected_revision in current_revisions:
+        return True
+    try:
+        from pathlib import Path
+        from alembic.config import Config
+        from alembic.script import ScriptDirectory
+
+        backend_dir = Path(__file__).resolve().parents[2]
+        alembic_cfg = backend_dir / "alembic.ini"
+        if alembic_cfg.exists():
+            config = Config(str(alembic_cfg))
+            config.set_main_option("script_location", str(backend_dir / "alembic"))
+            scripts = ScriptDirectory.from_config(config)
+            for curr in current_revisions:
+                try:
+                    for r in scripts.walk_revisions(base=None, head=curr):
+                        if r.revision == expected_revision:
+                            return True
+                except Exception:
+                    pass
+    except Exception:
+        pass
+    return False
+
+
 def validate_database_security(connection) -> None:
     """Refuse startup when the authentication/RLS boundary is incomplete."""
     if connection.dialect.name != "postgresql":
         return
 
-    expected_revision = os.getenv("AUTHCLAW_EXPECTED_DB_REVISION", "052")
+    expected_revision = os.getenv("AUTHCLAW_EXPECTED_DB_REVISION", "054")
     failures: list[str] = []
-    if not connection.execute(
-        text("SELECT EXISTS (SELECT 1 FROM public.alembic_version WHERE version_num = :revision)"),
-        {"revision": expected_revision},
-    ).scalar_one():
+    current_revisions = connection.execute(
+        text("SELECT version_num FROM public.alembic_version")
+    ).scalars().all()
+    if not _is_alembic_revision_satisfied(expected_revision, current_revisions):
         failures.append(f"missing Alembic revision {expected_revision}")
 
     function_security = connection.execute(text("""

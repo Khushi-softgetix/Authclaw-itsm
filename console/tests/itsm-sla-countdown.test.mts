@@ -164,3 +164,87 @@ test("Response vs Resolution SLA precedence", () => {
   assert.equal(res2.dueAt?.toISOString(), "2026-10-01T14:00:00.000Z");
   assert.equal(res2.remainingSeconds, 13500); // 3h 45m
 });
+
+test("Resolved early freezes countdown and displays 'Resolved in X' and 'SLA Met'", () => {
+  // Scenario: Resolution SLA = 1h 55m (6900s), ticket resolved after 15m 30s (930s)
+  // Remaining at resolution = 1h 39m 30s (5970s)
+  const createdAt = "2026-10-01T10:00:00Z";
+  const dueAt = "2026-10-01T11:55:00Z"; // 1 hour 55 minutes
+  const resolvedAt = "2026-10-01T10:15:30Z"; // 15 minutes 30 seconds
+
+  const ticket: SlaTicketLike = {
+    created_at: createdAt,
+    sla_resolution_due_at: dueAt,
+    resolved_at: resolvedAt,
+    status: "RESOLVED",
+  };
+
+  // Evaluate at resolved time
+  const resResolved = calculateSlaStatus(ticket, new Date(resolvedAt).getTime());
+  assert.equal(resResolved.isCompleted, true);
+  assert.equal(resResolved.isResolved, true);
+  assert.equal(resResolved.state, "GREEN");
+  assert.equal(resResolved.isBreached, false);
+  assert.equal(resResolved.stateLabel, "SLA Met");
+  assert.equal(resResolved.resolvedDurationSeconds, 930);
+  assert.equal(resResolved.formattedResolvedDuration, "15m 30s");
+  assert.equal(resResolved.formattedShort, "Resolved in 15m 30s");
+  assert.equal(resResolved.remainingSeconds, 5970);
+  assert.equal(resResolved.formattedRemaining, "01h 39m 30s remaining at resolution");
+
+  // Evaluate 5 hours later (wall clock in future): must remain frozen with exact same values
+  const futureNow = new Date("2026-10-01T15:00:00Z").getTime();
+  const resFuture = calculateSlaStatus(ticket, futureNow);
+  assert.equal(resFuture.isCompleted, true);
+  assert.equal(resFuture.state, "GREEN");
+  assert.equal(resFuture.isBreached, false);
+  assert.equal(resFuture.stateLabel, "SLA Met");
+  assert.equal(resFuture.remainingSeconds, 5970);
+  assert.equal(resFuture.formattedShort, "Resolved in 15m 30s");
+  assert.equal(resFuture.formattedRemaining, "01h 39m 30s remaining at resolution");
+});
+
+test("Resolved after deadline records 'SLA Breached' and stops clock", () => {
+  const createdAt = "2026-10-01T10:00:00Z";
+  const dueAt = "2026-10-01T11:00:00Z"; // 1 hour
+  const resolvedAt = "2026-10-01T11:20:00Z"; // 20 minutes overdue
+
+  const ticket: SlaTicketLike = {
+    created_at: createdAt,
+    sla_resolution_due_at: dueAt,
+    resolved_at: resolvedAt,
+    status: "RESOLVED",
+  };
+
+  const res = calculateSlaStatus(ticket, new Date("2026-10-01T16:00:00Z").getTime());
+  assert.equal(res.isCompleted, true);
+  assert.equal(res.isResolved, true);
+  assert.equal(res.isBreached, true);
+  assert.equal(res.state, "RED");
+  assert.equal(res.stateLabel, "SLA Breached");
+  assert.equal(res.overdueSeconds, 1200); // 20m overdue
+  assert.equal(res.formattedShort, "20m overdue");
+  assert.equal(res.formattedResolvedDuration, "01h 20m");
+});
+
+test("Closed ticket stops clock at closed_at when resolved_at is absent", () => {
+  const createdAt = "2026-10-01T10:00:00Z";
+  const dueAt = "2026-10-01T12:00:00Z";
+  const closedAt = "2026-10-01T10:45:00Z"; // Closed in 45m
+
+  const ticket: SlaTicketLike = {
+    created_at: createdAt,
+    sla_resolution_due_at: dueAt,
+    closed_at: closedAt,
+    status: "CLOSED",
+  };
+
+  const res = calculateSlaStatus(ticket, new Date("2026-10-01T15:00:00Z").getTime());
+  assert.equal(res.isCompleted, true);
+  assert.equal(res.isClosed, true);
+  assert.equal(res.state, "GREEN");
+  assert.equal(res.isBreached, false);
+  assert.equal(res.stateLabel, "SLA Met");
+  assert.equal(res.remainingSeconds, 4500); // 1h 15m remaining at resolution
+  assert.equal(res.formattedShort, "Resolved in 45m");
+});

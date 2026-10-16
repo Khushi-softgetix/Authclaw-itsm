@@ -8,13 +8,25 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from app.core.config import settings
 
+db_url = settings.DATABASE_URL
+if db_url.startswith("postgresql://"):
+    db_url = db_url.replace("postgresql://", "postgresql+psycopg://", 1)
+
+engine_kwargs = {
+    "echo": settings.DEBUG,
+    "pool_pre_ping": True,
+}
+if "sqlite" not in db_url:
+    engine_kwargs.update({
+        "pool_size": 10,
+        "max_overflow": 20,
+    })
+
 engine = create_engine(
-    settings.DATABASE_URL,
-    echo=settings.DEBUG,
-    pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20,
+    db_url,
+    **engine_kwargs,
 )
+
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 _database_auth_context: ContextVar[tuple[str, str] | None] = ContextVar(
@@ -24,7 +36,7 @@ _database_auth_context: ContextVar[tuple[str, str] | None] = ContextVar(
 
 @contextmanager
 def database_auth_context(kind: str, credential_hash: str):
-    if kind not in {"api_key", "session", "platform_session"} or not credential_hash:
+    if kind not in {"api_key", "session", "platform_session", "worker"} or not credential_hash:
         raise ValueError("A validated database credential is required")
     token = _database_auth_context.set((kind, credential_hash))
     try:
@@ -41,6 +53,8 @@ def bind_authenticated_database_context(_session, _transaction, connection) -> N
     kind, credential_hash = auth_context
     if kind == "platform_session":
         resolver = "authn.bind_platform_session_context"
+    elif kind == "worker":
+        resolver = "worker_maintenance.bind_sla_worker_tenant_context"
     else:
         resolver = (
             "authn.bind_session_context"

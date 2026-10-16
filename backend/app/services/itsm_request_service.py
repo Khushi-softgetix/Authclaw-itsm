@@ -35,6 +35,7 @@ from app.schemas.itsm_requests import (
     ServiceRequestStatusUpdateRequest,
 )
 from app.services.audit_store import append_audit_event
+from app.services.itsm_sla_service import compute_sla_details
 from app.services.notifications import create_notification
 
 logger = logging.getLogger("authclaw.itsm.requests")
@@ -684,6 +685,35 @@ class RequestService:
                 detail=f"Cannot transition service request in terminal status '{current_status}'",
             )
 
+        if target_status in {"IN_PROGRESS", "RESOLVED"}:
+            try:
+                pending_app = (
+                    db.query(PendingApproval)
+                    .filter(
+                        PendingApproval.tenant_id == tenant_id,
+                        or_(
+                            PendingApproval.action_id == str(ticket.id),
+                            PendingApproval.action_description.like(f"%{ticket.ticket_number}%"),
+                        ),
+                        PendingApproval.status == "PENDING",
+                    )
+                    .first()
+                )
+                if pending_app:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=f"Cannot transition service request to '{target_status}' while approval is pending",
+                    )
+            except HTTPException:
+                raise
+            except Exception as exc:
+                bind = db.get_bind() if hasattr(db, "get_bind") else getattr(db, "bind", None)
+                dialect = getattr(bind, "dialect", None)
+                if dialect and getattr(dialect, "name", None) == "sqlite" and "no such table" in str(exc).lower():
+                    logger.debug("Pending approval check skipped in SQLite test environment: %s", exc)
+                else:
+                    raise
+
         allowed = ALLOWED_REQUEST_TRANSITIONS.get(current_status, set())
         if target_status not in allowed:
             raise HTTPException(
@@ -692,7 +722,7 @@ class RequestService:
             )
 
         transition_time = datetime.now(timezone.utc)
-        if target_status in {"IN_PROGRESS", "RESOLVED"} and ticket.sla_response_met_at is None:
+        if target_status in {"IN_PROGRESS", "RESOLVED", "CLOSED"} and ticket.sla_response_met_at is None:
             ticket.sla_response_met_at = transition_time
         if target_status == "RESOLVED":
             ticket.resolved_at = transition_time
@@ -701,12 +731,23 @@ class RequestService:
                 ticket.resolution_code = payload.resolution_code.strip()
             if payload.resolution_summary:
                 ticket.resolution_summary = payload.resolution_summary.strip()
+            final_sla = compute_sla_details(ticket, transition_time)
+            ticket.sla_status = final_sla.get("status", "WITHIN_SLA")
         elif target_status == "CLOSED":
+            if ticket.resolved_at is None:
+                ticket.resolved_at = transition_time
+                ticket.sla_resolution_met_at = transition_time
+                final_sla = compute_sla_details(ticket, transition_time)
+                ticket.sla_status = final_sla.get("status", "WITHIN_SLA")
             ticket.closed_at = transition_time
             ticket.closed_by = actor_id
         elif current_status == "RESOLVED" and target_status == "IN_PROGRESS":
             ticket.resolved_at = None
             ticket.sla_resolution_met_at = None
+            if getattr(ticket, "sla_breach_escalated_at", None) is not None:
+                ticket.sla_status = "BREACHED"
+            else:
+                ticket.sla_status = compute_sla_details(ticket, transition_time).get("status", "WITHIN_SLA")
 
         ticket.status = target_status
         ticket.status_reason = payload.status_reason.strip() if payload.status_reason else ticket.status_reason

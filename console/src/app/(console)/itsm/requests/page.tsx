@@ -12,7 +12,6 @@ import {
   User,
   Users,
   Layers,
-  ChevronRight,
   Sparkles,
   CheckCircle2,
   X,
@@ -23,6 +22,7 @@ import { formatDateTime, itsmSlaConfig } from "@/lib/itsm-format";
 import { ServiceRequest } from "@/lib/itsm-types";
 import IncidentPriorityBadge from "@/components/itsm/incident-priority-badge";
 import IncidentStatusBadge from "@/components/itsm/incident-status-badge";
+import CompactDateCell from "@/components/itsm/compact-date-cell";
 
 type FilterTab = "ALL" | "ASSIGNED_TO_ME" | "OPEN" | "IN_PROGRESS" | "RESOLVED";
 
@@ -139,7 +139,7 @@ function ServiceRequestsContent() {
   ];
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto" id="service-agent-requests-page">
+    <div className="w-full space-y-6" id="service-agent-requests-page">
       {/* Top Banner / Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-xs">
         <div className="flex items-center gap-4">
@@ -281,102 +281,132 @@ function ServiceRequestsContent() {
           )}
         </div>
       ) : (
-        <div className="space-y-3" id="requests-list-container">
-          {filteredRequests.map((req) => {
-            const slaConfig = req.sla_status ? itsmSlaConfig(req.sla_status) : null;
-            return (
-              <Link
-                key={req.id}
-                href={`/itsm/requests/${req.id}`}
-                id={`request-row-${req.ticket_number.toLowerCase()}`}
-                className="block bg-white rounded-2xl border border-[#E6E9F0] hover:border-[#6D28D9]/40 hover:shadow-sm p-5 transition group"
-              >
-                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                  {/* Left Column: Number, Title, Status, Priority, Description */}
-                  <div className="space-y-2 flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono text-xs font-bold px-2 py-0.5 rounded bg-purple-50 text-[#6D28D9] border border-purple-200">
-                        {req.ticket_number}
-                      </span>
-                      <IncidentPriorityBadge priority={req.priority} />
-                      <IncidentStatusBadge status={req.status} />
-                      {/* Approval Status Badge */}
-                      {req.approval_required || req.approval_status ? (
-                        req.approval_status === "PENDING" || (!req.approval_status && req.status === "PENDING") ? (
-                          <span id={`approval-badge-${req.id}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-semibold">
-                            <Clock className="w-3 h-3 text-amber-600" /> Awaiting Approval
+        <div
+          className="bg-white rounded-[20px] border border-[#E6E9F0] shadow-[0_1px_2px_rgba(11,31,63,.05)] overflow-hidden"
+          id="requests-list-container"
+        >
+          <div className="overflow-x-auto overflow-y-auto max-h-[calc(100vh-21rem)] min-h-[350px]">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead className="sticky top-0 z-10 bg-[#FBFAF9] shadow-[0_1px_0_0_#E6E9F0]">
+                <tr className="border-b border-[#E6E9F0] bg-[#FBFAF9] text-[11px] font-bold text-[#6B7488] uppercase tracking-wider">
+                  <th className="py-3 px-3.5 whitespace-nowrap w-[90px]">Request #</th>
+                  <th className="py-3 px-3.5 min-w-[160px]">Title &amp; Service</th>
+                  <th className="py-3 px-3.5 whitespace-nowrap w-[115px]">Approval</th>
+                  <th className="py-3 px-3.5 whitespace-nowrap w-[110px]">Status</th>
+                  <th className="py-3 px-3.5 whitespace-nowrap w-[120px]">Priority</th>
+                  <th className="py-3 px-3.5 whitespace-nowrap w-[85px]">SLA</th>
+                  <th className="py-3 px-3.5 whitespace-nowrap max-w-[110px]">Requester</th>
+                  <th className="py-3 px-3.5 whitespace-nowrap max-w-[115px]">Assignment</th>
+                  <th className="py-3 px-3.5 whitespace-nowrap w-[165px]">Created / Updated</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-[#F0F2F5]">
+                {filteredRequests.map((req) => {
+                  const slaConfig = req.sla_status ? itsmSlaConfig(req.sla_status) : null;
+                  return (
+                    <tr
+                      key={req.id}
+                      id={`request-row-${req.ticket_number.toLowerCase()}`}
+                      className="hover:bg-[#F9FAFB] transition-colors group cursor-pointer"
+                      onClick={() => {
+                        window.location.href = `/itsm/requests/${req.id}`;
+                      }}
+                    >
+                      <td className="py-3 px-3.5 font-mono font-semibold text-[#6D28D9] whitespace-nowrap">
+                        <Link
+                          href={`/itsm/requests/${req.id}`}
+                          className="hover:underline inline-flex items-center gap-1"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {req.ticket_number}
+                        </Link>
+                      </td>
+                      <td className="py-3 px-3.5 min-w-0">
+                        <Link
+                          href={`/itsm/requests/${req.id}`}
+                          className="font-semibold text-[#0E1726] hover:text-[#6D28D9] block line-clamp-2 leading-snug"
+                          title={req.title}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {req.title}
+                        </Link>
+                        {req.service_name && (
+                          <div className="flex items-center gap-1 text-[11px] text-[#64748B] mt-0.5 truncate" title={req.service_name}>
+                            <Layers className="w-3.5 h-3.5 text-[#8C95A8] shrink-0" />
+                            <span className="truncate">{req.service_name}</span>
+                          </div>
+                        )}
+                        {req.rejection_reason && (
+                          <div
+                            id={`rejection-reason-${req.id}`}
+                            className="text-[11px] text-rose-700 bg-rose-50/90 border border-rose-200 rounded px-2 py-0.5 font-medium mt-1 truncate flex items-center gap-1"
+                            title={`Reason: ${req.rejection_reason}`}
+                          >
+                            <XCircle className="w-3 h-3 text-rose-600 shrink-0" />
+                            <span className="truncate">Reason: {req.rejection_reason}</span>
+                          </div>
+                        )}
+                      </td>
+                      <td className="py-3 px-3.5 whitespace-nowrap">
+                        {req.approval_required || req.approval_status ? (
+                          req.approval_status === "PENDING" || (!req.approval_status && req.status === "PENDING") ? (
+                            <span id={`approval-badge-${req.id}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-semibold">
+                              <Clock className="w-3 h-3 text-amber-600" /> Awaiting Approval
+                            </span>
+                          ) : req.approval_status === "APPROVED" ? (
+                            <span id={`approval-badge-${req.id}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-semibold">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Approved
+                            </span>
+                          ) : req.approval_status === "REJECTED" ? (
+                            <span id={`approval-badge-${req.id}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-semibold">
+                              <XCircle className="w-3 h-3 text-rose-600" /> Rejected
+                            </span>
+                          ) : (
+                            <span className="text-[#8C95A8] text-[11px]">Not Required</span>
+                          )
+                        ) : (
+                          <span className="text-[#8C95A8] text-[11px]">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-3.5 whitespace-nowrap">
+                        <IncidentStatusBadge status={req.status} />
+                      </td>
+                      <td className="py-3 px-3.5 whitespace-nowrap">
+                        <IncidentPriorityBadge priority={req.priority} />
+                      </td>
+                      <td className="py-3 px-3.5 whitespace-nowrap">
+                        {slaConfig ? (
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${slaConfig.badge}`}>
+                            <span className={`w-1.5 h-1.5 rounded-full ${slaConfig.dot}`} />
+                            {slaConfig.label}
                           </span>
-                        ) : req.approval_status === "APPROVED" ? (
-                          <span id={`approval-badge-${req.id}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 text-[10px] font-semibold">
-                            <CheckCircle2 className="w-3 h-3 text-emerald-600" /> Approved
-                          </span>
-                        ) : req.approval_status === "REJECTED" ? (
-                          <span id={`approval-badge-${req.id}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-[10px] font-semibold">
-                            <XCircle className="w-3 h-3 text-rose-600" /> Rejected
-                          </span>
-                        ) : null
-                      ) : null}
-                      {slaConfig && (
-                        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[10px] font-semibold border ${slaConfig.badge}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${slaConfig.dot}`} />
-                          {slaConfig.label}
-                        </span>
-                      )}
-                    </div>
-
-                    <h2 className="text-sm md:text-base font-bold text-[#0E1726] group-hover:text-[#6D28D9] transition truncate">
-                      {req.title}
-                    </h2>
-
-                    {req.description && (
-                      <p className="text-xs text-[#6B7488] line-clamp-2 max-w-2xl leading-relaxed">
-                        {req.description}
-                      </p>
-                    )}
-
-                    {req.rejection_reason && (
-                      <div id={`rejection-reason-${req.id}`} className="text-[11px] text-rose-700 bg-rose-50/90 border border-rose-200 rounded-xl px-3 py-1.5 font-medium max-w-2xl flex items-center gap-1.5">
-                        <XCircle className="w-3.5 h-3.5 text-rose-600 shrink-0" />
-                        <span><strong>Rejection Reason:</strong> {req.rejection_reason}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Right Column: Metadata Badges (Requester, Service, Team, Assignee, Updated) */}
-                  <div className="flex flex-wrap lg:flex-col lg:items-end gap-x-4 gap-y-1.5 text-xs text-[#6B7488] shrink-0 border-t lg:border-t-0 pt-3 lg:pt-0 border-[#F1F3F9]">
-                    {/* Requester */}
-                    <div className="inline-flex items-center gap-1.5 text-[11px]" title="Requester">
-                      <User className="w-3.5 h-3.5 text-[#8C95A8]" />
-                      <span className="text-[#0E1726] font-medium">{req.requester_email || "Requester"}</span>
-                    </div>
-
-                    {/* Service */}
-                    {req.service_name && (
-                      <div className="inline-flex items-center gap-1.5 text-[11px]" title="Affected Service">
-                        <Layers className="w-3.5 h-3.5 text-[#8C95A8]" />
-                        <span>{req.service_name}</span>
-                      </div>
-                    )}
-
-                    {/* Assigned Team & Assignee */}
-                    <div className="inline-flex items-center gap-1.5 text-[11px]" title="Assignment">
-                      <Users className="w-3.5 h-3.5 text-[#8C95A8]" />
-                      <span>{req.assignment_group || "Unassigned Team"}</span>
-                      {req.assignee_email && (
-                        <span className="text-[#0E1726] font-medium">({req.assignee_email})</span>
-                      )}
-                    </div>
-
-                    {/* Updated Time */}
-                    <div className="inline-flex items-center gap-1 text-[11px] text-[#8C95A8]">
-                      <Clock className="w-3 h-3" />
-                      <span>Updated {formatDateTime(req.updated_at)}</span>
-                    </div>
-                  </div>
-                </div>
-              </Link>
-            );
-          })}
+                        ) : (
+                          <span className="text-[#8C95A8] text-[11px]">—</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-3.5 text-[#475069] whitespace-nowrap max-w-[110px]">
+                        <div className="flex items-center gap-1 text-[11px] max-w-[110px] truncate" title={req.requester_email || undefined}>
+                          <User className="w-3 h-3 text-[#8C95A8] shrink-0" />
+                          <span className="truncate">{req.requester_email || "Requester"}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-3.5 text-[#475069] whitespace-nowrap max-w-[115px]">
+                        <div className="text-[11px] max-w-[115px]">
+                          <span className="font-medium text-[#0E1726] truncate block" title={req.assignment_group || undefined}>{req.assignment_group || "Unassigned"}</span>
+                          {req.assignee_email && (
+                            <p className="text-[10px] text-[#6B7488] truncate max-w-[115px]" title={req.assignee_email}>({req.assignee_email})</p>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 px-3.5 whitespace-nowrap text-[#6B7488]">
+                        <CompactDateCell createdAt={req.created_at} updatedAt={req.updated_at} />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

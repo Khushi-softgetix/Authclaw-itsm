@@ -8,8 +8,15 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from app.db.models import ITSMBusinessCalendar, ITSMSLAPolicy, ITSMTicket
 
 
-def _utc(value: datetime | None) -> datetime | None:
+def _utc(value: Any) -> datetime | None:
     if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            value = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return None
+    if not isinstance(value, datetime):
         return None
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
@@ -169,27 +176,45 @@ def compute_sla_details(ticket: Any, now: datetime | None = None) -> dict[str, A
     """Authoritative computation of active SLA deadline, remaining seconds,
     overdue seconds, elapsed percentage, and 3-state risk status (GREEN/AMBER/RED).
 
+    When a ticket is RESOLVED or CLOSED, the SLA clock is stopped and frozen at the
+    actual completion timestamp (resolved_at or closed_at).
+
     Risk States:
     - NO_SLA: No SLA policy or deadline applied
     - PAUSED: Ticket SLA is currently paused
-    - WITHIN_SLA (GREEN): Less than 75% of allowed SLA time elapsed
+    - WITHIN_SLA (GREEN): Less than 75% of allowed SLA time elapsed, or completed within SLA
     - AT_RISK (AMBER): 75% or more of allowed SLA time elapsed, but not breached
     - BREACHED (RED): SLA deadline has passed
     """
     now = _utc(now or datetime.now(timezone.utc))
 
-    # Determine if response or resolution SLA is the active deadline
-    response_active = bool(
-        getattr(ticket, "sla_response_due_at", None)
-        and not getattr(ticket, "sla_response_met_at", None)
-    )
+    status_raw = getattr(ticket, "status", None)
+    status_str = str(status_raw).upper().strip() if status_raw else ""
+    resolved_at = _utc(getattr(ticket, "resolved_at", None) or getattr(ticket, "sla_resolution_met_at", None))
+    closed_at = _utc(getattr(ticket, "closed_at", None))
+
+    is_resolved = bool(resolved_at or status_str == "RESOLVED")
+    is_closed = bool(closed_at or status_str == "CLOSED")
+    is_completed = is_resolved or is_closed
+
+    # Determine stop time for completed tickets
+    if is_completed:
+        stop_time = resolved_at or closed_at or _utc(getattr(ticket, "updated_at", None)) or now
+    else:
+        stop_time = None
+
+    # Determine active deadline and target stage
+    response_met_at = _utc(getattr(ticket, "sla_response_met_at", None))
+    response_due_at = _utc(getattr(ticket, "sla_response_due_at", None))
+    resolution_due_at = _utc(getattr(ticket, "sla_resolution_due_at", None))
+
+    # Response SLA is active only when ticket is not completed and response target has not been met
+    response_active = bool(response_due_at and not response_met_at and not is_completed)
     if response_active:
-        due = _utc(ticket.sla_response_due_at)
+        due = response_due_at
         target_field = "response_target_minutes"
     else:
-        due = _utc(getattr(ticket, "sla_resolution_due_at", None)) or (
-            _utc(getattr(ticket, "sla_response_due_at", None))
-        )
+        due = resolution_due_at or response_due_at
         target_field = "resolution_target_minutes"
 
     started_at = _utc(getattr(ticket, "created_at", None)) or now
@@ -205,18 +230,29 @@ def compute_sla_details(ticket: Any, now: datetime | None = None) -> dict[str, A
             "total_target_seconds": None,
             "elapsed_fraction": None,
             "is_paused": False,
+            "is_completed": is_completed,
+            "is_resolved": is_resolved,
+            "is_closed": is_closed,
+            "completed_at": stop_time,
         }
 
     policy = getattr(ticket, "sla_policy", None)
     calendar = getattr(policy, "calendar", None) if policy else None
 
-    # Handle pause state
+    # Handle pause state (a completed ticket is not actively paused)
     is_paused = bool(
-        getattr(ticket, "sla_paused_at", None)
-        or getattr(ticket, "sla_status", None) == "PAUSED"
+        not is_completed
+        and (getattr(ticket, "sla_paused_at", None) or getattr(ticket, "sla_status", None) == "PAUSED")
     )
     paused_at = _utc(getattr(ticket, "sla_paused_at", None))
-    effective_now = paused_at if (is_paused and paused_at) else now
+
+    # Authoritative effective time instant
+    if is_completed:
+        effective_now = stop_time
+    elif is_paused and paused_at:
+        effective_now = paused_at
+    else:
+        effective_now = now
 
     # Authoritative remaining business seconds between effective current time and deadline
     remaining = business_seconds_between(effective_now, due, calendar)
@@ -247,18 +283,21 @@ def compute_sla_details(ticket: Any, now: datetime | None = None) -> dict[str, A
     else:
         total_target_seconds = max(remaining, 1.0)
 
-
-    # Calculate elapsed duration and 75% rule
-    if effective_now > due or remaining < 0:
-        # RED: SLA deadline has passed
+    # Check breach condition: deadline passed OR already escalated as breach
+    breach_escalated = bool(getattr(ticket, "sla_breach_escalated_at", None))
+    if effective_now > due or remaining < 0 or breach_escalated:
         status = "BREACHED"
         elapsed_fraction = 1.0 + (abs(remaining) / total_target_seconds if total_target_seconds > 0 else 0.0)
         elapsed_seconds = total_target_seconds + abs(remaining)
     else:
-        elapsed_seconds = max(0.0, total_target_seconds - remaining)
-        elapsed_fraction = elapsed_seconds / total_target_seconds if total_target_seconds > 0 else 0.0
+        # Calculate actual business elapsed duration
+        actual_work_elapsed = business_seconds_between(started_at, effective_now, calendar) - accum_pause
+        elapsed_seconds = max(0.0, actual_work_elapsed if actual_work_elapsed >= 0 else (total_target_seconds - remaining))
+        elapsed_fraction = min(1.0, elapsed_seconds / total_target_seconds if total_target_seconds > 0 else 0.0)
 
-        if is_paused:
+        if is_completed:
+            status = "WITHIN_SLA"
+        elif is_paused:
             status = "PAUSED"
         elif elapsed_fraction >= 0.75:
             # AMBER: 75% or more elapsed, but not breached
@@ -277,6 +316,10 @@ def compute_sla_details(ticket: Any, now: datetime | None = None) -> dict[str, A
         "total_target_seconds": total_target_seconds,
         "elapsed_fraction": elapsed_fraction,
         "is_paused": is_paused,
+        "is_completed": is_completed,
+        "is_resolved": is_resolved,
+        "is_closed": is_closed,
+        "completed_at": stop_time,
     }
 
 

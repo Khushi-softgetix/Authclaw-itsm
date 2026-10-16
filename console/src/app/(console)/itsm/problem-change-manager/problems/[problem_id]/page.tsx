@@ -6,7 +6,10 @@ import { useParams } from "next/navigation";
 import {
   AlertCircle,
   AlertTriangle,
+  Archive,
   ArrowLeft,
+  Calendar,
+  Check,
   CheckCircle2,
   Clock,
   ExternalLink,
@@ -21,7 +24,9 @@ import {
   RefreshCw,
   Save,
   Search,
+  Send,
   ShieldAlert,
+  ShieldCheck,
   Sparkles,
   Ticket,
   Trash2,
@@ -29,9 +34,18 @@ import {
   User,
   Users,
   X,
+  XCircle,
 } from "lucide-react";
 import { formatDateTime } from "@/lib/itsm-format";
-import { ChangeSummary, ProblemActivity, ProblemDetail } from "@/lib/itsm-types";
+import {
+  ChangeSummary,
+  ProblemActivity,
+  ProblemDetail,
+  ProblemInvestigationPayload,
+  PublishWorkaroundRequest,
+  RetireWorkaroundRequest,
+  WorkaroundGovernanceResponse,
+} from "@/lib/itsm-types";
 import IncidentPriorityBadge from "@/components/itsm/incident-priority-badge";
 import IncidentStatusBadge from "@/components/itsm/incident-status-badge";
 
@@ -100,6 +114,9 @@ export default function ProblemDetailPage() {
   const [investigationStatus, setInvestigationStatus] = useState<string>("OPEN");
   const [rootCause, setRootCause] = useState<string>("");
   const [workaround, setWorkaround] = useState<string>("");
+  const [symptoms, setSymptoms] = useState<string>("");
+  const [workaroundExpiresAt, setWorkaroundExpiresAt] = useState<string>("");
+  const [reviewDueAt, setReviewDueAt] = useState<string>("");
   const [knownError, setKnownError] = useState<boolean>(false);
   const [permanentSolution, setPermanentSolution] = useState<string>("");
   const [rcaDocumentUrl, setRcaDocumentUrl] = useState<string>("");
@@ -108,6 +125,21 @@ export default function ProblemDetailPage() {
   const [saving, setSaving] = useState<boolean>(false);
   const [saveSuccess, setSaveSuccess] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+
+  // Publish Workaround modal state
+  const [publishModalOpen, setPublishModalOpen] = useState<boolean>(false);
+  const [publishReviewDueAt, setPublishReviewDueAt] = useState<string>("");
+  const [publishExpiresAt, setPublishExpiresAt] = useState<string>("");
+  const [publishSymptoms, setPublishSymptoms] = useState<string>("");
+  const [publishNotes, setPublishNotes] = useState<string>("");
+  const [publishSubmitting, setPublishSubmitting] = useState<boolean>(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
+
+  // Retire Workaround modal state
+  const [retireModalOpen, setRetireModalOpen] = useState<boolean>(false);
+  const [retireReason, setRetireReason] = useState<string>("");
+  const [retireSubmitting, setRetireSubmitting] = useState<boolean>(false);
+  const [retireError, setRetireError] = useState<string | null>(null);
 
   // Resolve modal state
   const [resolveModalOpen, setResolveModalOpen] = useState<boolean>(false);
@@ -214,6 +246,9 @@ export default function ProblemDetailPage() {
       setInvestigationStatus(data.status || "OPEN");
       setRootCause(data.problem_details?.root_cause_summary || "");
       setWorkaround(data.problem_details?.workaround_summary || "");
+      setSymptoms(data.problem_details?.symptoms || "");
+      setWorkaroundExpiresAt(data.problem_details?.workaround_expires_at ? data.problem_details.workaround_expires_at.slice(0, 16) : "");
+      setReviewDueAt(data.problem_details?.review_due_at ? data.problem_details.review_due_at.slice(0, 16) : "");
       setKnownError(Boolean(data.problem_details?.known_error));
       setPermanentSolution(data.problem_details?.permanent_solution || "");
       setRcaDocumentUrl(data.problem_details?.rca_document_url || "");
@@ -368,10 +403,13 @@ export default function ProblemDetailPage() {
       setSaveSuccess(null);
       setSaveError(null);
 
-      const payload = {
+      const payload: ProblemInvestigationPayload = {
         status: investigationStatus,
         root_cause_summary: rootCause,
         workaround_summary: workaround,
+        symptoms: symptoms.trim() || null,
+        workaround_expires_at: workaroundExpiresAt ? new Date(workaroundExpiresAt).toISOString() : null,
+        review_due_at: reviewDueAt ? new Date(reviewDueAt).toISOString() : null,
         known_error: knownError,
         permanent_solution: permanentSolution,
         rca_document_url: rcaDocumentUrl || null,
@@ -402,6 +440,116 @@ export default function ProblemDetailPage() {
       setSaveError(err?.message || "Failed to save investigation");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const openPublishModal = () => {
+    if (!workaround.trim()) {
+      setSaveError("Workaround steps must be documented before publishing.");
+      return;
+    }
+    setPublishError(null);
+    setPublishSymptoms(symptoms);
+    setPublishReviewDueAt(reviewDueAt);
+    setPublishExpiresAt(workaroundExpiresAt);
+    setPublishNotes("");
+    setPublishModalOpen(true);
+  };
+
+  const handlePublishWorkaround = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!problemId) return;
+    if (!workaround.trim()) {
+      setPublishError("Workaround steps cannot be empty.");
+      return;
+    }
+
+    if (publishExpiresAt) {
+      const expDate = new Date(publishExpiresAt).getTime();
+      if (expDate <= Date.now()) {
+        setPublishError("Workaround expiration date must be in the future.");
+        return;
+      }
+    }
+
+    setPublishSubmitting(true);
+    setPublishError(null);
+    try {
+      const payload: PublishWorkaroundRequest = {
+        symptoms: publishSymptoms.trim() || undefined,
+        workaround_expires_at: publishExpiresAt ? new Date(publishExpiresAt).toISOString() : undefined,
+        review_due_at: publishReviewDueAt ? new Date(publishReviewDueAt).toISOString() : undefined,
+        notes: publishNotes.trim() || undefined,
+      };
+
+      const res = await fetch(`/api/itsm/problems/${problemId}/publish-workaround`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to publish workaround");
+      }
+
+      const data: WorkaroundGovernanceResponse = await res.json();
+      setPublishModalOpen(false);
+      setSaveSuccess(data.message || "Workaround published and approved for incident triage.");
+      setKnownError(true);
+      if (publishSymptoms.trim()) setSymptoms(publishSymptoms.trim());
+      if (publishExpiresAt) setWorkaroundExpiresAt(publishExpiresAt);
+      if (publishReviewDueAt) setReviewDueAt(publishReviewDueAt);
+
+      await fetchProblem();
+      await fetchActivities();
+      setTimeout(() => setSaveSuccess(null), 5000);
+    } catch (err: unknown) {
+      setPublishError(err instanceof Error ? err.message : "Error publishing workaround");
+    } finally {
+      setPublishSubmitting(false);
+    }
+  };
+
+  const openRetireModal = () => {
+    setRetireError(null);
+    setRetireReason("");
+    setRetireModalOpen(true);
+  };
+
+  const handleRetireWorkaround = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!problemId) return;
+
+    setRetireSubmitting(true);
+    setRetireError(null);
+    try {
+      const payload: RetireWorkaroundRequest = {
+        reason: retireReason.trim() || undefined,
+      };
+
+      const res = await fetch(`/api/itsm/problems/${problemId}/retire-workaround`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "Failed to retire workaround");
+      }
+
+      const data: WorkaroundGovernanceResponse = await res.json();
+      setRetireModalOpen(false);
+      setSaveSuccess(data.message || "Workaround retired successfully. Problem ticket remains open.");
+
+      await fetchProblem();
+      await fetchActivities();
+      setTimeout(() => setSaveSuccess(null), 5000);
+    } catch (err: unknown) {
+      setRetireError(err instanceof Error ? err.message : "Error retiring workaround");
+    } finally {
+      setRetireSubmitting(false);
     }
   };
 
@@ -645,20 +793,130 @@ export default function ProblemDetailPage() {
           >
             <div id="pcm-problem-details-section" className="hidden" />
 
-            <div className="flex items-center justify-between border-b border-[#E6E9F0] pb-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#E6E9F0] pb-3">
               <div className="flex items-center gap-2">
                 <ShieldAlert className="w-4 h-4 text-[#6D28D9]" />
                 <h2 className="text-sm font-bold text-[#0E1726]">
                   Investigation &amp; Root Cause
                 </h2>
               </div>
-              {knownError && (
+              <div className="flex items-center gap-2 flex-wrap">
                 <span
-                  className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-[#FEF3C7] text-[#92400E] text-xs font-semibold border border-[#FDE68A]"
-                  id="known-error-badge"
+                  id="workaround-lifecycle-status-badge"
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold border ${
+                    (problem.problem_details?.workaround_status || "DRAFT") === "APPROVED"
+                      ? "bg-emerald-50 text-emerald-800 border-emerald-200"
+                      : (problem.problem_details?.workaround_status || "DRAFT") === "RETIRED"
+                      ? "bg-slate-100 text-slate-700 border-slate-300"
+                      : "bg-amber-50 text-amber-800 border-amber-200"
+                  }`}
                 >
-                  Known Error (KEDB)
+                  {(problem.problem_details?.workaround_status || "DRAFT") === "APPROVED" ? (
+                    <>
+                      <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>APPROVED — Active in Triage</span>
+                    </>
+                  ) : (problem.problem_details?.workaround_status || "DRAFT") === "RETIRED" ? (
+                    <>
+                      <XCircle className="w-3.5 h-3.5 text-slate-500" />
+                      <span>RETIRED — Inactive</span>
+                    </>
+                  ) : (
+                    <>
+                      <Clock className="w-3.5 h-3.5 text-amber-600" />
+                      <span>DRAFT — Internal Only</span>
+                    </>
+                  )}
                 </span>
+                {knownError && (
+                  <span
+                    className="inline-flex items-center px-2.5 py-0.5 rounded-full bg-[#FEF3C7] text-[#92400E] text-xs font-semibold border border-[#FDE68A]"
+                    id="known-error-badge"
+                  >
+                    Known Error (KEDB)
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Workaround Governance Box */}
+            <div
+              className="p-4 rounded-xl border border-[#EDE9FE] bg-[#FAF8FF] space-y-3"
+              id="workaround-governance-panel"
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div className="space-y-0.5">
+                  <h3 className="text-xs font-bold text-[#6D28D9] flex items-center gap-1.5">
+                    <ShieldCheck className="w-4 h-4 text-[#6D28D9]" />
+                    <span>Known Error Workaround Governance</span>
+                  </h3>
+                  <p className="text-[11px] text-[#6B7488]">
+                    {(problem.problem_details?.workaround_status || "DRAFT") === "APPROVED"
+                      ? "This workaround is approved and actively suggested to Service Agents during Incident Triage."
+                      : (problem.problem_details?.workaround_status || "DRAFT") === "RETIRED"
+                      ? "This workaround has been retired. It is excluded from incident triage and no longer suggested to agents."
+                      : "Draft workarounds are internal to Problem Management and strictly hidden from Service Agents."}
+                  </p>
+                </div>
+
+                {/* Publish & Retire Actions */}
+                {problem.status !== "CLOSED" && (
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      type="button"
+                      id="publish-workaround-button"
+                      onClick={openPublishModal}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#6D28D9] hover:bg-[#5B21B6] text-white text-xs font-semibold shadow-xs transition"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                      <span>
+                        {(problem.problem_details?.workaround_status || "DRAFT") === "APPROVED"
+                          ? "Update Publication"
+                          : "Publish & Approve"}
+                      </span>
+                    </button>
+                    {(problem.problem_details?.workaround_status || "DRAFT") === "APPROVED" && (
+                      <button
+                        type="button"
+                        id="retire-workaround-button"
+                        onClick={openRetireModal}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-white border border-red-300 hover:bg-red-50 text-red-700 text-xs font-semibold transition"
+                      >
+                        <Archive className="w-3.5 h-3.5" />
+                        <span>Retire Workaround</span>
+                      </button>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {(problem.problem_details?.workaround_status || "DRAFT") === "APPROVED" && (
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 pt-2 border-t border-[#DDD6FE] text-xs">
+                  <div className="bg-white p-2.5 rounded-lg border border-[#EDE9FE]">
+                    <span className="text-[10px] uppercase font-bold text-[#6B7488] block">Approved At</span>
+                    <span className="font-semibold text-[#0E1726]" id="workaround-approved-at-display">
+                      {problem.problem_details?.workaround_approved_at
+                        ? formatDateTime(problem.problem_details.workaround_approved_at)
+                        : "—"}
+                    </span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-[#EDE9FE]">
+                    <span className="text-[10px] uppercase font-bold text-[#6B7488] block">Next Review Due</span>
+                    <span className="font-semibold text-[#0E1726]" id="review-due-at-display">
+                      {problem.problem_details?.review_due_at
+                        ? formatDateTime(problem.problem_details.review_due_at)
+                        : "None scheduled"}
+                    </span>
+                  </div>
+                  <div className="bg-white p-2.5 rounded-lg border border-[#EDE9FE]">
+                    <span className="text-[10px] uppercase font-bold text-[#6B7488] block">Workaround Expiry</span>
+                    <span className="font-semibold text-[#0E1726]" id="workaround-expires-at-display">
+                      {problem.problem_details?.workaround_expires_at
+                        ? formatDateTime(problem.problem_details.workaround_expires_at)
+                        : "No expiry"}
+                    </span>
+                  </div>
+                </div>
               )}
             </div>
 
@@ -699,6 +957,7 @@ export default function ProblemDetailPage() {
                     disabled={problem.status === "CLOSED"}
                     className="w-full px-3 py-2 rounded-xl border border-[#E6E9F0] bg-[#F8FAFC] text-[#0E1726] text-xs font-medium focus:outline-none focus:ring-2 focus:ring-[#6D28D9]/20 focus:border-[#6D28D9] transition disabled:opacity-60"
                   >
+                    <option value="NEW">NEW — Intake / Unassigned</option>
                     <option value="OPEN">OPEN — Investigation Pending</option>
                     <option value="IN_PROGRESS">IN_PROGRESS — Actively Investigating</option>
                     <option value="RESOLVED">RESOLVED — Root Cause / Solution Found</option>
@@ -726,6 +985,25 @@ export default function ProblemDetailPage() {
                     </div>
                   </label>
                 </div>
+              </div>
+
+              {/* Symptoms Textarea */}
+              <div className="space-y-1.5">
+                <label
+                  htmlFor="symptoms-input"
+                  className="block font-semibold text-[#0E1726]"
+                >
+                  Reported Symptoms &amp; Error Pattern
+                </label>
+                <textarea
+                  id="symptoms-input"
+                  rows={2}
+                  value={symptoms}
+                  onChange={(e) => setSymptoms(e.target.value)}
+                  disabled={problem.status === "CLOSED"}
+                  placeholder="Describe error patterns, observable failure symptoms, or error codes across services/CIs..."
+                  className="w-full px-3 py-2 rounded-xl border border-[#E6E9F0] bg-[#F8FAFC] text-[#0E1726] text-xs placeholder:text-[#94A3B8] focus:outline-none focus:ring-2 focus:ring-[#6D28D9]/20 focus:border-[#6D28D9] transition resize-y disabled:opacity-60"
+                />
               </div>
 
               {/* Root Cause Textarea */}
@@ -764,6 +1042,43 @@ export default function ProblemDetailPage() {
                   placeholder="Document immediate workaround steps for service agents to mitigate incidents..."
                   className="w-full px-3 py-2 rounded-xl border border-[#E6E9F0] bg-[#F8FAFC] text-[#0E1726] text-xs placeholder:text-[#94A3B8] focus:outline-none focus:ring-2 focus:ring-[#6D28D9]/20 focus:border-[#6D28D9] transition resize-y disabled:opacity-60"
                 />
+              </div>
+
+              {/* Review Deadline & Expiration Dates */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="review-due-at-input"
+                    className="block font-semibold text-[#0E1726]"
+                  >
+                    Review Deadline (Optional)
+                  </label>
+                  <input
+                    type="datetime-local"
+                    id="review-due-at-input"
+                    value={reviewDueAt}
+                    onChange={(e) => setReviewDueAt(e.target.value)}
+                    disabled={problem.status === "CLOSED"}
+                    className="w-full px-3 py-2 rounded-xl border border-[#E6E9F0] bg-[#F8FAFC] text-[#0E1726] text-xs focus:outline-none focus:ring-2 focus:ring-[#6D28D9]/20 focus:border-[#6D28D9] transition disabled:opacity-60"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label
+                    htmlFor="workaround-expires-at-input"
+                    className="block font-semibold text-[#0E1726]"
+                  >
+                    Workaround Expiration Date (Optional)
+                  </label>
+                  <input
+                    type="datetime-local"
+                    id="workaround-expires-at-input"
+                    value={workaroundExpiresAt}
+                    onChange={(e) => setWorkaroundExpiresAt(e.target.value)}
+                    disabled={problem.status === "CLOSED"}
+                    className="w-full px-3 py-2 rounded-xl border border-[#E6E9F0] bg-[#F8FAFC] text-[#0E1726] text-xs focus:outline-none focus:ring-2 focus:ring-[#6D28D9]/20 focus:border-[#6D28D9] transition disabled:opacity-60"
+                  />
+                </div>
               </div>
 
               {/* Permanent Solution Textarea */}
@@ -1316,6 +1631,22 @@ export default function ProblemDetailPage() {
                 ) : (
                   <span className="text-[#64748B] text-[11px]">Under Investigation</span>
                 )}
+              </div>
+
+              <div className="flex items-start justify-between gap-2">
+                <span className="text-[#6B7488]">Workaround Status</span>
+                <span
+                  id="sidebar-workaround-status"
+                  className={`font-semibold ${
+                    (problem.problem_details?.workaround_status || "DRAFT") === "APPROVED"
+                      ? "text-emerald-700"
+                      : (problem.problem_details?.workaround_status || "DRAFT") === "RETIRED"
+                      ? "text-slate-600"
+                      : "text-amber-700"
+                  }`}
+                >
+                  {problem.problem_details?.workaround_status || "DRAFT"}
+                </span>
               </div>
 
               <div className="flex items-start justify-between gap-2">
@@ -1974,6 +2305,227 @@ export default function ProblemDetailPage() {
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Publish Workaround Modal */}
+      {publishModalOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-xs"
+          id="publish-workaround-modal"
+        >
+          <div className="bg-white rounded-2xl border border-[#E6E9F0] shadow-xl max-w-lg w-full p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-[#E6E9F0] pb-3">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-5 h-5 text-[#6D28D9]" />
+                <h3 className="text-base font-bold text-[#0E1726]">
+                  Publish &amp; Approve Workaround
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setPublishModalOpen(false)}
+                className="text-[#94A3B8] hover:text-[#0E1726] transition p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <p className="text-xs text-[#475569] leading-relaxed">
+              Approving and publishing this workaround allows Service Agents to immediately find, review, and apply it during incident triage.
+            </p>
+
+            {publishError && (
+              <div
+                className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-800 text-xs flex items-center gap-2"
+                id="publish-error"
+              >
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                <span>{publishError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handlePublishWorkaround} className="space-y-4 text-xs">
+              <div className="space-y-1.5">
+                <label htmlFor="publish-symptoms-input" className="block font-semibold text-[#0E1726]">
+                  Symptoms &amp; Error Pattern (Optional)
+                </label>
+                <textarea
+                  id="publish-symptoms-input"
+                  rows={2}
+                  value={publishSymptoms}
+                  onChange={(e) => setPublishSymptoms(e.target.value)}
+                  placeholder="Key symptoms, error codes, or patterns agents will search by..."
+                  className="w-full px-3 py-2 rounded-xl border border-[#E6E9F0] bg-[#F8FAFC] text-[#0E1726] text-xs focus:outline-none focus:ring-2 focus:ring-[#6D28D9]/20 focus:border-[#6D28D9] transition resize-y"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="space-y-1.5">
+                  <label htmlFor="publish-review-due-at-input" className="block font-semibold text-[#0E1726]">
+                    Next Review Date (Optional)
+                  </label>
+                  <input
+                    type="datetime-local"
+                    id="publish-review-due-at-input"
+                    value={publishReviewDueAt}
+                    onChange={(e) => setPublishReviewDueAt(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-[#E6E9F0] bg-[#F8FAFC] text-[#0E1726] text-xs focus:outline-none focus:ring-2 focus:ring-[#6D28D9]/20 focus:border-[#6D28D9] transition"
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <label htmlFor="publish-expires-at-input" className="block font-semibold text-[#0E1726]">
+                    Expiry Date (Optional)
+                  </label>
+                  <input
+                    type="datetime-local"
+                    id="publish-expires-at-input"
+                    value={publishExpiresAt}
+                    onChange={(e) => setPublishExpiresAt(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-[#E6E9F0] bg-[#F8FAFC] text-[#0E1726] text-xs focus:outline-none focus:ring-2 focus:ring-[#6D28D9]/20 focus:border-[#6D28D9] transition"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <label htmlFor="publish-notes-input" className="block font-semibold text-[#0E1726]">
+                  Publication Audit Note (Optional)
+                </label>
+                <textarea
+                  id="publish-notes-input"
+                  rows={2}
+                  value={publishNotes}
+                  onChange={(e) => setPublishNotes(e.target.value)}
+                  placeholder="Notes recorded into immutable audit log and problem activity..."
+                  className="w-full px-3 py-2 rounded-xl border border-[#E6E9F0] bg-[#F8FAFC] text-[#0E1726] text-xs focus:outline-none focus:ring-2 focus:ring-[#6D28D9]/20 focus:border-[#6D28D9] transition resize-y"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#E6E9F0]">
+                <button
+                  type="button"
+                  id="cancel-publish-workaround-button"
+                  onClick={() => setPublishModalOpen(false)}
+                  disabled={publishSubmitting}
+                  className="px-4 py-2 rounded-xl border border-[#CBD5E1] bg-white text-[#475569] hover:bg-[#F8FAFC] font-semibold text-xs transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  id="submit-publish-workaround-button"
+                  disabled={publishSubmitting}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-[#6D28D9] hover:bg-[#5B21B6] disabled:opacity-50 text-white font-semibold text-xs shadow-sm transition"
+                >
+                  {publishSubmitting ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Publishing...</span>
+                    </>
+                  ) : (
+                    <>
+                      <ShieldCheck className="w-3.5 h-3.5" />
+                      <span>Approve &amp; Publish</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Retire Workaround Modal */}
+      {retireModalOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 backdrop-blur-xs"
+          id="retire-workaround-modal"
+        >
+          <div className="bg-white rounded-2xl border border-[#E6E9F0] shadow-xl max-w-lg w-full p-6 space-y-5 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between border-b border-[#E6E9F0] pb-3">
+              <div className="flex items-center gap-2">
+                <Archive className="w-5 h-5 text-amber-600" />
+                <h3 className="text-base font-bold text-[#0E1726]">
+                  Retire Workaround
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setRetireModalOpen(false)}
+                className="text-[#94A3B8] hover:text-[#0E1726] transition p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 text-xs space-y-1">
+              <span className="font-bold flex items-center gap-1">
+                <AlertTriangle className="w-4 h-4 text-amber-600" />
+                Governance Notice
+              </span>
+              <p className="leading-relaxed">
+                Retiring this workaround immediately hides it from Service Agent incident triage lookups.
+                <strong> Retiring a workaround does NOT resolve or close this Problem ticket.</strong>
+              </p>
+            </div>
+
+            {retireError && (
+              <div
+                className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-800 text-xs flex items-center gap-2"
+                id="retire-error"
+              >
+                <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                <span>{retireError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleRetireWorkaround} className="space-y-4 text-xs">
+              <div className="space-y-1.5">
+                <label htmlFor="retire-reason-input" className="block font-semibold text-[#0E1726]">
+                  Retirement Reason (Optional)
+                </label>
+                <textarea
+                  id="retire-reason-input"
+                  rows={3}
+                  value={retireReason}
+                  onChange={(e) => setRetireReason(e.target.value)}
+                  placeholder="Explain why this workaround is being retired (e.g., permanent patch deployed, workaround causing secondary defects)..."
+                  className="w-full px-3 py-2 rounded-xl border border-[#E6E9F0] bg-[#F8FAFC] text-[#0E1726] text-xs focus:outline-none focus:ring-2 focus:ring-red-500/20 focus:border-red-500 transition resize-y"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#E6E9F0]">
+                <button
+                  type="button"
+                  id="cancel-retire-workaround-button"
+                  onClick={() => setRetireModalOpen(false)}
+                  disabled={retireSubmitting}
+                  className="px-4 py-2 rounded-xl border border-[#CBD5E1] bg-white text-[#475569] hover:bg-[#F8FAFC] font-semibold text-xs transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  id="submit-retire-workaround-button"
+                  disabled={retireSubmitting}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-semibold text-xs shadow-sm transition"
+                >
+                  {retireSubmitting ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Retiring...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Archive className="w-3.5 h-3.5" />
+                      <span>Confirm Retirement</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

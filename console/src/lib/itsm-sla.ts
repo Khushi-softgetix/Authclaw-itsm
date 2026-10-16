@@ -25,6 +25,8 @@ export interface SlaTicketLike {
   sla_breach_escalated_at?: string | null;
   sla_started_at?: string | null;
   created_at?: string | null;
+  resolved_at?: string | null;
+  closed_at?: string | null;
 }
 
 export interface SlaCalculationResult {
@@ -32,6 +34,12 @@ export interface SlaCalculationResult {
   hasSla: boolean;
   isPaused: boolean;
   isBreached: boolean;
+  isCompleted: boolean;
+  isResolved: boolean;
+  isClosed: boolean;
+  completedAt: Date | null;
+  resolvedDurationSeconds: number; // elapsed seconds until resolution/closure
+  formattedResolvedDuration: string; // e.g. "15m 30s"
   dueAt: Date | null;
   startedAt: Date | null;
   remainingSeconds: number; // 0 if breached
@@ -41,7 +49,7 @@ export interface SlaCalculationResult {
   formattedRemaining: string; // e.g. "01h 24m remaining" or "20m remaining"
   formattedShort: string; // e.g. "01h 24m", "20m", "12m overdue"
   formattedOverdue: string; // e.g. "Breached: 12m overdue"
-  stateLabel: string; // "SLA on track", "Warning: SLA breach approaching", "SLA breached"
+  stateLabel: string; // "SLA on track", "Warning: SLA breach approaching", "SLA breached", "SLA Met"
   colorTheme: {
     badge: string;
     dot: string;
@@ -84,12 +92,19 @@ export function formatSlaDurationDetailed(totalSeconds: number): string {
   if (hours > 0) {
     const hStr = hours < 10 ? `0${hours}` : `${hours}`;
     const mStr = minutes < 10 ? `0${minutes}` : `${minutes}`;
+    if (remSecs > 0) {
+      const sStr = remSecs < 10 ? `0${remSecs}` : `${remSecs}`;
+      return `${hStr}h ${mStr}m ${sStr}s`;
+    }
     return `${hStr}h ${mStr}m`;
   }
   if (minutes > 0) {
     const mStr = minutes < 10 ? `0${minutes}` : `${minutes}`;
-    const sStr = remSecs < 10 ? `0${remSecs}` : `${remSecs}`;
-    return `${mStr}m ${sStr}s`;
+    if (remSecs > 0) {
+      const sStr = remSecs < 10 ? `0${remSecs}` : `${remSecs}`;
+      return `${mStr}m ${sStr}s`;
+    }
+    return `${mStr}m`;
   }
   return `${remSecs}s`;
 }
@@ -122,15 +137,24 @@ export function calculateSlaStatus(
     return createEmptyResult();
   }
 
+  // Check if ticket is resolved or closed
+  const resolvedMs = parseTimestampMs(ticket.resolved_at || ticket.sla_resolution_met_at);
+  const closedMs = parseTimestampMs(ticket.closed_at);
+  const statusUpper = ticket.status ? String(ticket.status).toUpperCase().trim() : "";
+  const isResolved = Boolean(resolvedMs || statusUpper === "RESOLVED");
+  const isClosed = Boolean(closedMs || statusUpper === "CLOSED");
+  const isCompleted = isResolved || isClosed;
+  const completedAt = isCompleted ? (resolvedMs ? new Date(resolvedMs) : closedMs ? new Date(closedMs) : null) : null;
+
   // Determine active due date:
-  // If response SLA is defined and not yet met, it is the active deadline.
-  // Otherwise, resolution SLA is the active deadline.
+  // If completed, resolution SLA deadline is authoritative
+  // If response SLA is defined and not yet met, response SLA is active
   const responseDueMs = parseTimestampMs(ticket.sla_response_due_at);
   const responseMetMs = parseTimestampMs(ticket.sla_response_met_at);
   const resolutionDueMs = parseTimestampMs(ticket.sla_resolution_due_at);
   const explicitDueMs = parseTimestampMs(ticket.sla_due_at);
 
-  const responseActive = Boolean(responseDueMs && !responseMetMs);
+  const responseActive = Boolean(responseDueMs && !responseMetMs && !isCompleted);
   const activeDueMs = explicitDueMs || (responseActive ? responseDueMs : resolutionDueMs || responseDueMs);
 
   if (!activeDueMs) {
@@ -141,17 +165,30 @@ export function calculateSlaStatus(
   const startedMs = parseTimestampMs(ticket.sla_started_at || ticket.created_at) || activeDueMs - 4 * 3600 * 1000;
   const startedAt = new Date(startedMs);
 
-  // Check if ticket SLA is currently paused
+  // Check if ticket SLA is currently paused (a completed ticket is not actively paused)
   const pausedMs = parseTimestampMs(ticket.sla_paused_at);
   const isPaused = Boolean(
-    ticket.sla_status === "PAUSED" || (pausedMs !== null && !ticket.sla_resolution_met_at)
+    !isCompleted && (ticket.sla_status === "PAUSED" || (pausedMs !== null && !ticket.sla_resolution_met_at))
   );
 
+  // When completed, time stops at resolution or closure timestamp
   // When paused, effective time stops advancing at the pause timestamp
-  const effectiveNowMs = isPaused && pausedMs ? pausedMs : nowMs;
+  let effectiveNowMs: number;
+  if (isCompleted) {
+    effectiveNowMs = (resolvedMs || closedMs) ?? nowMs;
+  } else if (isPaused && pausedMs) {
+    effectiveNowMs = pausedMs;
+  } else {
+    effectiveNowMs = nowMs;
+  }
 
   const totalTargetMs = Math.max(activeDueMs - startedMs, 1000);
   const diffMs = activeDueMs - effectiveNowMs;
+  const elapsedMs = Math.max(0, effectiveNowMs - startedMs);
+  const resolvedDurationSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+  const formattedResolvedDuration = formatSlaDurationDetailed(resolvedDurationSeconds);
+
+  const hasBreachEscalation = Boolean(parseTimestampMs(ticket.sla_breach_escalated_at));
 
   let state: SlaRiskState;
   let remainingSeconds = 0;
@@ -159,7 +196,7 @@ export function calculateSlaStatus(
   let elapsedFraction = 0;
   let isBreached = false;
 
-  if (diffMs < 0) {
+  if (diffMs < 0 || hasBreachEscalation || ticket.sla_status === "BREACHED") {
     // RED: Deadline has passed
     isBreached = true;
     state = "RED";
@@ -169,10 +206,11 @@ export function calculateSlaStatus(
   } else {
     remainingSeconds = Math.floor(diffMs / 1000);
     overdueSeconds = 0;
-    const elapsedMs = Math.max(0, effectiveNowMs - startedMs);
     elapsedFraction = Math.min(1.0, elapsedMs / totalTargetMs);
 
-    if (isPaused) {
+    if (isCompleted) {
+      state = "GREEN";
+    } else if (isPaused) {
       state = "PAUSED";
     } else if (elapsedFraction >= 0.75) {
       // AMBER: 75% or more elapsed, but not breached
@@ -187,23 +225,44 @@ export function calculateSlaStatus(
 
   // Format strings
   const formattedDur = formatSlaDuration(isBreached ? overdueSeconds : remainingSeconds);
-  const formattedRemaining = isBreached
-    ? `Breached: ${formattedDur} overdue`
-    : `${formattedDur} remaining`;
-  const formattedShort = isBreached
-    ? `${formattedDur} overdue`
-    : isPaused
-    ? `Paused (${formattedDur})`
-    : formattedDur;
-  const formattedOverdue = `Breached: ${formattedDur} overdue`;
+  const formattedDetailedDur = formatSlaDurationDetailed(isBreached ? overdueSeconds : remainingSeconds);
 
-  let stateLabel = "SLA on track";
-  if (state === "AMBER") {
-    stateLabel = "Warning: SLA breach approaching";
-  } else if (state === "RED") {
-    stateLabel = "SLA breached";
-  } else if (state === "PAUSED") {
-    stateLabel = "SLA paused";
+  let formattedRemaining: string;
+  let formattedShort: string;
+  let formattedOverdue: string;
+  let stateLabel: string;
+
+  if (isCompleted) {
+    if (isBreached) {
+      stateLabel = "SLA Breached";
+      formattedRemaining = `Breached: ${formattedDetailedDur} overdue at resolution`;
+      formattedShort = `${formattedDetailedDur} overdue`;
+      formattedOverdue = `Breached: ${formattedDetailedDur} overdue`;
+    } else {
+      stateLabel = "SLA Met";
+      formattedRemaining = `${formattedDetailedDur} remaining at resolution`;
+      formattedShort = `Resolved in ${formattedResolvedDuration}`;
+      formattedOverdue = "SLA Met";
+    }
+  } else {
+    formattedRemaining = isBreached
+      ? `Breached: ${formattedDur} overdue`
+      : `${formattedDur} remaining`;
+    formattedShort = isBreached
+      ? `${formattedDur} overdue`
+      : isPaused
+      ? `Paused (${formattedDur})`
+      : formattedDur;
+    formattedOverdue = `Breached: ${formattedDur} overdue`;
+
+    stateLabel = "SLA on track";
+    if (state === "AMBER") {
+      stateLabel = "Warning: SLA breach approaching";
+    } else if (state === "RED") {
+      stateLabel = "SLA breached";
+    } else if (state === "PAUSED") {
+      stateLabel = "SLA paused";
+    }
   }
 
   const colorTheme = getColorTheme(state);
@@ -213,6 +272,12 @@ export function calculateSlaStatus(
     hasSla: true,
     isPaused,
     isBreached,
+    isCompleted,
+    isResolved,
+    isClosed,
+    completedAt,
+    resolvedDurationSeconds,
+    formattedResolvedDuration,
     dueAt,
     startedAt,
     remainingSeconds,
@@ -233,6 +298,12 @@ function createEmptyResult(): SlaCalculationResult {
     hasSla: false,
     isPaused: false,
     isBreached: false,
+    isCompleted: false,
+    isResolved: false,
+    isClosed: false,
+    completedAt: null,
+    resolvedDurationSeconds: 0,
+    formattedResolvedDuration: "0s",
     dueAt: null,
     startedAt: null,
     remainingSeconds: 0,

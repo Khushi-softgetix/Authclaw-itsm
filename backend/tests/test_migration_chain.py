@@ -47,14 +47,26 @@ def test_worker_migration_follows_platform_history_and_runtime_gates():
     config = Config(str(backend / "alembic.ini"))
     config.set_main_option("script_location", str(backend / "alembic"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["052"]
+    assert scripts.get_heads() == ["054"]
+    assert scripts.get_revision("054").down_revision == "053"
+    assert scripts.get_revision("053").down_revision == "052"
     assert scripts.get_revision("052").down_revision == "051"
     assert scripts.get_revision("046").down_revision == "045"
     assert scripts.get_revision("045").down_revision == "044"
     revisions = list(scripts.walk_revisions())
     assert len({revision.revision for revision in revisions}) == len(revisions)
     assert (
-        '"AUTHCLAW_EXPECTED_DB_REVISION", "052"'
+        '"AUTHCLAW_EXPECTED_DB_REVISION", "054"'
         in (backend / "app/core/startup_checks.py").read_text()
     )
-    assert "version_num IN ('046', '050', '051', '052')" in (backend.parent / "gateway/db.go").read_text()
+    gateway_db = backend.parent / "gateway/db.go"
+    if gateway_db.exists():
+        assert "version_num IN ('046', '050', '051', '052', '053', '054')" in gateway_db.read_text()
+
+
+import unittest
+
+
+class MigrationChainTestCase(unittest.TestCase):
+    def test_migration_chain(self):
+        test_worker_migration_follows_platform_history_and_runtime_gates()

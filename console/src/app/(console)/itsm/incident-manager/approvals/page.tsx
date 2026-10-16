@@ -403,17 +403,17 @@ export default function IncidentManagerApprovalsPage() {
               )}
             </div>
           ) : (
-            <table className="w-full text-left border-collapse" aria-label="Service request approvals table">
+            <table className="w-full text-left border-collapse text-xs" aria-label="Service request approvals table">
               <thead>
                 <tr className="border-b border-[#EEF1F5] bg-[#FBFAF9] text-[10px] font-bold uppercase tracking-wider text-[#6B7488]">
-                  <th className="px-5 py-3">Request</th>
-                  <th className="px-5 py-3">Service</th>
-                  <th className="px-5 py-3">Requester</th>
-                  <th className="px-5 py-3">Submitted</th>
-                  <th className="px-5 py-3">Approval</th>
-                  <th className="px-5 py-3">Fulfillment</th>
-                  <th className="px-5 py-3">Assigned Team</th>
-                  <th className="px-5 py-3 text-right">Actions</th>
+                  <th className="px-3.5 py-3 min-w-[170px]">Request</th>
+                  <th className="px-3 py-3 w-[140px]">Service</th>
+                  <th className="px-3 py-3 w-[130px]">Requester</th>
+                  <th className="px-3 py-3 w-[105px] whitespace-nowrap">Submitted</th>
+                  <th className="px-3 py-3 w-[110px] whitespace-nowrap">Approval</th>
+                  <th className="px-3 py-3 w-[95px] whitespace-nowrap">Fulfillment</th>
+                  <th className="px-3 py-3 w-[125px]">Assigned Team</th>
+                  <th className="px-3.5 py-3 w-[96px] text-right whitespace-nowrap">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#EEF1F5] text-xs">
@@ -425,13 +425,13 @@ export default function IncidentManagerApprovalsPage() {
                   return (
                     <tr key={item.id} className="transition hover:bg-[#FAF8FF]">
                       {/* Request details */}
-                      <td className="px-5 py-4 min-w-[200px]">
+                      <td className="px-3.5 py-3.5 min-w-[170px] align-top">
                         <div className="flex items-center gap-2">
                           <span className="font-mono text-xs font-bold text-[#6D28D9]">
                             {item.ticket_number || "REQ"}
                           </span>
                         </div>
-                        <p className="mt-1 font-semibold text-[#0E1726] line-clamp-1" title={item.title}>
+                        <p className="mt-1 font-semibold text-[#0E1726] line-clamp-2 leading-snug" title={item.title}>
                           {item.title}
                         </p>
                         {item.ticket_id && (
@@ -446,76 +446,80 @@ export default function IncidentManagerApprovalsPage() {
                       </td>
 
                       {/* Service / Catalog item */}
-                      <td className="px-5 py-4 text-[#475069]">
-                        <p className="font-semibold text-[#0E1726]">
+                      <td className="px-3 py-3.5 text-[#475069] align-top">
+                        <p className="font-semibold text-[#0E1726] line-clamp-2 leading-snug" title={item.catalog_item_name || item.service_name || "Catalog Item"}>
                           {item.catalog_item_name || item.service_name || "Catalog Item"}
                         </p>
                         {item.service_name && item.catalog_item_name && item.service_name !== item.catalog_item_name && (
-                          <p className="text-[10px] text-[#8A93A5]">{item.service_name}</p>
+                          <p className="mt-0.5 text-[10px] text-[#8A93A5] truncate max-w-[130px]" title={item.service_name}>
+                            {item.service_name}
+                          </p>
                         )}
                       </td>
 
                       {/* Requester */}
-                      <td className="px-5 py-4 text-[#475069]">
+                      <td className="px-3 py-3.5 text-[#475069] align-top">
                         <div className="flex items-center gap-1.5">
-                          <User className="h-3.5 w-3.5 text-[#8A93A5]" />
-                          <span className="truncate max-w-[150px]" title={item.requester_email || item.requester_id}>
+                          <User className="h-3.5 w-3.5 text-[#8A93A5] shrink-0" />
+                          <span className="truncate max-w-[115px]" title={item.requester_email || item.requester_id}>
                             {item.requester_email || item.requester_id}
                           </span>
                         </div>
                       </td>
 
                       {/* Submission Date */}
-                      <td className="px-5 py-4 whitespace-nowrap text-[#6B7488] text-[11px]">
+                      <td className="px-3 py-3.5 text-[#6B7488] text-[11px] align-top whitespace-nowrap">
                         {formatDateTime(item.created_at)}
                       </td>
 
                       {/* Approval Status */}
-                      <td className="px-5 py-4 whitespace-nowrap">
-                        <ApprovalStatusBadge status={item.status} />
+                      <td className="px-3 py-3.5 align-top">
+                        <div className="whitespace-nowrap">
+                          <ApprovalStatusBadge status={item.status} />
+                        </div>
                         {item.status === "REJECTED" && item.resolution_reason && (
-                          <p className="mt-1 text-[10px] text-rose-600 line-clamp-2 max-w-[160px]" title={item.resolution_reason}>
+                          <p className="mt-1 text-[10px] text-rose-600 line-clamp-2 max-w-[130px]" title={item.resolution_reason}>
                             Reason: {item.resolution_reason}
                           </p>
                         )}
                       </td>
 
                       {/* Fulfillment Status */}
-                      <td className="px-5 py-4 whitespace-nowrap">
+                      <td className="px-3 py-3.5 align-top whitespace-nowrap">
                         <TicketStatusBadge status={item.ticket_status || "PENDING"} />
                       </td>
 
                       {/* Assigned Team */}
-                      <td className="px-5 py-4 text-[#475069]">
-                        <p className="font-semibold text-[#0E1726] text-xs">
+                      <td className="px-3 py-3.5 text-[#475069] align-top">
+                        <p className="font-semibold text-[#0E1726] text-xs line-clamp-1" title={item.assignment_group || "No team assigned"}>
                           {item.assignment_group || "No team assigned"}
                         </p>
                         {item.assignee_email && (
-                          <p className="text-[10px] text-[#8A93A5] truncate max-w-[140px]" title={item.assignee_email}>
+                          <p className="mt-0.5 text-[10px] text-[#8A93A5] truncate max-w-[120px]" title={item.assignee_email}>
                             {item.assignee_email}
                           </p>
                         )}
                       </td>
 
                       {/* Action buttons */}
-                      <td className="px-5 py-4 text-right whitespace-nowrap">
-                        <div className="flex items-center justify-end gap-2">
+                      <td className="px-3.5 py-3.5 text-right align-top">
+                        <div className="flex flex-col items-end gap-1.5">
                           {isPending && item.ticket_id && (
                             <button
                               type="button"
                               onClick={() => setAssignModalItem(item)}
-                              className="inline-flex items-center gap-1 rounded-lg border border-[#D0D5DD] bg-white px-2.5 py-1.5 text-xs font-semibold text-[#344054] shadow-xs transition hover:border-[#A78BFA] hover:bg-[#F9FAFB]"
+                              className="inline-flex w-[84px] items-center justify-center gap-1.5 rounded-lg border border-[#D0D5DD] bg-white px-2 py-1 text-xs font-semibold text-[#344054] shadow-xs transition hover:border-[#A78BFA] hover:bg-[#F9FAFB]"
                               title="Assign fulfillment team"
                               id={`assign-btn-${item.ticket_number || item.id}`}
                             >
-                              <UserRoundCog className="h-3.5 w-3.5 text-[#6D28D9]" />
+                              <UserRoundCog className="h-3.5 w-3.5 text-[#6D28D9] shrink-0" />
                               <span>Assign</span>
                             </button>
                           )}
 
                           {isPending ? (
                             isOwnRequest ? (
-                              <span className="rounded-lg bg-amber-50 px-2 py-1 text-[10px] font-bold text-amber-700 border border-amber-200" title="Segregation of Duties: You cannot approve your own request">
+                              <span className="inline-flex w-[84px] items-center justify-center text-center rounded-lg bg-amber-50 px-1 py-1 text-[10px] font-bold text-amber-700 border border-amber-200" title="Segregation of Duties: You cannot approve your own request">
                                 SoD Protected
                               </span>
                             ) : (
@@ -524,10 +528,10 @@ export default function IncidentManagerApprovalsPage() {
                                   type="button"
                                   onClick={() => handleApprove(item)}
                                   disabled={isActionLoading}
-                                  className="inline-flex items-center gap-1 rounded-lg bg-[#059669] px-2.5 py-1.5 text-xs font-semibold text-white shadow-xs transition hover:bg-[#047857] disabled:opacity-50"
+                                  className="inline-flex w-[84px] items-center justify-center gap-1.5 rounded-lg bg-[#059669] px-2 py-1 text-xs font-semibold text-white shadow-xs transition hover:bg-[#047857] disabled:opacity-50"
                                   id={`approve-btn-${item.ticket_number || item.id}`}
                                 >
-                                  <ThumbsUp className="h-3.5 w-3.5" />
+                                  <ThumbsUp className="h-3.5 w-3.5 shrink-0" />
                                   <span>Approve</span>
                                 </button>
                                 <button
@@ -538,10 +542,10 @@ export default function IncidentManagerApprovalsPage() {
                                     setRejectError(null);
                                   }}
                                   disabled={isActionLoading}
-                                  className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-rose-600 shadow-xs transition hover:bg-rose-50 disabled:opacity-50"
+                                  className="inline-flex w-[84px] items-center justify-center gap-1.5 rounded-lg border border-rose-200 bg-white px-2 py-1 text-xs font-semibold text-rose-600 shadow-xs transition hover:bg-rose-50 disabled:opacity-50"
                                   id={`reject-btn-${item.ticket_number || item.id}`}
                                 >
-                                  <ThumbsDown className="h-3.5 w-3.5" />
+                                  <ThumbsDown className="h-3.5 w-3.5 shrink-0" />
                                   <span>Reject</span>
                                 </button>
                               </>
@@ -550,7 +554,7 @@ export default function IncidentManagerApprovalsPage() {
                             item.ticket_id && (
                               <Link
                                 href={`/itsm/requests/${item.ticket_id}`}
-                                className="inline-flex items-center gap-1 text-xs font-semibold text-[#6D28D9] hover:underline"
+                                className="inline-flex items-center gap-1 text-xs font-semibold text-[#6D28D9] hover:underline pr-1"
                               >
                                 <span>View</span>
                                 <ArrowRight className="h-3 w-3" />

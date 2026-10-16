@@ -33,6 +33,7 @@ import ReportRecurringProblemModal from "@/components/itsm/report-recurring-prob
 import AttachmentSection, { AttachmentItem } from "@/components/itsm/attachment-section";
 import ReopenTicketModal from "@/components/itsm/reopen-ticket-modal";
 import CancelTicketModal from "@/components/itsm/cancel-ticket-modal";
+import KnownErrorSearch from "@/components/itsm/known-error-search";
 
 export default function IncidentDetailPage() {
   const params = useParams();
@@ -296,15 +297,22 @@ export default function IncidentDetailPage() {
               <AlertTriangle className="w-3.5 h-3.5 text-[#6D28D9]" />
               Report Recurring Problem
             </button>
-            <Link
-              href={`/itsm/knowledge?incident=${incident.id}`}
-              id="agent-knowledge-search-action"
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-[#E6E9F0] bg-white hover:bg-[#F5F7FA] text-[#0E1726] text-xs font-semibold transition shadow-xs"
-              title="Search Knowledge Base"
+            <button
+              onClick={() => {
+                const el = document.getElementById("known-error-triage-section");
+                if (el) {
+                  el.scrollIntoView({ behavior: "smooth" });
+                  const input = document.getElementById("known-error-search-input");
+                  input?.focus();
+                }
+              }}
+              id="agent-kedb-search-action"
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl border border-purple-200 bg-purple-50 hover:bg-purple-100 text-[#6D28D9] text-xs font-semibold transition shadow-xs"
+              title="Search Known Error Database for approved workarounds"
             >
               <BookOpen className="w-3.5 h-3.5 text-[#6D28D9]" />
-              Search Knowledge
-            </Link>
+              Find Workarounds (KEDB)
+            </button>
             <button
               onClick={() => fetchIncidentData()}
               id="refresh-incident"
@@ -439,6 +447,19 @@ export default function IncidentDetailPage() {
               </div>
 
             </div>
+
+            {/* PRB-004: Known Error & Workaround Search in Incident Triage */}
+            <KnownErrorSearch
+              incidentId={incident.id}
+              incidentTicketNumber={incident.ticket_number}
+              incidentTitle={incident.title}
+              incidentServiceId={incident.service_id}
+              incidentServiceName={incident.service_name}
+              linkedProblemId={incident.linked_problem_id}
+              linkedProblemTicketNumber={incident.linked_problem_ticket_number}
+              onIncidentUpdated={() => fetchIncidentData()}
+              canLink={true}
+            />
 
             {/* Attached Files Section for Agent */}
             <AttachmentSection

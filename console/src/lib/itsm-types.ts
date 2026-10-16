@@ -448,8 +448,14 @@ export interface RelatedIncidentItem {
 
 export interface ProblemDetailData {
   known_error: boolean;
+  symptoms?: string | null;
   root_cause_summary?: string | null;
   workaround_summary?: string | null;
+  workaround_status?: "DRAFT" | "APPROVED" | "RETIRED" | string;
+  workaround_approved_at?: string | null;
+  workaround_approved_by_id?: string | null;
+  workaround_expires_at?: string | null;
+  review_due_at?: string | null;
   permanent_solution?: string | null;
   rca_document_url?: string | null;
   assigned_investigator_id?: string | null;
@@ -494,13 +500,41 @@ export interface ProblemStats {
 }
 
 export interface ProblemInvestigationPayload {
+  symptoms?: string | null;
   root_cause_summary?: string | null;
   workaround_summary?: string | null;
   known_error?: boolean;
+  workaround_expires_at?: string | null;
+  review_due_at?: string | null;
   permanent_solution?: string | null;
   rca_document_url?: string | null;
   investigation_notes?: string | null;
   status?: string;
+}
+
+export interface PublishWorkaroundRequest {
+  workaround_expires_at?: string | null;
+  review_due_at?: string | null;
+  symptoms?: string | null;
+  notes?: string | null;
+}
+
+export interface RetireWorkaroundRequest {
+  reason?: string | null;
+}
+
+export interface WorkaroundGovernanceResponse {
+  problem_id: string;
+  problem_ticket_number: string;
+  known_error: boolean;
+  workaround_status: "DRAFT" | "APPROVED" | "RETIRED" | string;
+  workaround_summary: string;
+  workaround_approved_at?: string | null;
+  workaround_approved_by_id?: string | null;
+  workaround_expires_at?: string | null;
+  review_due_at?: string | null;
+  symptoms?: string | null;
+  message: string;
 }
 
 export interface ProblemResolvePayload {
@@ -772,3 +806,37 @@ export interface SupportScopeResponse {
   catalog_items: SupportScopeCatalogItem[];
 }
 
+export interface KnownErrorLookupItem {
+  id: string;
+  ticket_number: string;
+  title: string;
+  description?: string | null;
+  symptoms?: string | null;
+  status: string;
+  service_id?: string | null;
+  service_name?: string | null;
+  workaround_summary: string;
+  workaround_status: "DRAFT" | "APPROVED" | "RETIRED" | string;
+  workaround_approved_at?: string | null;
+  workaround_expires_at?: string | null;
+  review_due_at?: string | null;
+  root_cause_summary?: string | null;
+  permanent_solution?: string | null;
+  identified_at?: string | null;
+  resolved_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LinkIncidentProblemRequest {
+  problem_id: string;
+}
+
+export interface LinkIncidentProblemResponse {
+  incident_id: string;
+  incident_ticket_number: string;
+  linked_problem_id?: string | null;
+  linked_problem_ticket_number?: string | null;
+  already_linked: boolean;
+  message: string;
+}

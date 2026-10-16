@@ -1,4 +1,4 @@
-"""SQLAlchemy ORM Models for AuthClaw"""
+﻿"""SQLAlchemy ORM Models for AuthClaw"""
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
 from sqlalchemy import (
@@ -6,11 +6,20 @@ from sqlalchemy import (
     Integer, BigInteger, SmallInteger, Text, ARRAY, JSON, Index, Float, create_engine,
     CheckConstraint
 )
-from app.db.base import Base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import relationship, Mapped, DeclarativeBase, mapped_column
 import uuid
+
+
+
+class Base(DeclarativeBase):
+    pass
+
 import enum
 from sqlalchemy import UniqueConstraint, Enum
+
+
+def utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 def default_api_key_expiry():
@@ -33,8 +42,8 @@ class AccessRequest(Base):
     notice_version = Column(String(50), nullable=False)
     source_page = Column(String(512), nullable=False)
     status = Column(String(50), nullable=False, default="PENDING")
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     __table_args__ = (
         Index("idx_access_requests_reference", "reference", unique=True),
@@ -52,7 +61,7 @@ class AccessRequestHistory(Base):
     event_type = Column(String(50), nullable=False)
     old_status = Column(String(50), nullable=True)
     new_status = Column(String(50), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     event_metadata = Column("metadata", JSON, nullable=False, default=dict)
 
     __table_args__ = (
@@ -95,8 +104,8 @@ class DataSubjectRequest(Base):
     decision_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     decision_at = Column(DateTime(timezone=True), nullable=True)
     completed_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     __table_args__ = (
         CheckConstraint(
@@ -121,8 +130,8 @@ class Tenant(Base):
     name = Column(String(255), nullable=False, unique=True)
     tier = Column(String(50), nullable=False, default="starter")  # starter, pro, enterprise
     status = Column(String(50), nullable=False, default="active")  # active, suspended
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     # Relationships
     users = relationship("User", back_populates="tenant", cascade="all, delete-orphan")
@@ -160,18 +169,18 @@ class PlatformAdmin(Base):
     role = Column(String(50), nullable=False, default="ADMIN")
     is_active = Column(Boolean, nullable=False, default=True)
     last_login = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
 
 class User(Base):
     """User model with tenant isolation"""
     __tablename__ = "users"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
-    email = Column(String(255), nullable=False)
-    password_hash = Column(String(255), nullable=True)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     role = Column(
     Enum("owner", "admin", "developer", "operator", "viewer", name="user_role"),
     nullable=False,
@@ -187,8 +196,8 @@ class User(Base):
     mfa_backup_codes = Column(ARRAY(String), nullable=True)  # Hashed one-time backup codes
     is_active = Column(Boolean, default=True)
     last_login = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     # Relationships
     tenant = relationship("Tenant", back_populates="users")
@@ -219,7 +228,7 @@ class Notification(Base):
     body = Column(Text, nullable=False, default="")
     link = Column(String(512), nullable=True)
     read_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     tenant = relationship("Tenant", back_populates="notifications")
     user = relationship("User", back_populates="notifications")
@@ -250,9 +259,9 @@ class APIKey(Base):
     revoked_at = Column(DateTime(timezone=True), nullable=True)
     rotated_at = Column(DateTime(timezone=True), nullable=True)
     rotated_from_id = Column(UUID(as_uuid=True), ForeignKey("api_keys.id"), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     # Relationships
     tenant = relationship("Tenant", back_populates="api_keys")
@@ -274,9 +283,9 @@ class Policy(Base):
     policy_yaml = Column(Text, nullable=False)  # Full YAML policy content
     version = Column(Integer, nullable=False, default=1)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     # Relationships
     tenant = relationship("Tenant", back_populates="policies")
@@ -300,8 +309,8 @@ class GatewayConfig(Base):
     redaction_strategy = Column(String(50), nullable=False, default="mask")  # mask, hash, synthetic
     redaction_token_retention_days = Column(Integer, nullable=False, default=90)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     # Relationships
     tenant = relationship("Tenant", back_populates="gateways")
@@ -326,7 +335,7 @@ class ProviderCredential(Base):
     status = Column(String(50), nullable=False, default="active")
     last_verified_at = Column(DateTime(timezone=True), nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     rotated_at = Column(DateTime(timezone=True), nullable=True)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
     revoked_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
@@ -370,8 +379,8 @@ class TenantOIDCConfig(Base):
     last_error = Column(Text, nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     updated_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     tenant = relationship("Tenant", back_populates="oidc_config")
 
@@ -395,8 +404,8 @@ class CloudConnector(Base):
     last_verified_at = Column(DateTime(timezone=True), nullable=True)
     last_error = Column(Text, nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
     revoked_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     metadata_json = Column(JSON, nullable=False, default=dict)
@@ -435,8 +444,8 @@ class OnboardingEmailOTP(Base):
     terms_accepted_at = Column(DateTime(timezone=True), nullable=True)
     privacy_notice_version = Column(String(32), nullable=True)
     privacy_notice_acknowledged_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     __table_args__ = (
         Index("idx_onboarding_otp_email", "email"),
@@ -461,8 +470,8 @@ class OnboardingStatus(Base):
     policy_created = Column(Boolean, nullable=False, default=False)
     snippet_viewed = Column(Boolean, nullable=False, default=False)
     current_step = Column(String(50), nullable=False, default="connect_provider")
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     __table_args__ = (
         Index("idx_onboarding_status_tenant", "tenant_id"),
@@ -486,7 +495,7 @@ class RedactionToken(Base):
     last_used_at = Column(DateTime(timezone=True), nullable=True)
     use_count = Column(Integer, nullable=False, default=0)
     purged_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     # Relationships
     tenant = relationship("Tenant", back_populates="redaction_tokens")
@@ -522,8 +531,8 @@ class PendingApproval(Base):
     consumed_at = Column(DateTime(timezone=True), nullable=True)
     consumed_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     resolution_reason = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     # Relationships
     approver = relationship("User", back_populates="approvals", foreign_keys=[approver_id])
@@ -550,7 +559,7 @@ class ApprovalAudit(Base):
     details = Column(JSON, nullable=True)
     mfa_verified = Column(Boolean, default=False)
     mfa_timestamp = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     __table_args__ = (
         Index("idx_approval_audit_tenant", "tenant_id"),
@@ -585,7 +594,7 @@ class AuditLogMetadata(Base):
     execution_trace = Column(Text, nullable=False, default="[]")
     prior_hash = Column(String(64), nullable=True)
     integrity_hash = Column(String(64), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     __table_args__ = (
         Index("idx_audit_metadata_tenant", "tenant_id"),
@@ -606,7 +615,7 @@ class AuditOutbox(Base):
     record_id = Column(UUID(as_uuid=True), ForeignKey("audit_log_metadata.record_id"), nullable=False, unique=True)
     tenant_sequence = Column(BigInteger, nullable=False)
     event_payload = Column(JSON, nullable=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     published_at = Column(DateTime(timezone=True), nullable=True)
     publish_attempts = Column(Integer, nullable=False, default=0)
     last_error = Column(Text, nullable=True)
@@ -637,8 +646,8 @@ class ComplianceWorkflow(Base):
     error_message = Column(Text, nullable=True)
     retry_count = Column(Integer, nullable=False, default=0)
     state_data = Column(JSON, nullable=True)  # Full LangGraph state snapshot for recovery
-    started_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    started_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
@@ -660,7 +669,7 @@ class ChatSession(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
     title = Column(String(255), nullable=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     # Relationships
     tenant = relationship("Tenant", back_populates="chat_sessions")
@@ -680,7 +689,7 @@ class ChatMessage(Base):
     sender = Column(Enum("user", "agent", name="chat_sender"), nullable=False)
     text = Column(Text, nullable=False)
     results = Column(JSON, nullable=True)
-    timestamp = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    timestamp = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     # Relationships
     session = relationship("ChatSession", back_populates="messages")
@@ -700,7 +709,7 @@ class RAGCorpusVersion(Base):
     checksum = Column(String(64), nullable=False)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
-    loaded_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    loaded_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     chunks = relationship("RAGCorpusChunk", back_populates="corpus_version", cascade="all, delete-orphan")
 
@@ -725,7 +734,7 @@ class RAGCorpusChunk(Base):
     chunk_text = Column(Text, nullable=False)
     keywords = Column(ARRAY(String), nullable=False, default=list)
     chunk_hash = Column(String(64), nullable=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     corpus_version = relationship("RAGCorpusVersion", back_populates="chunks")
 
@@ -758,8 +767,8 @@ class AWSUsageLimits(Base):
     max_daily_tokens    = Column(Integer, nullable=False, default=50000)
     max_daily_cost_usd  = Column(Float, nullable=False, default=1.0)
 
-    last_reset  = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at  = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    last_reset  = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at  = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     __table_args__ = (
         Index("idx_aws_usage_tenant", "tenant_id"),
@@ -784,7 +793,7 @@ class AWSS3Document(Base):
     content_type    = Column(String(255), nullable=True)
     last_modified   = Column(DateTime(timezone=True), nullable=True)
     etag            = Column(String(255), nullable=True)   # S3 ETag for change detection
-    synced_at       = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    synced_at       = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     __table_args__ = (
         Index("idx_s3_docs_tenant", "tenant_id"),
@@ -812,7 +821,7 @@ class EphemeralWorkerToken(Base):
     hash_key_version = Column(String(16), nullable=True)
     status = Column(String(50), nullable=False, default="active")
     issued_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    issued_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    issued_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     expires_at = Column(DateTime(timezone=True), nullable=False)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
     last_used_at = Column(DateTime(timezone=True), nullable=True)
@@ -844,7 +853,7 @@ class EphemeralWorkerRun(Base):
     destructive = Column(Boolean, nullable=False, default=False)
     status = Column(String(50), nullable=False)
     reason = Column(Text, nullable=False)
-    started_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    started_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     completed_at = Column(DateTime(timezone=True), nullable=True)
     metadata_json = Column(JSON, nullable=False, default=dict)
 
@@ -902,7 +911,7 @@ class EvidenceRecord(Base):
     integrity_algorithm = Column(String(20), nullable=False, default="sha256")
     integrity_version = Column(Integer, nullable=False, default=1)
 
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     # Relationships
     tenant = relationship("Tenant", back_populates="evidence_records")
@@ -939,7 +948,7 @@ class EvidenceLink(Base):
     # String ID of the linked entity (UUID or workflow_id string)
     linked_id = Column(String(255), nullable=False)
 
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     # Relationships
     evidence = relationship("EvidenceRecord", back_populates="links")
@@ -979,8 +988,8 @@ class Finding(Base):
     remediation_summary = Column(Text, nullable=True)
     owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
     resolved_at = Column(DateTime(timezone=True), nullable=True)
 
     # Relationships
@@ -1015,7 +1024,7 @@ class ComplianceScoreSnapshot(Base):
     audit_event_count = Column(Integer, nullable=False, default=0)
     open_findings = Column(Integer, nullable=False, default=0)
     critical_findings = Column(Integer, nullable=False, default=0)
-    generated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    generated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     tenant = relationship("Tenant", back_populates="compliance_score_snapshots")
 
@@ -1042,7 +1051,7 @@ class TrustCenterShare(Base):
     status = Column(String(50), nullable=False, default="active")
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     revoked_at = Column(DateTime(timezone=True), nullable=True)
     last_accessed_at = Column(DateTime(timezone=True), nullable=True)
     access_count = Column(Integer, nullable=False, default=0)
@@ -1066,7 +1075,7 @@ class TrustCenterAccessLog(Base):
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
     share_id = Column(UUID(as_uuid=True), ForeignKey("trust_center_shares.id"), nullable=False)
     action = Column(String(100), nullable=False)
-    accessed_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    accessed_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     ip_address = Column(String(64), nullable=True)
     user_agent = Column(String(512), nullable=True)
 
@@ -1100,8 +1109,8 @@ class ITSMBusinessCalendar(Base):
     weekly_hours = Column(JSONB, nullable=False, default=dict)
     holidays = Column(JSONB, nullable=False, default=list)
     is_default = Column(Boolean, nullable=False, default=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     tenant = relationship("Tenant")
 
@@ -1115,17 +1124,17 @@ class ITSMService(Base):
     """Business and technical service definitions."""
     __tablename__ = "itsm_services"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
-    name = Column(String(255), nullable=False)
-    slug = Column(String(100), nullable=False)
-    description = Column(Text, nullable=True)
-    tier = Column(String(20), nullable=False, default="TIER_2")
-    status = Column(String(32), nullable=False, default="OPERATIONAL")
-    owner_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    escalation_team = Column(String(100), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    slug: Mapped[str] = mapped_column(String(100), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    tier: Mapped[str] = mapped_column(String(20), nullable=False, default="TIER_2")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="OPERATIONAL")
+    owner_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    escalation_team: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     tenant = relationship("Tenant")
     owner = relationship("User")
@@ -1150,7 +1159,7 @@ class ITSMTicketCategory(Base):
     parent_category_id = Column(UUID(as_uuid=True), ForeignKey("itsm_ticket_categories.id", ondelete="CASCADE"), nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
     display_order = Column(Integer, nullable=False, default=0)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     tenant = relationship("Tenant")
     parent_category = relationship("ITSMTicketCategory", remote_side=[id])
@@ -1177,8 +1186,8 @@ class ITSMSLAPolicy(Base):
     response_target_minutes = Column(Integer, nullable=False)
     resolution_target_minutes = Column(Integer, nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     tenant = relationship("Tenant")
     calendar = relationship("ITSMBusinessCalendar")
@@ -1198,7 +1207,7 @@ class ITSMTicketCounter(Base):
     ticket_type = Column(String(32), nullable=False)
     prefix = Column(String(10), nullable=False)
     last_number = Column(Integer, nullable=False, default=0)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     tenant = relationship("Tenant")
 
@@ -1211,64 +1220,51 @@ class ITSMTicket(Base):
     """Core ITSM Ticket entity for Incidents, Problems, and Service Requests."""
     __tablename__ = "itsm_tickets"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
-    ticket_number = Column(String(32), nullable=False)
-    ticket_type = Column(String(32), nullable=False, default="INCIDENT")
-    title = Column(String(512), nullable=False)
-    description = Column(Text, nullable=False)
-    impact = Column(String(20), nullable=False, default="MEDIUM")
-    urgency = Column(String(20), nullable=False, default="MEDIUM")
-    priority = Column(String(20), nullable=False, default="P3")
-    status = Column(String(32), nullable=False, default="NEW")
-    status_reason = Column(Text, nullable=True)
-    source_channel = Column(String(50), nullable=False, default="PORTAL")
-    requester_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
-    assignee_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    assignment_group = Column(String(100), nullable=True)
-    service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="SET NULL"), nullable=True)
-    category_id = Column(UUID(as_uuid=True), ForeignKey("itsm_ticket_categories.id", ondelete="SET NULL"), nullable=True)
-    category = Column(String(100), nullable=False, default="GENERAL")
-    subcategory = Column(String(100), nullable=True)
-    is_major_incident = Column(Boolean, nullable=False, default=False)
-    linked_problem_id = Column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="SET NULL"), nullable=True)
-    linked_finding_id = Column(UUID(as_uuid=True), ForeignKey("findings.id", ondelete="SET NULL"), nullable=True)
-    sla_policy_id = Column(UUID(as_uuid=True), ForeignKey("itsm_sla_policies.id", ondelete="SET NULL"), nullable=True)
-    sla_response_due_at = Column(DateTime(timezone=True), nullable=True)
-    sla_response_met_at = Column(DateTime(timezone=True), nullable=True)
-    sla_resolution_due_at = Column(DateTime(timezone=True), nullable=True)
-    sla_resolution_met_at = Column(DateTime(timezone=True), nullable=True)
-    sla_status = Column(String(20), nullable=False, default="WITHIN_SLA")
-    sla_paused_at = Column(DateTime(timezone=True), nullable=True)
-    sla_accumulated_pause_seconds = Column(Integer, nullable=False, default=0)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    ticket_number: Mapped[str] = mapped_column(String(32), nullable=False)
+    ticket_type: Mapped[str] = mapped_column(String(32), nullable=False, default="INCIDENT")
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    impact: Mapped[str] = mapped_column(String(20), nullable=False, default="MEDIUM")
+    urgency: Mapped[str] = mapped_column(String(20), nullable=False, default="MEDIUM")
+    priority: Mapped[str] = mapped_column(String(20), nullable=False, default="P3")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="NEW")
+    status_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    source_channel: Mapped[str] = mapped_column(String(50), nullable=False, default="PORTAL")
+    requester_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    assignee_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    assignment_group: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    service_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="SET NULL"), nullable=True)
+    category_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("itsm_ticket_categories.id", ondelete="SET NULL"), nullable=True)
+    category: Mapped[str] = mapped_column(String(100), nullable=False, default="GENERAL")
+    subcategory: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    is_major_incident: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    linked_problem_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="SET NULL"), nullable=True)
+    linked_finding_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("findings.id", ondelete="SET NULL"), nullable=True)
+    sla_policy_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("itsm_sla_policies.id", ondelete="SET NULL"), nullable=True)
+    sla_response_due_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    sla_response_met_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    sla_resolution_due_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    sla_resolution_met_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    sla_status: Mapped[str] = mapped_column(String(20), nullable=False, default="WITHIN_SLA")
+    sla_paused_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    sla_accumulated_pause_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
-    @property
-    def sla_warning_escalated_at(self):
-        return getattr(self, "_sla_warning_escalated_at", None)
+    sla_warning_escalated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    sla_breach_escalated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    @sla_warning_escalated_at.setter
-    def sla_warning_escalated_at(self, value):
-        self._sla_warning_escalated_at = value
-
-    @property
-    def sla_breach_escalated_at(self):
-        return getattr(self, "_sla_breach_escalated_at", None)
-
-    @sla_breach_escalated_at.setter
-    def sla_breach_escalated_at(self, value):
-        self._sla_breach_escalated_at = value
-
-    resolution_code = Column(String(50), nullable=True)
-    resolution_summary = Column(Text, nullable=True)
-    resolved_at = Column(DateTime(timezone=True), nullable=True)
-    closed_at = Column(DateTime(timezone=True), nullable=True)
-    closed_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    ai_triaged = Column(Boolean, nullable=False, default=False)
-    ai_suggested_priority = Column(String(20), nullable=True)
-    ai_confidence_score = Column(Float, nullable=True)
-    ai_summary = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    resolution_code: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    resolution_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    closed_by: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    ai_triaged: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    ai_suggested_priority: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    ai_confidence_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    ai_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     tenant = relationship("Tenant")
     category_rel = relationship("ITSMTicketCategory", foreign_keys=[category_id])
@@ -1316,6 +1312,8 @@ class ITSMTicket(Base):
         Index("idx_itsm_tickets_tenant_priority", "tenant_id", "priority"),
         Index("idx_itsm_tickets_tenant_assignee", "tenant_id", "assignee_id"),
         Index("idx_itsm_tickets_tenant_created", "tenant_id", "created_at"),
+        Index("idx_itsm_tickets_tenant_sla_warning", "tenant_id", "sla_warning_escalated_at"),
+        Index("idx_itsm_tickets_tenant_sla_breach_esc", "tenant_id", "sla_breach_escalated_at"),
     )
 
 
@@ -1323,15 +1321,15 @@ class ITSMTicketActivity(Base):
     """Audit trail and conversation history for tickets."""
     __tablename__ = "itsm_ticket_activities"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
-    ticket_id = Column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="CASCADE"), nullable=False)
-    activity_type = Column(String(50), nullable=False)
-    actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    actor_type = Column(String(32), nullable=False, default="USER")
-    content = Column(Text, nullable=True)
-    activity_metadata = Column("metadata", JSONB, nullable=False, default=dict)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    ticket_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="CASCADE"), nullable=False)
+    activity_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    actor_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    actor_type: Mapped[str] = mapped_column(String(32), nullable=False, default="USER")
+    content: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    activity_metadata: Mapped[dict] = mapped_column("metadata", JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     tenant = relationship("Tenant")
     ticket = relationship("ITSMTicket")
@@ -1362,8 +1360,8 @@ class ITSMServiceCatalogItem(Base):
     fulfillment_group = Column(String(100), nullable=True)
     estimated_delivery_hours = Column(Integer, nullable=False, default=24)
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     tenant = relationship("Tenant")
     service = relationship("ITSMService")
@@ -1385,7 +1383,7 @@ class ITSMServiceRequestDetail(Base):
     catalog_item_version = Column(Integer, nullable=False)
     intake_schema_snapshot = Column(JSONB, nullable=False)
     submitted_form_data = Column(JSONB, nullable=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     tenant = relationship("Tenant")
     ticket = relationship("ITSMTicket")
@@ -1413,8 +1411,8 @@ class ITSMKnowledgeArticle(Base):
     helpful_count = Column(Integer, nullable=False, default=0)
     author_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     published_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     tenant = relationship("Tenant")
     service = relationship("ITSMService")
@@ -1441,7 +1439,7 @@ class ITSMKnowledgeArticleVersion(Base):
     keywords = Column(PG_ARRAY(Text), nullable=False, default=list)
     change_summary = Column(Text, nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     tenant = relationship("Tenant")
     article = relationship("ITSMKnowledgeArticle")
@@ -1467,8 +1465,8 @@ class ITSMConfigurationItem(Base):
     external_resource_id = Column(String(512), nullable=True)
     status = Column(String(32), nullable=False, default="ACTIVE")
     attributes = Column(JSONB, nullable=False, default=dict)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     tenant = relationship("Tenant")
     service = relationship("ITSMService")
@@ -1488,31 +1486,31 @@ class ITSMChangeRequest(Base):
     """Change requests for infrastructure and application modifications."""
     __tablename__ = "itsm_change_requests"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
-    change_number = Column(String(32), nullable=False)
-    title = Column(String(512), nullable=False)
-    description = Column(Text, nullable=False)
-    change_type = Column(String(20), nullable=False, default="STANDARD")
-    risk_level = Column(String(20), nullable=False, default="LOW")
-    impact_level = Column(String(20), nullable=False, default="LOW")
-    status = Column(String(32), nullable=False, default="DRAFT")
-    service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="RESTRICT"), nullable=True)
-    lead_time_hours = Column(Integer, nullable=False, default=0)
-    outage_expected = Column(Boolean, nullable=False, default=False)
-    implementation_plan = Column(Text, nullable=False, default="")
-    backout_plan = Column(Text, nullable=False, default="")
-    test_plan = Column(Text, nullable=False, default="")
-    requested_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
-    assigned_to_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    assigned_team = Column(String(100), nullable=True)
-    pending_approval_id = Column(UUID(as_uuid=True), ForeignKey("pending_approvals.id", ondelete="SET NULL"), nullable=True)
-    earliest_start_at = Column(DateTime(timezone=True), nullable=True)
-    latest_finish_at = Column(DateTime(timezone=True), nullable=True)
-    actual_start_at = Column(DateTime(timezone=True), nullable=True)
-    actual_finish_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    change_number: Mapped[str] = mapped_column(String(32), nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    change_type: Mapped[str] = mapped_column(String(20), nullable=False, default="STANDARD")
+    risk_level: Mapped[str] = mapped_column(String(20), nullable=False, default="LOW")
+    impact_level: Mapped[str] = mapped_column(String(20), nullable=False, default="LOW")
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="DRAFT")
+    service_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="RESTRICT"), nullable=True)
+    lead_time_hours: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    outage_expected: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    implementation_plan: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    backout_plan: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    test_plan: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    requested_by_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
+    assigned_to_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    assigned_team: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    pending_approval_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("pending_approvals.id", ondelete="SET NULL"), nullable=True)
+    earliest_start_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    latest_finish_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    actual_start_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    actual_finish_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     tenant = relationship("Tenant")
     service = relationship("ITSMService")
@@ -1532,13 +1530,13 @@ class ITSMChangeRequestCI(Base):
     """Normalized join relationship between Changes and Configuration Items."""
     __tablename__ = "itsm_change_request_cis"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
-    change_id = Column(UUID(as_uuid=True), ForeignKey("itsm_change_requests.id", ondelete="CASCADE"), nullable=False)
-    ci_id = Column(UUID(as_uuid=True), ForeignKey("itsm_configuration_items.id", ondelete="RESTRICT"), nullable=False)
-    impact_type = Column(String(32), nullable=False, default="AFFECTED")
-    notes = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    change_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("itsm_change_requests.id", ondelete="CASCADE"), nullable=False)
+    ci_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("itsm_configuration_items.id", ondelete="RESTRICT"), nullable=False)
+    impact_type: Mapped[str] = mapped_column(String(32), nullable=False, default="AFFECTED")
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     tenant = relationship("Tenant")
     change = relationship("ITSMChangeRequest")
@@ -1561,7 +1559,7 @@ class ITSMServiceRelationship(Base):
     child_service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="CASCADE"), nullable=False)
     relationship_type = Column(String(50), nullable=False, default="DEPENDS_ON")
     criticality = Column(String(20), nullable=False, default="MEDIUM")
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     tenant = relationship("Tenant")
     parent_service = relationship("ITSMService", foreign_keys=[parent_service_id])
@@ -1592,7 +1590,7 @@ class ITSMAttachment(Base):
     is_quarantined = Column(Boolean, nullable=False, default=False)
     quarantine_reason = Column(String(255), nullable=True)
     uploaded_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     tenant = relationship("Tenant")
     uploaded_by = relationship("User")
@@ -1610,27 +1608,36 @@ class ITSMProblemDetail(Base):
     """Root cause and permanent workaround tracking for problem tickets."""
     __tablename__ = "itsm_problem_details"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
-    ticket_id = Column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="CASCADE"), nullable=False)
-    known_error = Column(Boolean, nullable=False, default=False)
-    root_cause_summary = Column(Text, nullable=True)
-    workaround_summary = Column(Text, nullable=True)
-    permanent_solution = Column(Text, nullable=True)
-    rca_document_url = Column(String(1024), nullable=True)
-    assigned_investigator_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    identified_at = Column(DateTime(timezone=True), nullable=True)
-    resolved_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    ticket_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="CASCADE"), nullable=False)
+    known_error: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    symptoms: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    root_cause_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    workaround_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    workaround_status: Mapped[str] = mapped_column(String(32), nullable=False, default="DRAFT")
+    workaround_approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    workaround_approved_by_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    workaround_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    review_due_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    permanent_solution: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    rca_document_url: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    assigned_investigator_id: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    identified_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     tenant = relationship("Tenant")
     ticket = relationship("ITSMTicket")
-    assigned_investigator = relationship("User")
+    assigned_investigator = relationship("User", foreign_keys=[assigned_investigator_id])
+    workaround_approved_by = relationship("User", foreign_keys=[workaround_approved_by_id])
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "ticket_id", name="uq_itsm_problem_details_ticket"),
         Index("idx_itsm_problem_investigator", "tenant_id", "assigned_investigator_id"),
+        Index("idx_itsm_problem_ke_status", "tenant_id", "known_error", "workaround_status"),
+        Index("idx_itsm_problem_workaround_expiry", "tenant_id", "workaround_expires_at"),
     )
 
 
@@ -1648,7 +1655,7 @@ class ITSMMajorIncident(Base):
     incident_commander_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     bridge_url = Column(String(1024), nullable=True)
     communication_channel = Column(String(255), nullable=True)
-    declared_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    declared_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     declared_by_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     postmortem_status = Column(String(32), nullable=False, default="PENDING")
     postmortem_url = Column(String(1024), nullable=True)
@@ -1657,8 +1664,8 @@ class ITSMMajorIncident(Base):
     executive_summary = Column(Text, nullable=True)
     impacted_business_units = Column(PG_ARRAY(Text), nullable=False, default=list)
     customer_impact_description = Column(Text, nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     tenant = relationship("Tenant")
     ticket = relationship("ITSMTicket")
@@ -1714,8 +1721,8 @@ class ITSMOnCallSchedule(Base):
     timezone = Column(String(50), nullable=False, default="UTC")
     is_active = Column(Boolean, nullable=False, default=True)
     calendar_id = Column(UUID(as_uuid=True), ForeignKey("itsm_business_calendars.id", ondelete="SET NULL"), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     tenant = relationship("Tenant")
     service = relationship("ITSMService")
@@ -1740,8 +1747,8 @@ class ITSMOnCallRotation(Base):
     rotation_start_at = Column(DateTime(timezone=True), nullable=False)
     handoff_time = Column(String(10), nullable=False, default="09:00")
     escalation_delay_minutes = Column(Integer, nullable=False, default=15)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     tenant = relationship("Tenant")
     schedule = relationship("ITSMOnCallSchedule")
@@ -1765,7 +1772,7 @@ class ITSMOnCallOverride(Base):
     start_at = Column(DateTime(timezone=True), nullable=False)
     end_at = Column(DateTime(timezone=True), nullable=False)
     reason = Column(String(255), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     tenant = relationship("Tenant")
     schedule = relationship("ITSMOnCallSchedule")
@@ -1794,9 +1801,9 @@ class ITSMAgentSession(Base):
     guardrail_flags = Column(PG_ARRAY(Text), nullable=False, default=list)
     requires_human_approval = Column(Boolean, nullable=False, default=False)
     pending_approval_id = Column(UUID(as_uuid=True), ForeignKey("pending_approvals.id", ondelete="SET NULL"), nullable=True)
-    started_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    started_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     completed_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     tenant = relationship("Tenant")
     ticket = relationship("ITSMTicket")
@@ -1821,8 +1828,8 @@ class ITSMWorkflow(Base):
     trigger_type = Column(String(50), nullable=False)
     is_active = Column(Boolean, nullable=False, default=True)
     current_published_version = Column(Integer, nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     tenant = relationship("Tenant")
 
@@ -1843,7 +1850,7 @@ class ITSMWorkflowVersion(Base):
     definition = Column(JSONB, nullable=False)
     changelog = Column(Text, nullable=True)
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     tenant = relationship("Tenant")
     workflow = relationship("ITSMWorkflow")
@@ -1869,7 +1876,7 @@ class ITSMWorkflowExecution(Base):
     execution_context = Column(JSONB, nullable=False, default=dict)
     error_message = Column(Text, nullable=True)
     pending_approval_id = Column(UUID(as_uuid=True), ForeignKey("pending_approvals.id", ondelete="SET NULL"), nullable=True)
-    started_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    started_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
     tenant = relationship("Tenant")
@@ -1900,8 +1907,8 @@ class ITSMEventRule(Base):
     target_severity = Column(String(20), nullable=False, default="SEV_3")
     is_active = Column(Boolean, nullable=False, default=True)
     priority_order = Column(Integer, nullable=False, default=100)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     tenant = relationship("Tenant")
     target_service = relationship("ITSMService")
@@ -1922,8 +1929,8 @@ class ITSMIngestedEvent(Base):
     event_type = Column(String(100), nullable=False)
     severity = Column(String(20), nullable=False, default="WARNING")
     payload = Column(JSONB, nullable=False)
-    first_seen_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    last_seen_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    first_seen_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    last_seen_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     occurrence_count = Column(Integer, nullable=False, default=1)
     status = Column(String(32), nullable=False, default="NEW")
     correlated_ticket_id = Column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="SET NULL"), nullable=True)
@@ -1953,8 +1960,8 @@ class ITSMIntegrationConfig(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     sync_interval_seconds = Column(Integer, nullable=False, default=300)
     last_sync_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     tenant = relationship("Tenant")
 
@@ -1980,7 +1987,7 @@ class ITSMIntegrationSyncRecord(Base):
     max_retries = Column(Integer, nullable=False, default=3)
     error_details = Column(Text, nullable=True)
     conflict_resolution = Column(String(32), nullable=True)
-    synced_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    synced_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     tenant = relationship("Tenant")
     integration_config = relationship("ITSMIntegrationConfig")
@@ -2009,7 +2016,7 @@ class ITSMProactiveRemediation(Base):
     rollback_executed = Column(Boolean, nullable=False, default=False)
     rollback_results = Column(JSONB, nullable=False, default=dict)
     status = Column(String(32), nullable=False, default="PENDING_APPROVAL")
-    started_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    started_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     completed_at = Column(DateTime(timezone=True), nullable=True)
 
     tenant = relationship("Tenant")
@@ -2034,8 +2041,8 @@ class ITSMUserAccess(Base):
     itsm_role = Column(String(50), nullable=False, default="REQUESTER")
     has_itsm_access = Column(Boolean, nullable=False, default=True)
     has_governance_access = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     tenant = relationship("Tenant")
     user = relationship("User")
@@ -2056,8 +2063,8 @@ class ITSMTeam(Base):
     name = Column(String(255), nullable=False)
     description = Column(Text, nullable=True)
     is_active = Column(Boolean, nullable=False, default=True)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow)
 
     tenant = relationship("Tenant")
     members = relationship("ITSMTeamMember", back_populates="team", cascade="all, delete-orphan")
@@ -2077,7 +2084,7 @@ class ITSMTeamMember(Base):
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
     team_id = Column(UUID(as_uuid=True), ForeignKey("itsm_teams.id", ondelete="CASCADE"), nullable=False)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
 
     tenant = relationship("Tenant")
     team = relationship("ITSMTeam", back_populates="members")

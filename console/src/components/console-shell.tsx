@@ -440,7 +440,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
             </div>
           </header>
 
-          <main className="flex-1 overflow-auto px-4 py-6 sm:px-6 md:px-8 md:py-8 xl:px-10">{children}</main>
+          <main className="flex-1 overflow-auto p-4">{children}</main>
         </div>
       </div>
     </div>

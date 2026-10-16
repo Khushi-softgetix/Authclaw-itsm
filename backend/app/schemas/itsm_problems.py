@@ -23,8 +23,14 @@ class RelatedIncidentItem(BaseModel):
 
 class ProblemDetailData(BaseModel):
     known_error: bool = False
+    symptoms: Optional[str] = None
     root_cause_summary: Optional[str] = None
     workaround_summary: Optional[str] = None
+    workaround_status: str = "DRAFT"
+    workaround_approved_at: Optional[datetime] = None
+    workaround_approved_by_id: Optional[UUID] = None
+    workaround_expires_at: Optional[datetime] = None
+    review_due_at: Optional[datetime] = None
     permanent_solution: Optional[str] = None
     rca_document_url: Optional[str] = None
     assigned_investigator_id: Optional[UUID] = None
@@ -116,15 +122,73 @@ class ProblemStatsResponse(BaseModel):
 
 
 class ProblemInvestigationUpdateRequest(BaseModel):
+    symptoms: Optional[str] = None
     root_cause_summary: Optional[str] = None
     workaround_summary: Optional[str] = None
     known_error: Optional[bool] = None
+    workaround_expires_at: Optional[datetime] = None
+    review_due_at: Optional[datetime] = None
     permanent_solution: Optional[str] = None
     rca_document_url: Optional[str] = None
     investigation_notes: Optional[str] = None
     status: Optional[str] = None
 
     model_config = ConfigDict(extra="forbid")
+
+
+class PublishWorkaroundRequest(BaseModel):
+    workaround_expires_at: Optional[datetime] = Field(default=None, description="Optional timestamp when this workaround expires")
+    review_due_at: Optional[datetime] = Field(default=None, description="Optional timestamp when this workaround must be reviewed")
+    symptoms: Optional[str] = Field(default=None, description="Optional symptoms summary")
+    notes: Optional[str] = Field(default=None, description="Optional publication audit/activity note")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class RetireWorkaroundRequest(BaseModel):
+    reason: Optional[str] = Field(default=None, description="Reason for retiring the workaround")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class WorkaroundGovernanceResponse(BaseModel):
+    problem_id: UUID
+    problem_ticket_number: str
+    known_error: bool
+    workaround_status: str
+    workaround_summary: str
+    workaround_approved_at: Optional[datetime] = None
+    workaround_approved_by_id: Optional[UUID] = None
+    workaround_expires_at: Optional[datetime] = None
+    review_due_at: Optional[datetime] = None
+    symptoms: Optional[str] = None
+    message: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class KnownErrorLookupItem(BaseModel):
+    id: UUID
+    ticket_number: str
+    title: str
+    description: Optional[str] = None
+    symptoms: Optional[str] = None
+    status: str
+    service_id: Optional[UUID] = None
+    service_name: Optional[str] = None
+    workaround_summary: str
+    workaround_status: str = "APPROVED"
+    workaround_approved_at: Optional[datetime] = None
+    workaround_expires_at: Optional[datetime] = None
+    review_due_at: Optional[datetime] = None
+    root_cause_summary: Optional[str] = None
+    permanent_solution: Optional[str] = None
+    identified_at: Optional[datetime] = None
+    resolved_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProblemResolveRequest(BaseModel):
@@ -170,6 +234,26 @@ class ReportRecurringProblemResponse(BaseModel):
     problem_id: UUID
     problem_ticket_number: str
     already_reported: bool = False
+    message: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+
+
+
+class LinkIncidentProblemRequest(BaseModel):
+    problem_id: UUID = Field(..., description="ID of the Problem ticket to link")
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class LinkIncidentProblemResponse(BaseModel):
+    incident_id: UUID
+    incident_ticket_number: str
+    linked_problem_id: Optional[UUID] = None
+    linked_problem_ticket_number: Optional[str] = None
+    already_linked: bool = False
     message: str
 
     model_config = ConfigDict(from_attributes=True)

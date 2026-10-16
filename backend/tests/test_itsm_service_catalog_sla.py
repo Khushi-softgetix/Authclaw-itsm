@@ -13,10 +13,11 @@ Covers:
 from datetime import datetime, timezone, timedelta
 from typing import Any
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from sqlalchemy import ARRAY, create_engine
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY as PG_ARRAY
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
@@ -529,6 +530,44 @@ class TestServiceCatalogEstimatedDeliverySLA(unittest.TestCase):
         if due_at.tzinfo is None:
             due_at = due_at.replace(tzinfo=timezone.utc)
         self.assertEqual(due_at, expected_monday_0930)
+
+    def test_9_postgres_db_error_not_suppressed_in_request_transition(self):
+        """9. In PostgreSQL, database errors during approval verification are re-raised and not suppressed."""
+        item = self._create_catalog_item(hours=4, name="DB Error Test Item")
+        payload = ServiceRequestCreateRequest(
+            catalog_item_id=item.id,
+            title="DB Error Request",
+            description="Testing error propagation",
+            priority="P3",
+        )
+        resp = RequestService.create_request(
+            db=self.db,
+            tenant_id=self.tenant_id,
+            actor_id=self.requester_id,
+            payload=payload,
+        )
+        ticket = self.db.query(ITSMTicket).filter(ITSMTicket.id == resp.id).first()
+
+        mock_db = MagicMock()
+        mock_db.get_bind.return_value.dialect.name = "postgresql"
+        lookup_query = MagicMock()
+        lookup_query.options.return_value = lookup_query
+        lookup_query.filter.return_value = lookup_query
+        lookup_query.first.return_value = ticket
+
+        mock_db.query.side_effect = [
+            lookup_query,
+            OperationalError("SELECT ...", {}, Exception("connection terminated unexpectedly")),
+        ]
+
+        with self.assertRaises(OperationalError):
+            RequestService.change_request_status(
+                db=mock_db,
+                tenant_id=self.tenant_id,
+                request_id=ticket.id,
+                actor_id=self.agent_id,
+                payload=ServiceRequestStatusUpdateRequest(status="IN_PROGRESS"),
+            )
 
 
 if __name__ == "__main__":

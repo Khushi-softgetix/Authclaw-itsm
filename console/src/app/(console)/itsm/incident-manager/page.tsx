@@ -3,7 +3,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  AlertCircle, AlertTriangle, ArrowRight, CheckCircle2, Clock3, Flame,
+  AlertCircle, AlertTriangle, ArrowRight, CheckCircle2, ChevronRight, Clock3, Flame,
   Gauge, Info, Radio, RefreshCw, ShieldAlert, TimerOff, UserRound, UsersRound,
 } from "lucide-react";
 import IncidentOversightDrawer from "@/components/itsm/incident-oversight-drawer";
@@ -72,50 +72,74 @@ const metricStyles = {
   sand: { icon: "text-[#D97706]" },
 } as const;
 
-function MetricCard({ label, value, help, icon: Icon, tone = "violet", active = false, onClick, href }: {
+function QueueSummaryLink({ label, value, help, action, icon: Icon, tone = "violet", href }: {
+  label: string;
+  value: number;
+  help: string;
+  action: string;
+  icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
+  tone?: keyof typeof metricStyles;
+  href: string;
+}) {
+  const styles = metricStyles[tone];
+  return (
+    <Link href={href} className="group flex min-w-0 items-center gap-4 rounded-xl border border-[#E4E7EC] bg-white px-4 py-3.5 shadow-[0_1px_2px_rgba(16,24,40,.04)] transition hover:border-[#C4B5FD] hover:bg-[#FCFAFF] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED] focus-visible:ring-offset-2">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[#F5F3FF]">
+        <Icon className={`h-[18px] w-[18px] ${styles.icon}`} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-baseline justify-between gap-3">
+          <span className="text-sm font-bold text-[#101828]">{label}</span>
+          <span className="text-xl font-extrabold tracking-tight text-[#0E1726]">{value}</span>
+        </span>
+        <span className="mt-0.5 block text-xs text-[#667085]">{help}</span>
+        <span className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-[#6941C6]">{action}<ArrowRight className="h-3 w-3 transition group-hover:translate-x-0.5" /></span>
+      </span>
+    </Link>
+  );
+}
+
+function AttentionFilter({ label, value, help, icon: Icon, tone = "violet", active, onClick }: {
   label: string;
   value: number;
   help: string;
   icon: React.ComponentType<{ className?: string; strokeWidth?: number }>;
   tone?: keyof typeof metricStyles;
-  active?: boolean;
-  onClick?: () => void;
-  href?: string;
+  active: boolean;
+  onClick: () => void;
 }) {
   const styles = metricStyles[tone];
-  const className = `group relative flex min-h-[120px] min-w-0 flex-col justify-between rounded-xl border bg-white p-5 text-left shadow-sm transition duration-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED] focus-visible:ring-offset-2 ${
-    active
-      ? "border-[#7C3AED] ring-2 ring-[#7C3AED]/20"
-      : "border-[#E6E9F0] hover:border-[#CBD5E1]"
-  }`;
-  const content = (
-    <>
-      <div className="mb-2 flex items-center justify-between text-[#6B7488]">
-        <span className="text-xs font-semibold uppercase tracking-wider">{label}</span>
-        <Icon className={`h-4 w-4 shrink-0 ${styles.icon}`} />
-      </div>
-      <div>
-        <div className="flex items-center justify-between">
-          <div className="text-2xl font-bold text-[#0E1726]">{value}</div>
-          {href ? <ArrowRight className="h-4 w-4 text-[#8C95A8] transition group-hover:translate-x-0.5" /> : null}
-        </div>
-        <p className="mt-1 text-xs text-[#6B7488]">{help}</p>
-      </div>
-    </>
+  return (
+    <button type="button" onClick={onClick} aria-pressed={active} aria-controls="attention-results" className={`group min-w-0 rounded-xl border p-3.5 text-left transition last:col-span-2 focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED] focus-visible:ring-offset-2 xl:last:col-span-1 ${active ? "border-[#7C3AED] bg-[#F7F4FF] shadow-[0_0_0_2px_rgba(124,58,237,.12)]" : "border-[#E4E7EC] bg-white hover:border-[#C4B5FD] hover:bg-[#FCFAFF]"}`}>
+      <span className="flex items-start justify-between gap-3">
+        <span className="text-sm font-bold leading-5 text-[#101828]">{label}</span>
+        <span className={`flex items-center gap-1.5 ${styles.icon}`}><Icon className="h-4 w-4" /><strong className="text-base">{value}</strong></span>
+      </span>
+      <span className="mt-1 block min-h-8 text-xs leading-4 text-[#667085]">{help}</span>
+      <span className={`mt-2 block text-[11px] font-semibold ${active ? "text-[#5B21B6]" : "text-[#667085] group-hover:text-[#6941C6]"}`}>{active ? "Showing below" : "Filter worklist"}</span>
+    </button>
   );
-  if (href) return <Link href={href} className={className}>{content}</Link>;
-  return <button type="button" onClick={onClick} aria-pressed={active} className={className}>{content}</button>;
 }
 
 function LoadingState() {
   return (
     <div className="space-y-5" aria-label="Loading Incident Manager operations">
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 8 }).map((_, index) => (
-          <div key={index} className="min-h-[120px] animate-pulse rounded-xl border border-[#E6E9F0] bg-white p-5 shadow-sm" />
+      <div className="grid gap-3 md:grid-cols-3">
+        {Array.from({ length: 3 }).map((_, index) => (
+          <div key={index} className="h-[106px] animate-pulse rounded-xl border border-[#E6E9F0] bg-white shadow-sm" />
         ))}
       </div>
-      <div className="h-80 animate-pulse rounded-2xl border border-[#E6E9F0] bg-white" />
+      <div className="overflow-hidden rounded-2xl border border-[#E6E9F0] bg-white shadow-sm">
+        <div className="border-b border-[#E6E9F0] p-5">
+          <div className="h-5 w-48 animate-pulse rounded bg-[#EEF1F5]" />
+          <div className="mt-2 h-4 w-80 max-w-full animate-pulse rounded bg-[#F2F4F7]" />
+        </div>
+        <div className="grid gap-3 bg-[#FAFAFF] p-4 sm:grid-cols-2 xl:grid-cols-5">
+          {Array.from({ length: 5 }).map((_, index) => <div key={index} className="h-[118px] animate-pulse rounded-xl bg-white" />)}
+        </div>
+        <div className="h-64 animate-pulse border-t border-[#E6E9F0] bg-white" />
+      </div>
+      <div className="h-72 animate-pulse rounded-2xl border border-[#E6E9F0] bg-white" />
     </div>
   );
 }
@@ -206,7 +230,7 @@ export default function IncidentManagerPage() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-[11px] font-bold uppercase tracking-[.12em] text-[#6D28D9]">Incident operations</p>
-          <h1 className="mt-1 text-2xl font-extrabold tracking-tight text-[#0E1726] md:text-3xl">Incident Manager</h1>
+          <h1 className="mt-1 text-3xl font-extrabold tracking-tight text-[#0E1726]">Incident Manager</h1>
           <p className="mt-1 max-w-2xl text-sm text-[#6B7488]">Monitor urgent incidents, SLA health, and response ownership.</p>
         </div>
         <div className="flex flex-col items-start gap-1 sm:items-end">
@@ -217,27 +241,17 @@ export default function IncidentManagerPage() {
         </div>
       </div>
 
-      <section aria-label="Operational summary">
-        <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-[11px] text-[#667085]">An incident may match more than one attention reason.</p>
-          <p className="text-[11px] text-[#667085]"><span className="font-semibold text-[#475467]">Focus attention:</span> select a reason to filter the worklist below.</p>
+      <section aria-labelledby="queue-overview-heading">
+        <div className="mb-3">
+          <h2 id="queue-overview-heading" className="text-sm font-bold text-[#101828]">Queue overview</h2>
+          <p className="mt-1 text-xs text-[#667085]">Open the complete queue, assign unowned work, or enter active command workspaces.</p>
         </div>
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <MetricCard label="Open incidents" value={summary.open_incidents} help="Active incident queue" icon={Gauge} tone="violet" href="/itsm/incident-manager/incidents" />
-          <MetricCard label="Watch list" value={summary.escalation_watch} help="All incidents requiring review" icon={ShieldAlert} tone="indigo" active={view === "all"} onClick={() => setView("all")} />
-          <MetricCard label="Critical or high priority" value={summary.p1_p2} help="P1 and P2 incidents" icon={Flame} tone="rose" active={view === "priority"} onClick={() => setView("priority")} />
-          <MetricCard label="Deadline missed" value={summary.sla_breached} help="SLA target has passed" icon={TimerOff} tone="rose" active={view === "breached"} onClick={() => setView("breached")} />
-          <MetricCard label="Deadline approaching" value={summary.sla_at_risk} help="25% or less SLA time remains" icon={Clock3} tone="amber" active={view === "risk"} onClick={() => setView("risk")} />
-          <MetricCard label="No recent activity" value={summary.stuck} help={`${Math.round(dashboard.policy.idle_threshold_seconds / 3600)}+ hours without an update`} icon={AlertTriangle} tone="slate" active={view === "stuck"} onClick={() => setView("stuck")} />
-          <MetricCard label="No owner" value={summary.unassigned} help="Assignment required" icon={UsersRound} tone="sand" href="/itsm/incident-manager/incidents?assignment_group=__UNASSIGNED__&unassigned=true" />
-          <MetricCard label="Active majors" value={summary.active_major_incidents} help="Command currently in progress" icon={Radio} tone="violet" href="/itsm/incident-manager/major-incidents" />
+        <div className="grid gap-3 md:grid-cols-3">
+          <QueueSummaryLink label="Open incidents" value={summary.open_incidents ?? 0} help="All active incident work" action="Open incident queue" icon={Gauge} tone="violet" href="/itsm/incident-manager/incidents" />
+          <QueueSummaryLink label="No owner" value={summary.unassigned ?? 0} help="Incidents requiring assignment" action="Review unassigned work" icon={UsersRound} tone="sand" href="/itsm/incident-manager/incidents?assignment_group=__UNASSIGNED__&unassigned=true" />
+          <QueueSummaryLink label="Active majors" value={summary.active_major_incidents ?? 0} help="Command currently in progress" action="Open command queue" icon={Radio} tone="violet" href="/itsm/incident-manager/major-incidents" />
         </div>
       </section>
-
-      <div className="flex gap-3 rounded-xl border border-[#EAECF0] bg-[#F8FAFC] px-4 py-3 text-[11px] leading-5 text-[#667085]">
-        <Info className="mt-0.5 h-4 w-4 shrink-0 text-[#667085]" />
-        <p><span className="font-semibold text-[#344054]">Attention policy:</span> SLA risk begins at {Math.round(dashboard.policy.risk_remaining_fraction * 100)}% remaining; an incident is marked stuck after {Math.round(dashboard.policy.idle_threshold_seconds / 3600)} hours without meaningful activity. {dashboard.policy.escalation_note}</p>
-      </div>
 
       <div className="space-y-6">
         <section className="overflow-hidden rounded-2xl border border-[#E4E7EC] bg-white shadow-[0_1px_2px_rgba(16,24,40,.04)]" aria-labelledby="attention-heading">
@@ -247,11 +261,30 @@ export default function IncidentManagerPage() {
                 <h2 id="attention-heading" className="text-base font-bold text-[#101828]">Needs attention now</h2>
                 <span className="rounded-full bg-[#F2F4F7] px-2 py-0.5 text-[10px] font-bold text-[#475467]">{visibleItems.length}</span>
               </div>
-              <p className="mt-1 text-xs text-[#667085]">Prioritized incidents from the selected operational signal. Watch items are advisory, not automatic escalations.</p>
+              <p className="mt-1 text-xs text-[#667085]"><span className="font-semibold text-[#475467]">Focus attention:</span> select a reason, then review the matching incidents below.</p>
             </div>
             <Link href={`/itsm/incident-manager/incidents?attention=${queueAttention}`} className="inline-flex shrink-0 items-center gap-1 text-[11px] font-bold text-[#6941C6] hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED] focus-visible:ring-offset-2">Open filtered queue <ArrowRight className="h-3 w-3" /></Link>
           </div>
 
+          <div className="border-b border-[#EAECF0] bg-[#FAFAFF] p-4">
+            <div className="grid grid-cols-2 gap-3 xl:grid-cols-5">
+              <AttentionFilter label="Watch list" value={summary.escalation_watch} help="All incidents requiring review" icon={ShieldAlert} tone="indigo" active={view === "all"} onClick={() => setView("all")} />
+              <AttentionFilter label="Critical or high priority" value={summary.p1_p2} help="P1 and P2 incidents" icon={Flame} tone="rose" active={view === "priority"} onClick={() => setView("priority")} />
+              <AttentionFilter label="Deadline missed" value={summary.sla_breached} help="SLA target has passed" icon={TimerOff} tone="rose" active={view === "breached"} onClick={() => setView("breached")} />
+              <AttentionFilter label="Deadline approaching" value={summary.sla_at_risk} help="25% or less SLA time remains" icon={Clock3} tone="amber" active={view === "risk"} onClick={() => setView("risk")} />
+              <AttentionFilter label="No recent activity" value={summary.stuck} help={`${Math.round(dashboard.policy.idle_threshold_seconds / 3600)}+ hours without an update`} icon={AlertTriangle} tone="slate" active={view === "stuck"} onClick={() => setView("stuck")} />
+            </div>
+            <details className="group mt-3 rounded-lg border border-[#E4E7EC] bg-white">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3.5 py-2.5 text-xs font-semibold text-[#475467] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#7C3AED]">
+                <span className="flex items-center gap-2"><Info className="h-3.5 w-3.5 text-[#6941C6]" />How attention is calculated</span>
+                <span className="text-[11px] font-medium text-[#8A93A5] group-open:hidden">Show policy</span>
+                <span className="hidden text-[11px] font-medium text-[#8A93A5] group-open:inline">Hide policy</span>
+              </summary>
+              <p className="border-t border-[#EAECF0] px-3.5 py-3 text-xs leading-5 text-[#667085]">An incident may match more than one reason. SLA risk begins at {Math.round(dashboard.policy.risk_remaining_fraction * 100)}% remaining, and no recent activity begins after {Math.round(dashboard.policy.idle_threshold_seconds / 3600)} hours without a meaningful update. {dashboard.policy.escalation_note}</p>
+            </details>
+          </div>
+
+          <div id="attention-results" aria-live="polite">
           {visibleItems.length === 0 ? (
             <div className="flex min-h-48 flex-col items-center justify-center px-6 py-9 text-center">
               <span className="flex h-11 w-11 items-center justify-center rounded-full bg-[#ECFDF3]"><CheckCircle2 className="h-5 w-5 text-[#039855]" /></span>
@@ -270,14 +303,14 @@ export default function IncidentManagerPage() {
                     {attentionPreview.map((item) => {
                       const reasons = attentionReasons(item);
                       const primaryReason = reasons[0];
-                      return <tr key={`${view}-${item.incident_id}`} className="transition hover:bg-[#FAFAFF]">
+                      return <tr key={`${view}-${item.incident_id}`} tabIndex={0} role="button" aria-label={`Review ${item.ticket_number}: ${item.title}`} onClick={() => setSelectedIncident(item.incident_id)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedIncident(item.incident_id); } }} className="cursor-pointer transition hover:bg-[#FAFAFF] focus:bg-[#FAFAFF] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#7C3AED]">
                         <td className="px-5 py-4"><span className="font-mono text-[10px] font-bold text-[#6941C6]">{item.ticket_number}</span><p className="mt-1 truncate text-xs font-semibold text-[#101828]" title={item.title}>{item.title}</p></td>
                         <td className="px-3 py-4"><IncidentStatusBadge status={item.status} className="px-2 py-0 text-[10px]" /></td>
                         <td className="px-3 py-4"><IncidentPriorityBadge priority={item.priority} className="px-2 py-0 text-[10px]" showLabel={false} /></td>
                         <td className="px-3 py-4"><div className="flex items-center gap-1.5">{primaryReason ? <span className={`truncate rounded-md border px-2 py-0.5 text-[10px] font-semibold ${primaryReason.tone}`}>{primaryReason.label}</span> : <span className="text-[10px] text-[#98A2B3]">No active signal</span>}{reasons.length > 1 ? <span className="shrink-0 text-[10px] font-semibold text-[#667085]">+{reasons.length - 1}</span> : null}</div></td>
                         <td className="px-3 py-4"><p className={`text-[11px] font-bold ${item.sla.status === "BREACHED" ? "text-[#7B405C]" : item.sla.status === "AT_RISK" ? "text-[#735B28]" : "text-[#475467]"}`}>{item.sla.status === "NO_SLA" ? "No SLA assigned" : item.sla.status === "BREACHED" ? "Breached" : item.sla.status === "AT_RISK" ? "At risk" : "Within target"}</p><p className="mt-1 text-[10px] text-[#8A93A5]">{item.sla.status === "NO_SLA" ? "No timer available" : formatDuration(item.sla.remaining_seconds)}</p></td>
                         <td className="px-3 py-4"><p className="truncate text-[11px] font-semibold text-[#344054]">{item.assignment_group || "No assignment group"}</p><p className="mt-1 truncate text-[10px] text-[#8A93A5]">{item.assignee_email || "No individual owner"}</p></td>
-                        <td className="px-3 py-4 text-right"><button type="button" onClick={() => setSelectedIncident(item.incident_id)} aria-label={`Review ${item.ticket_number}: ${item.title}`} className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#6941C6] transition hover:bg-[#F4F3FF] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED]"><ArrowRight className="h-4 w-4" /></button></td>
+                        <td className="px-3 py-4 text-right"><span className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#6941C6]"><ChevronRight className="h-4 w-4" /></span></td>
                       </tr>;
                     })}
                   </tbody>
@@ -295,6 +328,7 @@ export default function IncidentManagerPage() {
               </div>
             </div>
           )}
+          </div>
           {visibleItems.length > ATTENTION_PREVIEW_LIMIT ? <div className="border-t border-[#EAECF0] bg-[#F9FAFB] px-5 py-3 text-right"><Link href={`/itsm/incident-manager/incidents?attention=${queueAttention}`} className="inline-flex items-center gap-1 text-xs font-semibold text-[#6941C6] hover:underline">View all {visibleItems.length} matching incidents <ArrowRight className="h-3.5 w-3.5"/></Link></div> : null}
         </section>
 
@@ -305,16 +339,16 @@ export default function IncidentManagerPage() {
             </div>
             <div className="grid lg:grid-cols-2 lg:divide-x lg:divide-[#E6E9F0]">
             <div className="px-5 py-4 lg:px-6 lg:py-5">
-              <div className="flex items-center justify-between gap-3"><h3 className="text-xs font-bold text-[#475069]">Assignment groups</h3><span className="text-[10px] text-[#8A93A5]">{allGroupWorkload.length > WORKLOAD_PREVIEW_LIMIT ? `Top ${WORKLOAD_PREVIEW_LIMIT} of ${allGroupWorkload.length}` : `${allGroupWorkload.length} groups`}</span></div>
+              <div className="flex items-center justify-between gap-3"><h3 className="text-xs font-bold text-[#475069]">Assignment groups</h3><span className="text-xs text-[#8A93A5]">{allGroupWorkload.length > WORKLOAD_PREVIEW_LIMIT ? `Top ${WORKLOAD_PREVIEW_LIMIT} of ${allGroupWorkload.length}` : `${allGroupWorkload.length} groups`}</span></div>
               <div className="mt-3 space-y-3">
               {groupWorkload.length === 0 ? <p className="rounded-lg bg-[#F8FAFC] p-4 text-center text-xs leading-5 text-[#8A93A5]">No open incidents are assigned to a group yet.</p> : groupWorkload.map((entry) => (
-                <Link key={entry.key} href={`/itsm/incident-manager/incidents?assignment_group=${encodeURIComponent(entry.key === "Unassigned" ? "__UNASSIGNED__" : entry.key)}`} className="block rounded-lg p-1.5 transition hover:bg-[#F9FAFB] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED]"><div className="flex items-center justify-between gap-3 text-xs"><span className="truncate font-semibold text-[#475467]">{entry.key === "Unassigned" ? "No assignment group" : entry.label}</span><span className="font-bold text-[#101828]">{entry.open_incidents}</span></div><div className="mt-1 flex flex-wrap gap-1 text-[9px] text-[#667085]">{entry.p1_p2 > 0 && <span className="rounded bg-[#FFF8F4] px-1.5 py-0.5 font-bold text-[#82503C]">{entry.p1_p2} high priority</span>}{entry.sla_at_risk + entry.sla_breached > 0 && <span className="rounded bg-[#FFFBF0] px-1.5 py-0.5 font-bold text-[#735B28]">{entry.sla_at_risk + entry.sla_breached} SLA attention</span>}</div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[#EEF1F5]"><div className="h-full rounded-full bg-[#7F56D9]" style={{ width: `${Math.max((entry.open_incidents / maxGroup) * 100, 6)}%` }} /></div></Link>
+                <Link key={entry.key} href={`/itsm/incident-manager/incidents?assignment_group=${encodeURIComponent(entry.key === "Unassigned" ? "__UNASSIGNED__" : entry.key)}`} aria-label={`View ${entry.open_incidents} open ${entry.open_incidents === 1 ? "incident" : "incidents"} for ${entry.key === "Unassigned" ? "no assignment group" : entry.label}`} className="group block rounded-lg p-1.5 transition hover:bg-[#F9FAFB] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED]"><div className="flex items-center justify-between gap-3 text-xs"><span className="truncate font-semibold text-[#475467]">{entry.key === "Unassigned" ? "No assignment group" : entry.label}</span><ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#8A93A5] transition group-hover:translate-x-0.5 group-hover:text-[#6D28D9]" /></div><div className="mt-1 flex flex-wrap gap-1 text-[11px] text-[#667085]">{entry.p1_p2 > 0 && <span className="rounded bg-[#FFF8F4] px-1.5 py-0.5 font-bold text-[#82503C]">{entry.p1_p2} high priority</span>}{entry.sla_at_risk + entry.sla_breached > 0 && <span className="rounded bg-[#FFFBF0] px-1.5 py-0.5 font-bold text-[#735B28]">{entry.sla_at_risk + entry.sla_breached} SLA attention</span>}</div><div className="group/bar relative mt-2"><div className="h-2 overflow-hidden rounded-full bg-[#EEF1F5]"><div className="h-full rounded-full bg-[#7F56D9] transition-colors group-hover/bar:bg-[#6D28D9]" style={{ width: `${Math.max((entry.open_incidents / maxGroup) * 100, 8)}%` }} /></div><span aria-hidden="true" className="pointer-events-none absolute bottom-full right-0 z-10 mb-1 whitespace-nowrap rounded-md bg-[#241542] px-2 py-1 text-[10px] font-semibold text-white opacity-0 shadow-md transition-opacity group-hover/bar:opacity-100 group-focus-visible:opacity-100">{entry.open_incidents} open {entry.open_incidents === 1 ? "incident" : "incidents"}</span></div></Link>
               ))}
               </div>
               {allGroupWorkload.length > WORKLOAD_PREVIEW_LIMIT ? <Link href="/itsm/incident-manager/incidents" className="mt-4 inline-flex items-center gap-1 text-[11px] font-semibold text-[#6D28D9] hover:underline">View full queue <ArrowRight className="h-3 w-3"/></Link> : null}
             </div>
             <div className="border-t border-[#E6E9F0] px-5 py-4 lg:border-t-0 lg:px-6 lg:py-5">
-              <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><UserRound className="h-3.5 w-3.5 text-[#667085]" /><h3 className="text-xs font-bold text-[#475467]">Assignees</h3></div><span className="text-[10px] text-[#8A93A5]">{allAssigneeWorkload.length > WORKLOAD_PREVIEW_LIMIT ? `Top ${WORKLOAD_PREVIEW_LIMIT} of ${allAssigneeWorkload.length}` : `${allAssigneeWorkload.length} owners`}</span></div>
+              <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><UserRound className="h-3.5 w-3.5 text-[#667085]" /><h3 className="text-xs font-bold text-[#475467]">Assignees</h3></div><span className="text-xs text-[#8A93A5]">{allAssigneeWorkload.length > WORKLOAD_PREVIEW_LIMIT ? `Top ${WORKLOAD_PREVIEW_LIMIT} of ${allAssigneeWorkload.length}` : `${allAssigneeWorkload.length} owners`}</span></div>
               <div className="mt-3 space-y-3">
               {assigneeWorkload.length === 0 ? <p className="rounded-lg bg-[#F8FAFC] p-4 text-center text-xs leading-5 text-[#8A93A5]">No open incidents are assigned to an individual yet.</p> : assigneeWorkload.map((entry) => (
                 <AssigneeWorkloadRow key={entry.key} entry={entry} max={maxAssignee} />
@@ -340,16 +374,19 @@ function AssigneeWorkloadRow({ entry, max }: { entry: IncidentWorkloadEntry; max
     <div className="min-w-0 flex-1">
       <div className="flex items-center justify-between gap-2 text-xs">
         <span className="truncate text-[#475069]" title={displayLabel}>{displayLabel}</span>
-        <span className="font-bold text-[#0E1726]">{entry.open_incidents}</span>
+        <ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#8A93A5] transition group-hover:translate-x-0.5 group-hover:text-[#6D28D9]" />
       </div>
-      <div className="mt-1 text-[9px] text-[#8A93A5]">
+      <div className="mt-1 text-[11px] text-[#8A93A5]">
         {entry.p1_p2} high priority · {entry.sla_at_risk + entry.sla_breached} SLA attention
       </div>
-      <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-[#EEF1F5]">
-        <div className="h-full rounded-full bg-[#7C3AED]" style={{ width: `${Math.max((entry.open_incidents / max) * 100, 6)}%` }} />
+      <div className="group/bar relative mt-2">
+        <div className="h-2 overflow-hidden rounded-full bg-[#EEF1F5]">
+          <div className="h-full rounded-full bg-[#7C3AED] transition-colors group-hover/bar:bg-[#6D28D9]" style={{ width: `${Math.max((entry.open_incidents / max) * 100, 8)}%` }} />
+        </div>
+        <span aria-hidden="true" className="pointer-events-none absolute bottom-full right-0 z-10 mb-1 whitespace-nowrap rounded-md bg-[#241542] px-2 py-1 text-[10px] font-semibold text-white opacity-0 shadow-md transition-opacity group-hover/bar:opacity-100 group-focus-visible:opacity-100">{entry.open_incidents} open {entry.open_incidents === 1 ? "incident" : "incidents"}</span>
       </div>
     </div>
   </>;
-  if (entry.key === "Unassigned") return <Link href="/itsm/incident-manager/incidents?unassigned=true" className="flex items-center gap-3 rounded-lg p-1.5 transition hover:bg-[#F8FAFC]">{content}</Link>;
-  return <Link href={`/itsm/incident-manager/incidents?assignee_id=${encodeURIComponent(entry.key)}`} className="flex items-center gap-3 rounded-lg p-1.5 transition hover:bg-[#F8FAFC]">{content}</Link>;
+  if (entry.key === "Unassigned") return <Link href="/itsm/incident-manager/incidents?unassigned=true" aria-label={`View ${entry.open_incidents} unassigned ${entry.open_incidents === 1 ? "incident" : "incidents"}`} className="group flex items-center gap-3 rounded-lg p-1.5 transition hover:bg-[#F8FAFC] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED]">{content}</Link>;
+  return <Link href={`/itsm/incident-manager/incidents?assignee_id=${encodeURIComponent(entry.key)}`} aria-label={`View ${entry.open_incidents} open ${entry.open_incidents === 1 ? "incident" : "incidents"} assigned to ${displayLabel}`} className="group flex items-center gap-3 rounded-lg p-1.5 transition hover:bg-[#F8FAFC] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED]">{content}</Link>;
 }

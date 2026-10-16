@@ -1089,6 +1089,113 @@ from sqlalchemy.dialects.postgresql import JSONB, ARRAY as PG_ARRAY, UUID as PG_
 # MVP Models (12 tables)
 # -----------------------------------------------------------------------------
 
+class ITSMMetricSnapshot(Base):
+    """Immutable ANA-004 KPI result for a completed UTC reporting period."""
+    __tablename__ = "itsm_metric_snapshots"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    metric_key = Column(String(64), nullable=False)
+    period_grain = Column(String(16), nullable=False)
+    period_start = Column(DateTime(timezone=True), nullable=False)
+    period_end = Column(DateTime(timezone=True), nullable=False)
+    dimensions = Column(JSONB, nullable=False, default=dict)
+    dimensions_hash = Column(String(64), nullable=False)
+    value = Column(JSONB, nullable=False)
+    definition_version = Column(String(64), nullable=False)
+    source_events = Column(JSONB, nullable=False, default=dict)
+    generated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+
+    __table_args__ = (
+        CheckConstraint(
+            "period_grain IN ('DAILY','WEEKLY','MONTHLY')",
+            name="ck_itsm_metric_snapshot_grain",
+        ),
+        CheckConstraint(
+            "period_end > period_start",
+            name="ck_itsm_metric_snapshot_period",
+        ),
+        UniqueConstraint(
+            "tenant_id",
+            "metric_key",
+            "period_grain",
+            "period_start",
+            "period_end",
+            "definition_version",
+            "dimensions_hash",
+            name="uq_itsm_metric_snapshot_identity",
+        ),
+        Index(
+            "idx_itsm_metric_snapshot_history",
+            "tenant_id",
+            "metric_key",
+            "period_grain",
+            "period_start",
+        ),
+    )
+
+
+class ITSMMetricSnapshotJob(Base):
+    """Durable, leased generation job for one completed reporting period."""
+    __tablename__ = "itsm_metric_snapshot_jobs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    period_grain = Column(String(16), nullable=False)
+    period_start = Column(DateTime(timezone=True), nullable=False)
+    period_end = Column(DateTime(timezone=True), nullable=False)
+    definition_version = Column(String(64), nullable=False)
+    dimensions = Column(JSONB, nullable=False, default=dict)
+    dimensions_hash = Column(String(64), nullable=False)
+    status = Column(String(16), nullable=False, default="PENDING")
+    attempt_count = Column(Integer, nullable=False, default=0)
+    lease_owner = Column(String(128), nullable=True)
+    lease_expires_at = Column(DateTime(timezone=True), nullable=True)
+    next_attempt_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    last_error_code = Column(String(128), nullable=True)
+    started_at = Column(DateTime(timezone=True), nullable=True)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+
+    __table_args__ = (
+        CheckConstraint("period_grain IN ('DAILY','WEEKLY','MONTHLY')", name="ck_itsm_metric_snapshot_job_grain"),
+        CheckConstraint("period_end > period_start", name="ck_itsm_metric_snapshot_job_period"),
+        CheckConstraint("status IN ('PENDING','RUNNING','SUCCEEDED','FAILED')", name="ck_itsm_metric_snapshot_job_status"),
+        UniqueConstraint(
+            "tenant_id", "period_grain", "period_start", "period_end",
+            "definition_version", "dimensions_hash",
+            name="uq_itsm_metric_snapshot_job_identity",
+        ),
+        Index("idx_itsm_metric_snapshot_job_claim", "tenant_id", "status", "next_attempt_at", "period_end"),
+    )
+
+
+class ITSMMetricSourceEvent(Base):
+    """Immutable event used when mutable counters cannot reconstruct history."""
+    __tablename__ = "itsm_metric_source_events"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    event_type = Column(String(64), nullable=False)
+    source_type = Column(String(64), nullable=False)
+    source_id = Column(UUID(as_uuid=True), nullable=False)
+    occurred_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+    event_key = Column(String(255), nullable=False)
+    payload = Column(JSONB, nullable=False, default=dict)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
+
+    tenant = relationship("Tenant")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "event_key", name="uq_itsm_metric_source_event_key"),
+        Index("idx_itsm_metric_source_event_window", "tenant_id", "event_type", "occurred_at"),
+    )
+
 class ITSMBusinessCalendar(Base):
     """Business calendar with working hours and holidays for SLA calculations."""
     __tablename__ = "itsm_business_calendars"
@@ -1234,6 +1341,11 @@ class ITSMTicket(Base):
     assignee_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     assignment_group = Column(String(100), nullable=True)
     service_id = Column(UUID(as_uuid=True), ForeignKey("itsm_services.id", ondelete="SET NULL"), nullable=True)
+    configuration_item_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("itsm_configuration_items.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     category_id = Column(UUID(as_uuid=True), ForeignKey("itsm_ticket_categories.id", ondelete="SET NULL"), nullable=True)
     category = Column(String(100), nullable=False, default="GENERAL")
     subcategory = Column(String(100), nullable=True)
@@ -1267,14 +1379,11 @@ class ITSMTicket(Base):
     tenant = relationship("Tenant")
     category_rel = relationship("ITSMTicketCategory", foreign_keys=[category_id])
     service = relationship("ITSMService")
+    configuration_item = relationship("ITSMConfigurationItem")
     requester = relationship("User", foreign_keys=[requester_id])
     assignee = relationship("User", foreign_keys=[assignee_id])
     sla_policy = relationship("ITSMSLAPolicy")
     linked_problem = relationship("ITSMTicket", remote_side=[id], foreign_keys=[linked_problem_id])
-
-    @property
-    def configuration_item_id(self) -> None:
-        return None
 
     @property
     def service_name(self) -> str | None:
@@ -1665,6 +1774,7 @@ class ITSMMajorIncident(Base):
     tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
     ticket_id = Column(UUID(as_uuid=True), ForeignKey("itsm_tickets.id", ondelete="CASCADE"), nullable=False)
     incident_commander_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    communication_lead_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     bridge_url = Column(String(1024), nullable=True)
     communication_channel = Column(String(255), nullable=True)
     declared_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
@@ -1675,50 +1785,27 @@ class ITSMMajorIncident(Base):
     closed_at = Column(DateTime(timezone=True), nullable=True)
     executive_summary = Column(Text, nullable=True)
     impacted_business_units = Column(PG_ARRAY(Text), nullable=False, default=list)
+    affected_service_ids = Column(JSONB, nullable=False, default=list)
+    affected_configuration_item_ids = Column(JSONB, nullable=False, default=list)
     customer_impact_description = Column(Text, nullable=True)
+    restoration_checkpoints = Column(JSONB, nullable=False, default=list)
+    command_decisions = Column(JSONB, nullable=False, default=list)
+    command_tasks = Column(JSONB, nullable=False, default=list)
+    stakeholders = Column(JSONB, nullable=False, default=list)
+    command_communications = Column(JSONB, nullable=False, default=list)
     created_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     tenant = relationship("Tenant")
     ticket = relationship("ITSMTicket")
     incident_commander = relationship("User", foreign_keys=[incident_commander_id])
+    communication_lead = relationship("User", foreign_keys=[communication_lead_id])
     declared_by = relationship("User", foreign_keys=[declared_by_id])
-
-    @property
-    def communication_lead_id(self) -> None:
-        return None
-
-    @property
-    def affected_service_ids(self) -> list:
-        return []
-
-    @property
-    def affected_configuration_item_ids(self) -> list:
-        return []
-
-    @property
-    def restoration_checkpoints(self) -> list:
-        return []
-
-    @property
-    def command_decisions(self) -> list:
-        return []
-
-    @property
-    def command_tasks(self) -> list:
-        return []
-
-    @property
-    def stakeholders(self) -> list:
-        return []
-
-    @property
-    def command_communications(self) -> list:
-        return []
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "ticket_id", name="uq_itsm_major_incident_ticket"),
         Index("idx_itsm_major_inc_commander", "tenant_id", "incident_commander_id"),
+        Index("idx_itsm_major_inc_communication_lead", "tenant_id", "communication_lead_id"),
     )
 
 
@@ -2312,7 +2399,7 @@ class ITSMOutageAlertAudience(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "audience_type IN ('SERVICE_USERS','SERVICE_AGENTS','PROBLEM_MANAGERS',"
+            "audience_type IN ('ALL_PORTAL_USERS','SERVICE_USERS','SERVICE_AGENTS','PROBLEM_MANAGERS',"
             "'CHANGE_MANAGERS','SELECTED_TEAM','SERVICE_OWNERS','SPECIFIC_USER')",
             name="ck_outage_alert_audience_type",
         ),

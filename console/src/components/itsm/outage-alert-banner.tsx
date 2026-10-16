@@ -5,14 +5,42 @@ import Link from "next/link";
 import { BellRing, ChevronRight } from "lucide-react";
 import { alertApi, type AlertSummary, formatAlertDate, formatPublicStatus } from "@/lib/outage-alerts";
 
-export default function OutageAlertBanner() {
+export default function OutageAlertBanner({ itsmRole }: { itsmRole?: string | null }) {
   const [alerts, setAlerts] = useState<AlertSummary[]>([]);
+  const normalizedRole = String(itsmRole || "").toUpperCase();
+  const receivesBusinessAlerts = [
+    "REQUESTER",
+    "SERVICE_AGENT",
+    "INCIDENT_MANAGER",
+    "SERVICE_LEAD",
+    "PROCESS_CHANGE_MANAGER",
+    "PROBLEM_CHANGE_MANAGER",
+    "CATALOG_MANAGER",
+  ].includes(normalizedRole);
 
   useEffect(() => {
-    alertApi<AlertSummary[]>("/active").then(setAlerts).catch(() => setAlerts([]));
-  }, []);
+    if (!receivesBusinessAlerts) {
+      return;
+    }
+    let mounted = true;
+    const load = () => {
+      alertApi<AlertSummary[]>("/active")
+        .then((items) => {
+          if (mounted) setAlerts(items);
+        })
+        .catch(() => {
+          if (mounted) setAlerts([]);
+        });
+    };
+    load();
+    const refresh = window.setInterval(load, 45_000);
+    return () => {
+      mounted = false;
+      window.clearInterval(refresh);
+    };
+  }, [receivesBusinessAlerts]);
 
-  if (!alerts.length) return null;
+  if (!receivesBusinessAlerts || !alerts.length) return null;
   const primary = alerts[0];
 
   return (
@@ -21,10 +49,10 @@ export default function OutageAlertBanner() {
         <div className="flex min-w-0 gap-3">
           <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white text-[#6D28D9]"><BellRing className="h-5 w-5" /></span>
           <div className="min-w-0">
-            <p className="text-xs font-semibold uppercase tracking-[.12em] text-[#6D28D9]">Active service alert{alerts.length > 1 ? `s · ${alerts.length}` : ""}</p>
+            <p className="text-xs font-semibold uppercase tracking-[.12em] text-[#6D28D9]">Active service alert{alerts.length > 1 ? `s \u00B7 ${alerts.length}` : ""}</p>
             <p className="mt-1 truncate font-semibold">{primary.title}</p>
             <p className="mt-0.5 text-xs text-[#6B7488]">
-              {formatPublicStatus(primary.public_status)} · {primary.affected_services.map((service) => service.name).join(", ")} · Updated {formatAlertDate(primary.latest_publication_at)}
+              {formatPublicStatus(primary.public_status)} {"\u00B7"} {primary.affected_services.map((service) => service.name).join(", ")} {"\u00B7"} Updated {formatAlertDate(primary.latest_publication_at)}
             </p>
           </div>
         </div>

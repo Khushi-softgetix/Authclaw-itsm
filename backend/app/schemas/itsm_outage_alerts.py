@@ -14,6 +14,7 @@ AlertIntent = Literal["INFORM", "ACTION_REQUIRED", "INVESTIGATE", "RESOLVE"]
 AlertPublicStatus = Literal["INVESTIGATING", "IDENTIFIED", "MONITORING", "RECOVERED"]
 AgentHandling = Literal["ALERT_ONLY", "SOLVE"]
 AudienceType = Literal[
+    "ALL_PORTAL_USERS",
     "SERVICE_USERS",
     "SERVICE_AGENTS",
     "PROBLEM_MANAGERS",
@@ -83,6 +84,7 @@ class AlertDraftRequest(BaseModel):
 class AlertPublicationRequest(BaseModel):
     preview_token: str = Field(min_length=32, max_length=128)
     idempotency_key: str = Field(min_length=8, max_length=255)
+    confirm_tenant_wide: bool = False
     public_summary: str | None = Field(default=None, min_length=1, max_length=5000)
     impact_summary: str | None = Field(default=None, min_length=1, max_length=5000)
     recommended_action: str | None = Field(default=None, max_length=5000)
@@ -200,6 +202,33 @@ class AlertPreview(BaseModel):
     total_recipients: int
     groups: list[dict[str, Any]]
     exclusions: list[dict[str, Any]]
+
+
+class AlertRecipientEvidenceItem(BaseModel):
+    user_id: UUID
+    email: str
+    role: str
+    projection_type: str
+    audience_memberships: list[dict[str, Any]] = Field(default_factory=list)
+    inclusion_reason: str
+    projection_fields: list[str] = Field(default_factory=list)
+    allowed_actions: list[str] = Field(default_factory=list)
+    channels: list[str] = Field(default_factory=list)
+    delivery_status: str | None = None
+    available_at: datetime | None = None
+    read_at: datetime | None = None
+    acknowledged_at: datetime | None = None
+
+
+class AlertRecipientEvidencePage(BaseModel):
+    source: Literal["LIVE_PREVIEW", "PUBLICATION_SNAPSHOT"]
+    publication_id: UUID | None = None
+    publication_version: int | None = None
+    items: list[AlertRecipientEvidenceItem]
+    total: int
+    offset: int
+    limit: int
+    has_more: bool
 
 
 class AlertReferenceData(BaseModel):

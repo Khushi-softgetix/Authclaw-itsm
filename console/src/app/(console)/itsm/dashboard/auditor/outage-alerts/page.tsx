@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { BellRing, CalendarDays, ChevronLeft, ChevronRight, FilterX, RefreshCw, Search, ShieldCheck } from "lucide-react";
+import { BellRing, CalendarDays, ChevronDown, ChevronLeft, ChevronRight, Filter, FilterX, RefreshCw, Search, ShieldCheck } from "lucide-react";
 import { alertApi, formatAlertDate, formatPublicStatus, type AlertEvidencePage, type AlertEvidenceSummary } from "@/lib/outage-alerts";
 
 const PAGE_SIZE = 25;
@@ -35,6 +35,7 @@ export default function AuditorOutageEvidencePage() {
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const params = useMemo(() => {
     const values = new URLSearchParams({ offset: String(offset), limit: String(PAGE_SIZE) });
@@ -66,38 +67,48 @@ export default function AuditorOutageEvidencePage() {
     return () => window.clearTimeout(request);
   }, [load]);
 
-  function applyFilters() { setOffset(0); setApplied(filters); }
-  function resetFilters() { setFilters(emptyFilters); setApplied(emptyFilters); setOffset(0); }
+  function applyFilters() {
+    if (filters.start && filters.end && filters.start > filters.end) {
+      setError("The start date must be before the end date");
+      return;
+    }
+    setError("");
+    setOffset(0);
+    setApplied(filters);
+  }
+  function resetFilters() { setFilters(emptyFilters); setApplied(emptyFilters); setOffset(0); setAdvancedOpen(false); }
 
   const hasFilters = Object.values(applied).some(Boolean);
   const records = page?.items || [];
 
   return <div className="space-y-5">
-    <header className="flex flex-wrap items-start justify-between gap-4">
+    <header className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
       <div className="max-w-3xl">
-        <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[.14em] text-[#6D28D9]"><ShieldCheck className="h-4 w-4" /> Independent, read-only review</p>
-        <h1 className="mt-2 text-3xl font-bold tracking-tight text-[#0E1726]">Outage &amp; Alert evidence</h1>
-        <p className="mt-1 text-sm leading-6 text-[#6B7488]">Review what was published, who initiated it, its intended audience, delivery evidence and the tamper-evident event trail. Recipient identities and restricted operational notes are not exposed.</p>
+        <p className="inline-flex items-center gap-2 rounded-lg border border-[#DDD6FE] bg-[#FAF8FF] px-2.5 py-1.5 text-xs font-semibold text-[#5B21B6]"><ShieldCheck className="h-3.5 w-3.5" />Read-only workspace</p>
+        <h1 className="mt-3 text-3xl font-extrabold tracking-tight text-[#0E1726] sm:text-[2rem]">Outage &amp; Alert evidence</h1>
+        <p className="mt-2 text-sm leading-6 text-[#5F687C]">Verify what was communicated, who authorized it, which audience was intended, and whether delivery evidence is complete. Recipient identities and restricted operational notes remain protected.</p>
       </div>
-      <button type="button" onClick={() => void load()} disabled={loading} className="inline-flex items-center gap-2 rounded-xl border border-[#DDD6FE] bg-white px-4 py-2.5 text-sm font-semibold text-[#5B21B6] hover:bg-[#F8F5FF] disabled:opacity-60"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Refresh</button>
+      <button type="button" onClick={() => void load()} disabled={loading} className="inline-flex self-start items-center justify-center gap-2 rounded-lg border border-[#D8DDE7] bg-white px-4 py-2.5 text-sm font-semibold text-[#475069] shadow-sm transition hover:border-[#C4B5FD] hover:bg-[#FAF8FF] hover:text-[#5B21B6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9]/30 disabled:opacity-60 lg:self-auto"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /> Refresh</button>
     </header>
 
-    <section className="rounded-2xl border border-[#E6E9F0] bg-white p-4 shadow-sm">
-      <form onSubmit={(event) => { event.preventDefault(); applyFilters(); }} className="space-y-3">
-        <div className="grid gap-3 lg:grid-cols-[minmax(240px,1.5fr)_repeat(3,minmax(150px,1fr))]">
-          <label className="relative"><span className="sr-only">Search outage evidence</span><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8A93A5]" /><input value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} placeholder="Search alert, title or service" className="w-full rounded-xl border border-[#DCE1E8] py-2.5 pl-9 pr-3 text-sm outline-none focus:border-[#8B5CF6] focus:ring-2 focus:ring-[#6D28D9]/10" /></label>
+    <section className="rounded-2xl border border-[#E1E5EC] bg-white p-4 shadow-sm" aria-label="Search and filter outage evidence">
+      <form onSubmit={(event) => { event.preventDefault(); applyFilters(); }}>
+        <div className="grid gap-3 md:grid-cols-[minmax(240px,1fr)_180px_180px_auto]">
+          <label className="relative"><span className="sr-only">Search outage evidence</span><Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8A93A5]" /><input value={filters.query} onChange={(event) => setFilters((current) => ({ ...current, query: event.target.value }))} placeholder="Search alert number, title, or service" className="w-full rounded-lg border border-[#DCE1E8] bg-[#FBFCFD] py-2.5 pl-9 pr-3 text-sm outline-none transition focus:border-[#8B5CF6] focus:bg-white focus:ring-2 focus:ring-[#6D28D9]/10" /></label>
           <Select selectLabel="Lifecycle state" value={filters.status} onChange={(value) => setFilters((current) => ({ ...current, status: value }))} options={["DRAFT", "ACTIVE", "RECOVERED", "CANCELLED"]} />
           <Select selectLabel="Severity" value={filters.severity} onChange={(value) => setFilters((current) => ({ ...current, severity: value }))} options={["CRITICAL", "HIGH", "MEDIUM", "LOW"]} />
+          <button type="submit" className="rounded-lg bg-[#6D28D9] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#5B21B6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9]/30">Apply filters</button>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3 border-t border-[#EEF1F5] pt-3">
+          <button type="button" onClick={() => setAdvancedOpen((open) => !open)} aria-expanded={advancedOpen} className="inline-flex items-center gap-2 rounded-lg px-2 py-2 text-sm font-semibold text-[#5B21B6] hover:bg-[#FAF8FF]"><Filter className="h-4 w-4" />More filters{hasFilters ? <span className="rounded-full bg-[#6D28D9] px-1.5 py-0.5 text-[10px] text-white">On</span> : null}<ChevronDown className={`h-4 w-4 transition ${advancedOpen ? "rotate-180" : ""}`} /></button>
+          <button type="button" onClick={resetFilters} disabled={!hasFilters && !Object.values(filters).some(Boolean)} className="inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold text-[#5F687C] hover:bg-[#F7F8FA] disabled:opacity-45"><FilterX className="h-4 w-4" /> Clear all</button>
+        </div>
+        {advancedOpen ? <div className="mt-3 grid gap-3 border-t border-[#EEF1F5] pt-4 sm:grid-cols-2 xl:grid-cols-3">
           <Select selectLabel="Audience" value={filters.audience} onChange={(value) => setFilters((current) => ({ ...current, audience: value }))} options={["SERVICE_USERS", "SERVICE_AGENTS", "SERVICE_OWNERS", "SELECTED_TEAM", "PROBLEM_MANAGERS", "CHANGE_MANAGERS", "SPECIFIC_USER"]} />
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[1fr_1fr_1fr_1fr_auto_auto]">
           <Select selectLabel="Delivery outcome" value={filters.delivery} onChange={(value) => setFilters((current) => ({ ...current, delivery: value }))} options={["AVAILABLE", "QUEUED", "RETRYING", "FAILED", "PERMANENTLY_FAILED"]} />
-          <label><span className="sr-only">Publisher or creator</span><input aria-label="Publisher or creator" value={filters.actor} onChange={(event) => setFilters((current) => ({ ...current, actor: event.target.value }))} placeholder="Creator or publisher" className="w-full rounded-xl border border-[#DCE1E8] px-3 py-2.5 text-sm outline-none focus:border-[#8B5CF6]" /></label>
-          <DateFilter dateLabel="From date" value={filters.start} onChange={(value) => setFilters((current) => ({ ...current, start: value }))} />
-          <DateFilter dateLabel="To date" value={filters.end} onChange={(value) => setFilters((current) => ({ ...current, end: value }))} />
-          <button type="submit" className="rounded-xl bg-[#6D28D9] px-5 py-2.5 text-sm font-semibold text-white hover:bg-[#5B21B6]">Apply filters</button>
-          <button type="button" onClick={resetFilters} disabled={!hasFilters && !Object.values(filters).some(Boolean)} className="inline-flex items-center justify-center gap-2 rounded-xl border border-[#DCE1E8] bg-white px-4 py-2.5 text-sm font-semibold text-[#475069] hover:bg-[#F7F8FA] disabled:opacity-45"><FilterX className="h-4 w-4" /> Reset</button>
-        </div>
+          <label><span className="sr-only">Publisher or creator</span><input aria-label="Publisher or creator" value={filters.actor} onChange={(event) => setFilters((current) => ({ ...current, actor: event.target.value }))} placeholder="Creator or publisher" className="w-full rounded-lg border border-[#DCE1E8] bg-[#FBFCFD] px-3 py-2.5 text-sm outline-none focus:border-[#8B5CF6] focus:bg-white" /></label>
+          <div className="grid grid-cols-2 gap-3 sm:col-span-2 xl:col-span-1"><DateFilter dateLabel="From date" value={filters.start} onChange={(value) => setFilters((current) => ({ ...current, start: value }))} /><DateFilter dateLabel="To date" value={filters.end} onChange={(value) => setFilters((current) => ({ ...current, end: value }))} /></div>
+        </div> : null}
       </form>
     </section>
 
@@ -125,9 +136,9 @@ function EvidenceFact({ factLabel, value }: { factLabel: string; value: string }
 }
 
 function Select({ selectLabel, value, onChange, options }: { selectLabel: string; value: string; onChange: (value: string) => void; options: string[] }) {
-  return <label><span className="sr-only">{selectLabel}</span><select aria-label={selectLabel} value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-xl border border-[#DCE1E8] bg-white px-3 py-2.5 text-sm outline-none focus:border-[#8B5CF6]"><option value="">All {selectLabel.toLowerCase()}s</option>{options.map((option) => <option key={option} value={option}>{label(option)}</option>)}</select></label>;
+  return <label><span className="sr-only">{selectLabel}</span><select aria-label={selectLabel} value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-lg border border-[#DCE1E8] bg-[#FBFCFD] px-3 py-2.5 text-sm text-[#354052] outline-none transition focus:border-[#8B5CF6] focus:bg-white focus:ring-2 focus:ring-[#6D28D9]/10"><option value="">All {selectLabel.toLowerCase()}s</option>{options.map((option) => <option key={option} value={option}>{label(option)}</option>)}</select></label>;
 }
 
 function DateFilter({ dateLabel, value, onChange }: { dateLabel: string; value: string; onChange: (value: string) => void }) {
-  return <label className="relative"><span className="sr-only">{dateLabel}</span><CalendarDays className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8A93A5]" /><input aria-label={dateLabel} type="date" value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-xl border border-[#DCE1E8] py-2.5 pl-9 pr-3 text-sm outline-none focus:border-[#8B5CF6]" /></label>;
+  return <label className="relative"><span className="sr-only">{dateLabel}</span><CalendarDays className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[#8A93A5]" /><input aria-label={dateLabel} title={dateLabel} type="date" value={value} onChange={(event) => onChange(event.target.value)} className="w-full rounded-lg border border-[#DCE1E8] bg-[#FBFCFD] py-2.5 pl-9 pr-3 text-sm text-[#354052] outline-none transition focus:border-[#8B5CF6] focus:bg-white focus:ring-2 focus:ring-[#6D28D9]/10" /></label>;
 }

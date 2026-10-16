@@ -26,8 +26,6 @@ router = APIRouter()
 
 ALLOWED_ROLES = {
     "PROCESS_CHANGE_MANAGER",
-    "PLATFORM_ADMINISTRATOR",
-    "ADMIN",
 }
 
 
@@ -153,6 +151,7 @@ def update_change_assessment(
         change_id=change_id,
         payload=payload,
         actor_id=actor_id,
+        operation_id=request.headers.get("x-request-id") or None,
     )
 
 
@@ -180,6 +179,7 @@ def update_change(
         change_id=change_id,
         payload=payload,
         actor_id=actor_id,
+        operation_id=request.headers.get("x-request-id") or None,
     )
 
 
@@ -207,6 +207,7 @@ def transition_change_lifecycle(
         change_id=change_id,
         payload=payload,
         actor_id=actor_id,
+        operation_id=request.headers.get("x-request-id") or None,
     )
 
 

@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.db.models import (
     ITSMChangeRequest,
     ITSMChangeRequestCI,
+    ITSMMetricSourceEvent,
     ITSMProblemDetail,
     ITSMTicket,
     ITSMTicketActivity,
@@ -1172,6 +1173,18 @@ class ProblemService:
             updated_at=now,
         )
         db.add(new_change)
+        db.add(
+            ITSMMetricSourceEvent(
+                id=uuid4(),
+                tenant_id=tenant_id,
+                event_type="CHANGE_CREATED",
+                source_type="CHANGE",
+                source_id=new_change.id,
+                occurred_at=now,
+                event_key=f"change-created:{new_change.id}",
+                payload={"change_type": new_change.change_type},
+            )
+        )
 
         if payload.ci_ids:
             for ci_id in payload.ci_ids:

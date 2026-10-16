@@ -126,6 +126,12 @@ const catalogManagerNavigation: NavItem[] = [
   { name: "Form Builder", href: "/itsm/catalog-manager/form-builder", icon: FileCheck, roles: readRoles },
 ];
 
+const platformAdminNavigation: NavItem[] = [
+  { name: "Platform overview", href: "/itsm/dashboard/platform-admin", icon: LayoutDashboard, roles: readRoles },
+  { name: "Admin portal", href: "/itsm/admin-portal", icon: Settings, roles: readRoles },
+  { name: "Broadcast health", href: "/itsm/admin-portal/broadcast-health", icon: Bell, roles: readRoles },
+];
+
 export default function ConsoleShell({ children, userEmail, tenantId, tenantName, userRole, platformRole = "NONE", itsmRole }: ConsoleShellProps) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -162,6 +168,8 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
       ? problemChangeNavigation
       : effectiveItsmRole === "CATALOG_MANAGER"
       ? catalogManagerNavigation
+      : effectiveItsmRole === "PLATFORM_ADMINISTRATOR"
+      ? platformAdminNavigation
       : itsmNavigation
     : navigation;
   const allowedNavigation = activeNavigationList.filter((item) => item.roles.includes(normalizedRole));
@@ -373,6 +381,16 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
                     <p className="text-xs font-medium text-[#475069] truncate">{tenantName || tenantId}</p>
                   </div>
                 </div>
+                {isItsm ? (
+                  <Link
+                    href="/itsm/profile"
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-[#475069] transition hover:bg-[#F1ECFE] hover:text-[#5B21B6]"
+                  >
+                    <User className="h-4 w-4 text-[#6D28D9]" />
+                    My Profile
+                  </Link>
+                ) : null}
                 <button
                   onClick={handleLogout}
                   className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-red-400 hover:bg-red-500/10 text-sm font-medium transition"
@@ -444,7 +462,7 @@ export default function ConsoleShell({ children, userEmail, tenantId, tenantName
             </div>
           </header>
 
-          <main className="flex-1 overflow-auto px-4 py-6 sm:px-6 md:px-8 md:py-8 xl:px-10"><OutageAlertBanner />{children}</main>
+          <main className="flex-1 overflow-auto px-4 py-6 sm:px-6 md:px-8 md:py-8 xl:px-10"><OutageAlertBanner itsmRole={effectiveItsmRole} />{children}</main>
         </div>
       </div>
     </div>

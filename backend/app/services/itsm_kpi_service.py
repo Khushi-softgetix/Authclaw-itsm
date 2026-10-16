@@ -6,7 +6,7 @@ Provides deterministic, reproducible calculations for the 10 core ITSM KPIs:
 3. FCR (First Contact Resolution rate)
 4. Reopen Rate
 5. Backlog Age (Distribution & Average age)
-6. SLA Performance (Compliance, breach, active risk breakdown via compute_sla_details)
+6. SLA Performance (Compliance, breach, active risk breakdown)
 7. CSAT (Customer satisfaction score, positive rate, response rate)
 8. Deflection (Self-service knowledge deflection rate)
 9. Change Success (Success rate, emergency rate)
@@ -23,12 +23,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.db.models import (
     ITSMChangeRequest,
     ITSMKnowledgeArticle,
+    ITSMMetricSourceEvent,
     ITSMTicket,
     ITSMTicketActivity,
 )
@@ -49,7 +50,6 @@ from app.schemas.itsm_analytics import (
     SLAAdherenceDimensionResponse,
     SLAPerformanceKPIResponse,
 )
-from app.services.itsm_sla_service import compute_sla_details
 
 logger = logging.getLogger(__name__)
 
@@ -95,17 +95,104 @@ class ITSMKPIService:
             query = query.filter(ITSMTicket.status == status.strip().upper())
         return query
 
-    def _acknowledgement_at(self, ticket: ITSMTicket) -> Optional[datetime]:
+    @staticmethod
+    def _new_value(activity: ITSMTicketActivity) -> dict[str, Any]:
+        return dict((activity.activity_metadata or {}).get("new_value") or {})
+
+    def _ticket_activities(
+        self,
+        ticket_id: UUID,
+        end_time: datetime,
+    ) -> list[ITSMTicketActivity]:
+        return (
+            self.db.query(ITSMTicketActivity)
+            .filter(
+                ITSMTicketActivity.tenant_id == self.tenant_id,
+                ITSMTicketActivity.ticket_id == ticket_id,
+                ITSMTicketActivity.created_at <= end_time,
+            )
+            .order_by(ITSMTicketActivity.created_at.asc())
+            .all()
+        )
+
+    def _resolution_at(self, ticket: ITSMTicket, end_time: datetime) -> Optional[datetime]:
+        """Return the first persisted resolution transition on or before the cutoff."""
+        for activity in self._ticket_activities(ticket.id, end_time):
+            if activity.activity_type != "STATUS_CHANGE":
+                continue
+            if str(self._new_value(activity).get("status", "")).upper() in {"RESOLVED", "CLOSED"}:
+                return _utc(activity.created_at)
+        # Legacy records without lifecycle activities are safe only when their
+        # current representation had already reached its present value by cutoff.
+        candidate = _utc(ticket.resolved_at) or _utc(ticket.closed_at)
+        if candidate and candidate <= end_time:
+            return candidate
+        return None
+
+    def _status_as_of(self, ticket: ITSMTicket, end_time: datetime) -> str:
+        status = "ASSIGNED" if (ticket.assignee_id or ticket.assignment_group) else "NEW"
+        for activity in self._ticket_activities(ticket.id, end_time):
+            new_status = self._new_value(activity).get("status")
+            if new_status:
+                status = str(new_status).upper()
+        if not any(
+            self._new_value(activity).get("status")
+            for activity in self._ticket_activities(ticket.id, end_time)
+        ):
+            status = (ticket.status or status).upper()
+        return status
+
+    def _field_as_of(self, ticket: ITSMTicket, field: str, end_time: datetime):
+        value = None
+        found = False
+        for activity in self._ticket_activities(ticket.id, end_time):
+            new_values = self._new_value(activity)
+            if field in new_values:
+                value = new_values[field]
+                found = True
+        if found:
+            if field.endswith("_at") and isinstance(value, str):
+                try:
+                    return _utc(datetime.fromisoformat(value.replace("Z", "+00:00")))
+                except ValueError:
+                    return None
+            return value
+        return getattr(ticket, field, None)
+
+    def _identity_at_creation(self, ticket: ITSMTicket) -> tuple[str, str, str, str]:
+        for activity in self._ticket_activities(ticket.id, _utc(ticket.created_at) + timedelta(seconds=1)):
+            if activity.activity_type == "CREATED":
+                values = self._new_value(activity)
+                return (
+                    str(values.get("service_id") or ""),
+                    str(values.get("linked_problem_id") or ""),
+                    str(values.get("category") or ""),
+                    str(values.get("subcategory") or ""),
+                )
+        return (
+            str(ticket.service_id or ""),
+            str(ticket.linked_problem_id or ""),
+            str(ticket.category or ""),
+            str(ticket.subcategory or ""),
+        )
+
+    def _acknowledgement_at(
+        self,
+        ticket: ITSMTicket,
+        end_time: Optional[datetime] = None,
+    ) -> Optional[datetime]:
         """Return the persisted response marker or the first qualifying agent activity."""
+        cutoff = _utc(end_time or datetime.now(timezone.utc))
         acknowledged_at = _utc(ticket.sla_response_met_at)
-        if acknowledged_at:
+        if acknowledged_at and acknowledged_at <= cutoff:
             return acknowledged_at
         first_activity = (
             self.db.query(ITSMTicketActivity.created_at)
             .filter(
                 ITSMTicketActivity.tenant_id == self.tenant_id,
                 ITSMTicketActivity.ticket_id == ticket.id,
-                ITSMTicketActivity.activity_type.in_(["AGENT_NOTE", "STATUS_CHANGE", "COMMENT", "ASSIGNMENT"]),
+                ITSMTicketActivity.activity_type.in_(["AGENT_NOTE", "STATUS_CHANGE", "COMMENT", "ASSIGNMENT", "ASSIGNMENT_CHANGE"]),
+                ITSMTicketActivity.created_at <= cutoff,
             )
             .order_by(ITSMTicketActivity.created_at.asc())
             .first()
@@ -144,7 +231,7 @@ class ITSMKPIService:
 
         for ticket in tickets:
             t_create = _utc(ticket.created_at)
-            t_ack = self._acknowledgement_at(ticket)
+            t_ack = self._acknowledgement_at(ticket, end_time)
 
             if t_ack and t_create and t_ack >= t_create:
                 elapsed = (t_ack - t_create).total_seconds()
@@ -204,19 +291,19 @@ class ITSMKPIService:
         query = self.db.query(ITSMTicket).filter(
             ITSMTicket.tenant_id == self.tenant_id,
             ITSMTicket.ticket_type == "INCIDENT",
-            ITSMTicket.status.in_(["RESOLVED", "CLOSED"]),
+            ITSMTicket.created_at <= end_time,
         )
         query = self._apply_incident_filters(query, service_id, priority, status)
-        # Filter by resolution time window
-        resolve_col = func.coalesce(ITSMTicket.resolved_at, ITSMTicket.closed_at)
-        query = self._apply_date_filter(query, resolve_col, start_time, end_time)
         tickets = query.all()
 
         durations: List[float] = []
         for ticket in tickets:
             t_create = _utc(ticket.created_at)
-            t_resolve = _utc(ticket.resolved_at) or _utc(ticket.closed_at)
-            if t_create and t_resolve and t_resolve >= t_create:
+            t_resolve = self._resolution_at(ticket, end_time)
+            if (
+                t_create and t_resolve and t_resolve >= t_create
+                and (start_time is None or t_resolve >= start_time)
+            ):
                 elapsed = (t_resolve - t_create).total_seconds()
                 durations.append(max(0.0, elapsed))
 
@@ -263,14 +350,16 @@ class ITSMKPIService:
         end_time = _utc(end_time or datetime.now(timezone.utc))
         start_time = _utc(start_time)
 
-        resolve_col = func.coalesce(ITSMTicket.resolved_at, ITSMTicket.closed_at)
         query = self.db.query(ITSMTicket).filter(
             ITSMTicket.tenant_id == self.tenant_id,
             ITSMTicket.ticket_type == "INCIDENT",
-            ITSMTicket.status.in_(["RESOLVED", "CLOSED"]),
+            ITSMTicket.created_at <= end_time,
         )
-        query = self._apply_date_filter(query, resolve_col, start_time, end_time)
-        tickets = query.all()
+        tickets = [
+            ticket for ticket in query.all()
+            if (resolved_at := self._resolution_at(ticket, end_time))
+            and (start_time is None or resolved_at >= start_time)
+        ]
 
         total_resolved = len(tickets)
         if total_resolved == 0:
@@ -282,19 +371,19 @@ class ITSMKPIService:
 
         fcr_count = 0
         for ticket in tickets:
-            if ticket.resolution_code == "FIRST_CONTACT_RESOLVED":
+            resolution_at = self._resolution_at(ticket, end_time)
+            activities = self._ticket_activities(ticket.id, resolution_at or end_time)
+            resolution_code = next(
+                (
+                    self._new_value(activity).get("resolution_code")
+                    for activity in activities
+                    if self._new_value(activity).get("resolution_code")
+                ),
+                ticket.resolution_code,
+            )
+            if resolution_code == "FIRST_CONTACT_RESOLVED":
                 fcr_count += 1
                 continue
-
-            # Check activities for reopen or multiple agent notes
-            activities = (
-                self.db.query(ITSMTicketActivity)
-                .filter(
-                    ITSMTicketActivity.tenant_id == self.tenant_id,
-                    ITSMTicketActivity.ticket_id == ticket.id,
-                )
-                .all()
-            )
             reopened = any(
                 (act.activity_type == "STATUS_CHANGE" and "REOPEN" in (act.content or "").upper())
                 or (act.activity_metadata or {}).get("is_reopen") is True
@@ -334,14 +423,16 @@ class ITSMKPIService:
         end_time = _utc(end_time or datetime.now(timezone.utc))
         start_time = _utc(start_time)
 
-        resolve_col = func.coalesce(ITSMTicket.resolved_at, ITSMTicket.closed_at)
         query = self.db.query(ITSMTicket).filter(
             ITSMTicket.tenant_id == self.tenant_id,
             ITSMTicket.ticket_type == "INCIDENT",
-            ITSMTicket.status.in_(["RESOLVED", "CLOSED"]),
+            ITSMTicket.created_at <= end_time,
         )
-        query = self._apply_date_filter(query, resolve_col, start_time, end_time)
-        tickets = query.all()
+        tickets = [
+            ticket for ticket in query.all()
+            if (resolved_at := self._resolution_at(ticket, end_time))
+            and (start_time is None or resolved_at >= start_time)
+        ]
 
         total_resolved = len(tickets)
         if total_resolved == 0:
@@ -358,6 +449,7 @@ class ITSMKPIService:
             .filter(
                 ITSMTicketActivity.tenant_id == self.tenant_id,
                 ITSMTicketActivity.ticket_id.in_(ticket_ids),
+                ITSMTicketActivity.created_at <= end_time,
             )
             .all()
         )
@@ -409,14 +501,14 @@ class ITSMKPIService:
 
         query = self.db.query(ITSMTicket).filter(
             ITSMTicket.tenant_id == self.tenant_id,
-            ~ITSMTicket.status.in_(["RESOLVED", "CLOSED", "CANCELLED"]),
+            ITSMTicket.ticket_type == "INCIDENT",
             ITSMTicket.created_at <= now,
         )
         query = self._apply_incident_filters(query, service_id, priority, status)
-        if start_time is not None:
-            query = query.filter(ITSMTicket.created_at >= start_time)
-
-        tickets = query.all()
+        tickets = [
+            ticket for ticket in query.all()
+            if self._status_as_of(ticket, now) not in TERMINAL_STATUSES
+        ]
         total_open = len(tickets)
 
         distribution = {
@@ -504,18 +596,14 @@ class ITSMKPIService:
         records: List[OperationalKPIIncidentRecord] = []
 
         for ticket in tickets:
-            due_at = _utc(getattr(ticket, due_field, None))
+            due_at = _utc(self._field_as_of(ticket, due_field, now))
             if not due_at:
                 continue
             total_with_commitment += 1
             if dimension == "RESPONSE":
-                completed_at = _utc(getattr(ticket, met_field, None)) or self._acknowledgement_at(ticket)
+                completed_at = _utc(self._field_as_of(ticket, met_field, now)) or self._acknowledgement_at(ticket, now)
             else:
-                completed_at = (
-                    _utc(getattr(ticket, met_field, None))
-                    or _utc(ticket.resolved_at)
-                    or _utc(ticket.closed_at)
-                )
+                completed_at = _utc(self._field_as_of(ticket, met_field, now)) or self._resolution_at(ticket, now)
 
             if completed_at and completed_at < _utc(ticket.created_at):
                 completed_at = None
@@ -527,7 +615,7 @@ class ITSMKPIService:
                     met_count += 1
                 else:
                     breached_count += 1
-            elif ticket.sla_paused_at or ticket.sla_status == "PAUSED":
+            elif self._field_as_of(ticket, "sla_paused_at", now) or self._field_as_of(ticket, "sla_status", now) == "PAUSED":
                 pending_count += 1
                 outcome = "PENDING"
             elif now > due_at:
@@ -586,7 +674,7 @@ class ITSMKPIService:
 
         mtta_records: List[OperationalKPIIncidentRecord] = []
         for ticket in period_tickets:
-            acknowledged_at = self._acknowledgement_at(ticket)
+            acknowledged_at = self._acknowledgement_at(ticket, now)
             created_at = _utc(ticket.created_at)
             if acknowledged_at and created_at and acknowledged_at >= created_at and len(mtta_records) < drilldown_limit:
                 mtta_records.append(self._drilldown_record(
@@ -595,19 +683,22 @@ class ITSMKPIService:
                     duration_seconds=(acknowledged_at - created_at).total_seconds(),
                 ))
 
-        resolution_column = func.coalesce(ITSMTicket.resolved_at, ITSMTicket.closed_at)
         mttr_query = self.db.query(ITSMTicket).filter(
             ITSMTicket.tenant_id == self.tenant_id,
             ITSMTicket.ticket_type == "INCIDENT",
-            ITSMTicket.status.in_(["RESOLVED", "CLOSED"]),
+            ITSMTicket.created_at <= now,
         )
         mttr_query = self._apply_incident_filters(mttr_query, service_id, priority, status)
-        mttr_tickets = self._apply_date_filter(mttr_query, resolution_column, start, now).all()
+        mttr_tickets = mttr_query.all()
         mttr_records: List[OperationalKPIIncidentRecord] = []
         for ticket in mttr_tickets:
-            resolved_at = _utc(ticket.resolved_at) or _utc(ticket.closed_at)
+            resolved_at = self._resolution_at(ticket, now)
             created_at = _utc(ticket.created_at)
-            if resolved_at and created_at and resolved_at >= created_at and len(mttr_records) < drilldown_limit:
+            if (
+                resolved_at and created_at and resolved_at >= created_at
+                and (start is None or resolved_at >= start)
+                and len(mttr_records) < drilldown_limit
+            ):
                 mttr_records.append(self._drilldown_record(
                     ticket,
                     measured_at=resolved_at,
@@ -617,10 +708,15 @@ class ITSMKPIService:
         backlog_query = self.db.query(ITSMTicket).filter(
             ITSMTicket.tenant_id == self.tenant_id,
             ITSMTicket.ticket_type == "INCIDENT",
-            ~ITSMTicket.status.in_(list(TERMINAL_STATUSES)),
             ITSMTicket.created_at <= now,
         )
-        backlog_tickets = self._apply_incident_filters(backlog_query, service_id, priority, status).all()
+        backlog_tickets = [
+            ticket
+            for ticket in self._apply_incident_filters(
+                backlog_query, service_id, priority, status
+            ).all()
+            if self._status_as_of(ticket, now) not in TERMINAL_STATUSES
+        ]
         backlog_records: List[OperationalKPIIncidentRecord] = []
         for ticket in backlog_tickets[:drilldown_limit]:
             age_seconds = max(0.0, (now - _utc(ticket.created_at)).total_seconds())
@@ -666,27 +762,23 @@ class ITSMKPIService:
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
     ) -> SLAPerformanceKPIResponse:
-        """Formula: (count(sla_met) / count(sla_evaluated)) * 100
-
-        Reuses authoritative compute_sla_details() directly without duplicating
-        SLA date calculations.
-        """
+        """Evaluate completed resolution commitments; show active risk separately."""
         now = _utc(end_time or datetime.now(timezone.utc))
         start_time = _utc(start_time)
 
-        # Query tickets that have SLA policy or SLA due dates applied
+        # SLA Performance is explicitly the completed resolution dimension.
+        # Response and resolution results remain separate on the operational
+        # dashboard and are never silently combined into one percentage.
         query = self.db.query(ITSMTicket).filter(
             ITSMTicket.tenant_id == self.tenant_id,
-            or_(
-                ITSMTicket.sla_policy_id.isnot(None),
-                ITSMTicket.sla_resolution_due_at.isnot(None),
-                ITSMTicket.sla_response_due_at.isnot(None),
-            ),
+            ITSMTicket.ticket_type == "INCIDENT",
+            ITSMTicket.created_at <= now,
         )
-        query = self._apply_date_filter(query, ITSMTicket.created_at, start_time, now)
-        tickets = query.all()
+        tickets = [
+            ticket for ticket in query.all()
+            if self._field_as_of(ticket, "sla_resolution_due_at", now) is not None
+        ]
 
-        total_evaluated = len(tickets)
         risk_breakdown = {
             "within_sla": 0,
             "at_risk": 0,
@@ -694,73 +786,53 @@ class ITSMKPIService:
             "paused": 0,
         }
 
-        if total_evaluated == 0:
+        if not tickets:
             return SLAPerformanceKPIResponse(
                 total_evaluated=0,
                 met_count=0,
                 breached_count=0,
-                compliance_rate_pct=0.0,
-                breach_rate_pct=0.0,
+                compliance_rate_pct=None,
+                breach_rate_pct=None,
                 active_risk_breakdown=risk_breakdown,
             )
 
-        met_count = 0
-        breached_count = 0
-
+        completed_cohort: list[ITSMTicket] = []
         for ticket in tickets:
-            # Check terminal vs active state
-            if ticket.status in TERMINAL_STATUSES:
-                # Terminal tickets: Check authoritative fields
-                # If breach was recorded or met_at > due_at, it breached
-                was_breached = bool(
-                    getattr(ticket, "sla_breach_escalated_at", None)
-                    or (
-                        ticket.sla_resolution_due_at
-                        and ticket.sla_resolution_met_at
-                        and ticket.sla_resolution_met_at > ticket.sla_resolution_due_at
-                    )
-                    or (
-                        ticket.sla_resolution_due_at
-                        and not ticket.sla_resolution_met_at
-                        and ticket.resolved_at
-                        and ticket.resolved_at > ticket.sla_resolution_due_at
-                    )
-                )
-                if was_breached:
-                    breached_count += 1
-                    risk_breakdown["breached"] += 1
-                else:
-                    met_count += 1
-                    risk_breakdown["within_sla"] += 1
+            due_at = _utc(self._field_as_of(ticket, "sla_resolution_due_at", now))
+            completed_at = _utc(self._field_as_of(ticket, "sla_resolution_met_at", now)) or self._resolution_at(ticket, now)
+            outcome_at = completed_at or (due_at if due_at and due_at < now else None)
+            if outcome_at and (start_time is None or outcome_at >= start_time):
+                completed_cohort.append(ticket)
+        completed, _ = self._sla_adherence_dimension(completed_cohort, "RESOLUTION", now, 1)
+        for ticket in tickets:
+            if self._status_as_of(ticket, now) in TERMINAL_STATUSES:
+                continue
+            due_at = _utc(self._field_as_of(ticket, "sla_resolution_due_at", now))
+            paused = self._field_as_of(ticket, "sla_paused_at", now)
+            if paused:
+                sla_status = "paused"
+            elif due_at and now > due_at:
+                sla_status = "breached"
+            elif due_at and (due_at - now).total_seconds() <= max(
+                0.0, (due_at - _utc(ticket.created_at)).total_seconds() * 0.25
+            ):
+                sla_status = "at_risk"
             else:
-                # Active tickets: evaluate with authoritative compute_sla_details()
-                sla_details = compute_sla_details(ticket, now)
-                status = sla_details.get("status", "NO_SLA")
+                sla_status = "within_sla"
+            if sla_status in risk_breakdown:
+                risk_breakdown[sla_status] += 1
 
-                if status == "BREACHED":
-                    breached_count += 1
-                    risk_breakdown["breached"] += 1
-                elif status == "AT_RISK":
-                    met_count += 1  # Not yet breached
-                    risk_breakdown["at_risk"] += 1
-                elif status == "PAUSED":
-                    met_count += 1
-                    risk_breakdown["paused"] += 1
-                elif status == "WITHIN_SLA":
-                    met_count += 1
-                    risk_breakdown["within_sla"] += 1
-                else:
-                    # NO_SLA or fallback
-                    met_count += 1
-
-        compliance_rate = round((met_count / total_evaluated) * 100.0, 2)
-        breach_rate = round((breached_count / total_evaluated) * 100.0, 2)
+        breach_rate = (
+            round((completed.breached_count / completed.evaluated_count) * 100.0, 2)
+            if completed.evaluated_count
+            else None
+        )
 
         return SLAPerformanceKPIResponse(
-            total_evaluated=total_evaluated,
-            met_count=met_count,
-            breached_count=breached_count,
-            compliance_rate_pct=compliance_rate,
+            total_evaluated=completed.evaluated_count,
+            met_count=completed.met_count,
+            breached_count=completed.breached_count,
+            compliance_rate_pct=completed.compliance_rate_pct,
             breach_rate_pct=breach_rate,
             active_risk_breakdown=risk_breakdown,
         )
@@ -781,15 +853,18 @@ class ITSMKPIService:
         end_time = _utc(end_time or datetime.now(timezone.utc))
         start_time = _utc(start_time)
 
-        # Count resolved tickets in window for response rate denominator
-        resolve_col = func.coalesce(ITSMTicket.resolved_at, ITSMTicket.closed_at)
-        resolved_q = self.db.query(func.count(ITSMTicket.id)).filter(
+        # Count resolution transitions in the window for response rate denominator.
+        resolved_tickets = self.db.query(ITSMTicket).filter(
             ITSMTicket.tenant_id == self.tenant_id,
             ITSMTicket.ticket_type == "INCIDENT",
-            ITSMTicket.status.in_(["RESOLVED", "CLOSED"]),
+            ITSMTicket.created_at <= end_time,
+        ).all()
+        resolved_count = sum(
+            1
+            for ticket in resolved_tickets
+            if (resolved_at := self._resolution_at(ticket, end_time))
+            and (start_time is None or resolved_at >= start_time)
         )
-        resolved_q = self._apply_date_filter(resolved_q, resolve_col, start_time, end_time)
-        resolved_count = resolved_q.scalar() or 0
 
         # Query feedback activities
         query = self.db.query(ITSMTicketActivity).filter(
@@ -862,17 +937,31 @@ class ITSMKPIService:
         end_time = _utc(end_time or datetime.now(timezone.utc))
         start_time = _utc(start_time)
 
-        # Knowledge articles metrics
-        kb_query = self.db.query(
-            func.coalesce(func.sum(ITSMKnowledgeArticle.helpful_count), 0),
-            func.coalesce(func.sum(ITSMKnowledgeArticle.view_count), 0),
-        ).filter(
-            ITSMKnowledgeArticle.tenant_id == self.tenant_id,
-            ITSMKnowledgeArticle.status == "PUBLISHED",
+        event_query = self.db.query(ITSMMetricSourceEvent).filter(
+            ITSMMetricSourceEvent.tenant_id == self.tenant_id,
+            ITSMMetricSourceEvent.event_type.in_(["KNOWLEDGE_VIEW", "KNOWLEDGE_HELPFUL"]),
         )
-        helpful_count, total_kb_views = kb_query.first() or (0, 0)
-        helpful_count = int(helpful_count)
-        total_kb_views = int(total_kb_views)
+        event_query = self._apply_date_filter(
+            event_query, ITSMMetricSourceEvent.occurred_at, start_time, end_time
+        )
+        knowledge_events = event_query.all()
+        event_capture_active = self.db.query(ITSMMetricSourceEvent.id).filter(
+            ITSMMetricSourceEvent.tenant_id == self.tenant_id,
+            ITSMMetricSourceEvent.event_type.in_(["KNOWLEDGE_VIEW", "KNOWLEDGE_HELPFUL"]),
+        ).first() is not None
+        if event_capture_active:
+            helpful_count = sum(1 for event in knowledge_events if event.event_type == "KNOWLEDGE_HELPFUL")
+            total_kb_views = sum(1 for event in knowledge_events if event.event_type == "KNOWLEDGE_VIEW")
+        else:
+            # Compatibility for articles that predate immutable source events.
+            helpful_count, total_kb_views = self.db.query(
+                func.coalesce(func.sum(ITSMKnowledgeArticle.helpful_count), 0),
+                func.coalesce(func.sum(ITSMKnowledgeArticle.view_count), 0),
+            ).filter(
+                ITSMKnowledgeArticle.tenant_id == self.tenant_id,
+                ITSMKnowledgeArticle.status == "PUBLISHED",
+            ).one()
+            helpful_count, total_kb_views = int(helpful_count), int(total_kb_views)
 
         # Incidents created in window
         inc_q = self.db.query(func.count(ITSMTicket.id)).filter(
@@ -906,22 +995,63 @@ class ITSMKPIService:
         end_time = _utc(end_time or datetime.now(timezone.utc))
         start_time = _utc(start_time)
 
-        query = self.db.query(ITSMChangeRequest).filter(
-            ITSMChangeRequest.tenant_id == self.tenant_id,
+        query = self.db.query(ITSMMetricSourceEvent).filter(
+            ITSMMetricSourceEvent.tenant_id == self.tenant_id,
+            ITSMMetricSourceEvent.event_type == "CHANGE_OUTCOME",
         )
-        query = self._apply_date_filter(query, ITSMChangeRequest.created_at, start_time, end_time)
-        changes = query.all()
+        query = self._apply_date_filter(query, ITSMMetricSourceEvent.occurred_at, start_time, end_time)
+        outcomes = query.all()
 
-        total_changes = len(changes)
+        created_event_query = self.db.query(ITSMMetricSourceEvent).filter(
+            ITSMMetricSourceEvent.tenant_id == self.tenant_id,
+            ITSMMetricSourceEvent.event_type == "CHANGE_CREATED",
+        )
+        created_event_query = self._apply_date_filter(
+            created_event_query, ITSMMetricSourceEvent.occurred_at, start_time, end_time
+        )
+        created_events = created_event_query.all()
+
+        # Existing pre-065 changes have no trustworthy original-type event. Use
+        # the legacy row only for that bounded cohort; all new changes are event based.
+        event_source_ids = {event.source_id for event in created_events}
+        legacy_query = self.db.query(ITSMChangeRequest).filter(
+            ITSMChangeRequest.tenant_id == self.tenant_id,
+            ~ITSMChangeRequest.id.in_(event_source_ids) if event_source_ids else True,
+        )
+        legacy_query = self._apply_date_filter(legacy_query, ITSMChangeRequest.created_at, start_time, end_time)
+        legacy_changes = legacy_query.all()
+
+        total_changes = len(created_events) + len(legacy_changes)
         successful_changes = 0
         failed_changes = 0
         emergency_changes = 0
 
-        for c in changes:
-            if (c.change_type or "").upper() == "EMERGENCY":
+        for event in created_events:
+            if str((event.payload or {}).get("change_type", "")).upper() == "EMERGENCY":
+                emergency_changes += 1
+        for change in legacy_changes:
+            if (change.change_type or "").upper() == "EMERGENCY":
                 emergency_changes += 1
 
-            status = (c.status or "").upper()
+        for event in outcomes:
+            status = str((event.payload or {}).get("status", "")).upper()
+            if status in ["COMPLETED", "CLOSED"]:
+                successful_changes += 1
+            elif status in ["CANCELLED", "FAILED", "ROLLED_BACK"]:
+                failed_changes += 1
+        outcome_source_ids = {event.source_id for event in outcomes}
+        legacy_outcome_query = self.db.query(ITSMChangeRequest).filter(
+            ITSMChangeRequest.tenant_id == self.tenant_id,
+            ITSMChangeRequest.status.in_(["COMPLETED", "CLOSED", "CANCELLED", "FAILED", "ROLLED_BACK"]),
+        )
+        outcome_column = func.coalesce(ITSMChangeRequest.actual_finish_at, ITSMChangeRequest.updated_at)
+        legacy_outcome_query = self._apply_date_filter(
+            legacy_outcome_query, outcome_column, start_time, end_time
+        )
+        for change in legacy_outcome_query.all():
+            if change.id in outcome_source_ids:
+                continue
+            status = (change.status or "").upper()
             if status in ["COMPLETED", "CLOSED"]:
                 successful_changes += 1
             elif status in ["CANCELLED", "FAILED", "ROLLED_BACK"]:
@@ -988,44 +1118,34 @@ class ITSMKPIService:
         service_recurrence: Dict[str, int] = {}
         window_delta = timedelta(days=lookback_window_days)
 
+        seen: list[tuple[datetime, tuple[str, str, str, str]]] = []
         for inc in incidents:
             t_created = _utc(inc.created_at)
             prior_window_start = t_created - window_delta
-
-            # Match conditions: same service_id or same linked_problem_id
-            match_clauses = []
-            if inc.service_id is not None:
-                match_clauses.append(ITSMTicket.service_id == inc.service_id)
-            if inc.linked_problem_id is not None:
-                match_clauses.append(ITSMTicket.linked_problem_id == inc.linked_problem_id)
-            if not match_clauses and inc.category:
-                match_clauses.append(
-                    and_(
-                        ITSMTicket.category == inc.category,
-                        ITSMTicket.subcategory == inc.subcategory,
+            identity = self._identity_at_creation(inc)
+            service_key, problem_key, category_key, subcategory_key = identity
+            if not (service_key or problem_key or category_key):
+                seen.append((t_created, identity))
+                continue
+            prior_exists = any(
+                prior_time >= prior_window_start
+                and (
+                    (service_key and prior_identity[0] == service_key)
+                    or (problem_key and prior_identity[1] == problem_key)
+                    or (
+                        not service_key and not problem_key and category_key
+                        and prior_identity[2] == category_key
+                        and prior_identity[3] == subcategory_key
                     )
                 )
-
-            if not match_clauses:
-                continue
-
-            prior_exists = (
-                self.db.query(ITSMTicket.id)
-                .filter(
-                    ITSMTicket.tenant_id == self.tenant_id,
-                    ITSMTicket.ticket_type == "INCIDENT",
-                    ITSMTicket.id != inc.id,
-                    ITSMTicket.created_at >= prior_window_start,
-                    ITSMTicket.created_at < t_created,
-                    or_(*match_clauses),
-                )
-                .first()
+                for prior_time, prior_identity in seen
             )
 
             if prior_exists:
                 repeat_count += 1
-                svc_key = str(inc.service_id) if inc.service_id else (inc.category or "UNKNOWN")
+                svc_key = service_key or category_key or "UNKNOWN"
                 service_recurrence[svc_key] = service_recurrence.get(svc_key, 0) + 1
+            seen.append((t_created, identity))
 
         rate = round((repeat_count / total_incidents) * 100.0, 2)
         top_services = [

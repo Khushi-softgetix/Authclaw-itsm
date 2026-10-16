@@ -228,6 +228,20 @@ function endOfDate(value: string) {
   return value ? `${value}T23:59:59.999Z` : "";
 }
 
+function auditLogHref(filters: { action?: string; startDate?: string; endDate?: string } = {}) {
+  const params = new URLSearchParams({ section: "audit-log" });
+  if (filters.action) params.set("action", filters.action);
+  if (filters.startDate) params.set("start_date", filters.startDate);
+  if (filters.endDate) params.set("end_date", filters.endDate);
+  return `/itsm/dashboard/auditor?${params.toString()}`;
+}
+
+function formatChartDate(value: string) {
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
 function displaySummary(value: unknown) {
   if (value === null || value === undefined || value === "") return "Not recorded";
   if (typeof value === "string") return value;
@@ -396,18 +410,30 @@ export default function AuditorDashboardPage() {
 
   useEffect(() => {
     const request = window.setTimeout(() => {
+      const linkedSearch = searchParams.get("search") || "";
+      const linkedFilters: AuditorFilters = {
+        category: searchParams.get("action") || "",
+        actor: searchParams.get("actor") || "",
+        targetType: searchParams.get("target_type") || "",
+        outcome: searchParams.get("outcome") || "",
+        startDate: searchParams.get("start_date") || "",
+        endDate: searchParams.get("end_date") || "",
+      };
       setActiveView("audit");
       setSelectedRecordId(null);
       setSelectedEventDetail(null);
       setDetailError(null);
       setOffset(0);
       setExportOffset(0);
-      setSearch("");
-      setSearchInput("");
+      setSearch(linkedSearch);
+      setSearchInput(linkedSearch);
+      setFilterDraft(linkedFilters);
+      setFilters(linkedFilters);
+      setFiltersOpen(Object.values(linkedFilters).some(Boolean));
       setError(null);
     }, 0);
     return () => window.clearTimeout(request);
-  }, [section]);
+  }, [searchParams, section]);
 
   useEffect(() => () => {
     if (copyResetTimer.current !== null) window.clearTimeout(copyResetTimer.current);
@@ -591,29 +617,28 @@ export default function AuditorDashboardPage() {
 
   if (section === "overview") {
     return <div className="role-portal mx-auto max-w-[1440px] space-y-6">
-      <AuditorPageHeader title="Audit overview" description="Independent, read-only visibility into platform activity and evidence." onRefresh={() => void loadOverview()} loading={overviewLoading} />
+      <AuditorPageHeader title="Audit overview" description="Verify evidence health, identify activity that needs review, and open the supporting record." onRefresh={() => void loadOverview()} loading={overviewLoading}>
+        <Link href="/itsm/dashboard/auditor?section=audit-log" className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#6D28D9] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#5B21B6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9]/30">Search evidence <ChevronRight className="h-4 w-4" /></Link>
+      </AuditorPageHeader>
       {error ? <ErrorNotice message={error} onRetry={() => void loadOverview()} /> : null}
-      <section className="overflow-hidden rounded-2xl border border-[#DDD6FE] bg-white shadow-sm shadow-[#6D28D9]/5" aria-label="Audit overview metrics">
-        <div className="grid divide-y divide-[#E6E9F0] xl:grid-cols-[minmax(270px,.8fr)_minmax(0,2.2fr)] xl:divide-x xl:divide-y-0">
-          <OverviewMetric icon={FileCheck2} label="Total audit events" value={overviewLoading ? "—" : String(overview?.total_events ?? 0)} detail="Tenant-scoped records available for review" primary />
-          <div className="grid divide-y divide-[#E6E9F0] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-            <OverviewMetric icon={LockKeyhole} label="Privileged actions" value={overviewLoading ? "—" : String(overview?.privileged_events ?? 0)} detail="Role, permission, and admin activity" />
-            <OverviewMetric icon={CircleX} label="Denied actions" value={overviewLoading ? "—" : String(overview?.denied_events ?? 0)} detail="Authorization failures" warning={Boolean(overview?.denied_events)} />
-            <OverviewMetric icon={ShieldCheck} label="Integrity" value={overviewLoading ? "Checking" : !overview?.total_events ? "No records" : overview.integrity_valid ? "Verified" : "Needs review"} detail="Complete tenant hash chain" verified={Boolean(overview?.total_events && overview.integrity_valid)} warning={Boolean(overview?.total_events && !overview.integrity_valid)} />
-          </div>
-        </div>
+      <section className="grid gap-4 md:grid-cols-2 2xl:grid-cols-[minmax(360px,1.3fr)_repeat(3,minmax(190px,.7fr))]" aria-label="Audit evidence health and key metrics">
+        <EvidenceHealth overview={overview} loading={overviewLoading} />
+        <OverviewMetric icon={FileCheck2} label="Total audit events" value={overviewLoading ? "—" : String(overview?.total_events ?? 0)} detail="Tenant-scoped records available for review" />
+        <OverviewMetric icon={LockKeyhole} label="Privileged actions" value={overviewLoading ? "—" : String(overview?.privileged_events ?? 0)} detail="Role, permission, and administrative activity" />
+        <OverviewMetric icon={CircleX} label="Denied actions" value={overviewLoading ? "—" : String(overview?.denied_events ?? 0)} detail="Authorization decisions worth reviewing" warning={Boolean(overview?.denied_events)} />
       </section>
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
-        <RecentActivity events={overview?.recent_events ?? []} loading={overviewLoading} />
-        <IntegrityPanel overview={overview} loading={overviewLoading} />
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(320px,.65fr)]">
+        <ReviewPriorities overview={overview} loading={overviewLoading} />
+        <EvidenceCoverage overview={overview} loading={overviewLoading} />
       </div>
       <ActivityTrend points={overview?.activity_trend ?? []} loading={overviewLoading} />
+      <RecentActivity events={overview?.recent_events ?? []} loading={overviewLoading} />
     </div>;
   }
 
   if (section === "reports") {
     return <div className="role-portal mx-auto max-w-[1440px] space-y-6">
-      <AuditorPageHeader title="Audit reports" description="Review summarized governance activity, then drill into the supporting audit evidence." onRefresh={() => void loadOverview()} loading={overviewLoading} />
+      <AuditorPageHeader title="Audit reports" description="Understand activity patterns and use the evidence trail to investigate what changed." onRefresh={() => void loadOverview()} loading={overviewLoading} />
       {error ? <ErrorNotice message={error} onRetry={() => void loadOverview()} /> : null}
       <section className="overflow-hidden rounded-2xl border border-[#DDD6FE] bg-white shadow-sm shadow-[#6D28D9]/5">
         <div className="border-b border-[#E6E9F0] px-5 py-4"><h2 className="text-sm font-bold text-[#0E1726]">Governance summary</h2><p className="mt-1 text-xs text-[#6B7488]">Counts are derived from the authoritative tenant audit chain.</p></div>
@@ -657,17 +682,9 @@ export default function AuditorDashboardPage() {
 
   return (
     <div className="role-portal mx-auto max-w-[1440px] space-y-5">
-      <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-[#F1ECFE] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[.08em] text-[#5B21B6]"><LockKeyhole className="h-3 w-3" />Read-only</div>
-          <h1 className="text-3xl font-extrabold tracking-tight text-[#0E1726]">{section === "audit-log" ? "Audit log" : "Evidence explorer"}</h1>
-          <p className="mt-1 text-sm text-[#6B7488]">{section === "audit-log" ? "Search and inspect the tenant activity you are authorized to review." : "Reconstruct platform and AI activity from connected, immutable evidence."}</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => void loadAuditEvents()} disabled={loading} className="inline-flex items-center gap-2 rounded-lg border border-[#DDD6FE] bg-white px-3.5 py-2.5 text-xs font-semibold text-[#5B21B6] shadow-sm transition hover:bg-[#FAF8FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9]/30 disabled:cursor-not-allowed disabled:opacity-60"><RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} /> Refresh</button>
-          <Link href="/itsm/dashboard/auditor?section=exports" className="inline-flex items-center gap-2 rounded-lg bg-[#6D28D9] px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-[#5B21B6]"><Download className="h-3.5 w-3.5" /> Export evidence</Link>
-        </div>
-      </header>
+      <AuditorPageHeader title={section === "audit-log" ? "Audit log" : "Evidence explorer"} description={section === "audit-log" ? "Find a recorded action, inspect its decision context, and follow the complete workflow." : "Reconstruct platform actions and AI activity from connected, immutable evidence."} onRefresh={() => void loadAuditEvents()} loading={loading}>
+        <Link href="/itsm/dashboard/auditor?section=exports" className="inline-flex items-center justify-center gap-2 rounded-lg bg-[#6D28D9] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#5B21B6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9]/30"><Download className="h-4 w-4" /> Export evidence</Link>
+      </AuditorPageHeader>
 
       {exportOpen ? (
         <section className="rounded-xl border border-[#DDD6FE] bg-white p-5 shadow-sm shadow-[#6D28D9]/5" aria-label="Evidence export scope">
@@ -730,17 +747,47 @@ export default function AuditorDashboardPage() {
   );
 }
 
-function AuditorPageHeader({ title, description, onRefresh, loading }: { title: string; description: string; onRefresh: () => void; loading: boolean }) {
-  return <header className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between"><div><div className="mb-2 inline-flex items-center gap-1.5 rounded-full bg-[#F1ECFE] px-2.5 py-1 text-[10px] font-bold uppercase tracking-[.08em] text-[#5B21B6]"><LockKeyhole className="h-3 w-3" />Read-only Auditor workspace</div><h1 className="text-3xl font-extrabold tracking-tight text-[#0E1726]">{title}</h1><p className="mt-1 text-sm text-[#6B7488]">{description}</p></div><button type="button" onClick={onRefresh} disabled={loading} className="inline-flex self-start items-center gap-2 rounded-lg border border-[#DDD6FE] bg-white px-3.5 py-2.5 text-xs font-semibold text-[#5B21B6] shadow-sm hover:bg-[#FAF8FF] disabled:opacity-60 lg:self-auto"><RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />Refresh</button></header>;
+function AuditorPageHeader({ title, description, onRefresh, loading, children }: { title: string; description: string; onRefresh: () => void; loading: boolean; children?: React.ReactNode }) {
+  return <header className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between"><div className="max-w-3xl"><div className="mb-3 inline-flex items-center gap-2 rounded-lg border border-[#DDD6FE] bg-[#FAF8FF] px-2.5 py-1.5 text-xs font-semibold text-[#5B21B6]"><LockKeyhole className="h-3.5 w-3.5" />Read-only workspace</div><h1 className="text-3xl font-extrabold tracking-tight text-[#0E1726] sm:text-[2rem]">{title}</h1><p className="mt-2 max-w-2xl text-sm leading-6 text-[#5F687C]">{description}</p></div><div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center"><button type="button" onClick={onRefresh} disabled={loading} className="inline-flex items-center justify-center gap-2 rounded-lg border border-[#D8DDE7] bg-white px-4 py-2.5 text-sm font-semibold text-[#475069] shadow-sm transition hover:border-[#C4B5FD] hover:bg-[#FAF8FF] hover:text-[#5B21B6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9]/30 disabled:opacity-60"><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />Refresh</button>{children}</div></header>;
 }
 
 function ErrorNotice({ message, onRetry }: { message: string; onRetry: () => void }) {
   return <div className="flex flex-wrap items-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-800" role="alert"><AlertCircle className="h-4 w-4 text-red-600" /><span className="font-semibold">{message}</span><button type="button" onClick={onRetry} className="ml-auto font-bold underline">Retry</button></div>;
 }
 
-function OverviewMetric({ icon: Icon, label, value, detail, verified = false, warning = false, primary = false }: { icon: React.ComponentType<{ className?: string }>; label: string; value: string; detail: string; verified?: boolean; warning?: boolean; primary?: boolean }) {
+function OverviewMetric({ icon: Icon, label, value, detail, verified = false, warning = false }: { icon: React.ComponentType<{ className?: string }>; label: string; value: string; detail: string; verified?: boolean; warning?: boolean }) {
   const valueClass = verified ? "text-emerald-700" : warning ? "text-red-700" : "text-[#0E1726]";
-  return <div className={`flex items-center gap-4 px-5 ${primary ? "min-h-36 py-6" : "min-h-28 py-5"}`}><span className={`rounded-xl bg-[#F1ECFE] text-[#6D28D9] ${primary ? "p-4" : "p-3"}`}><Icon className={primary ? "h-6 w-6" : "h-5 w-5"} /></span><div className="min-w-0"><p className="text-[10px] font-bold uppercase tracking-[.09em] text-[#6B7488]">{label}</p><p className={`mt-1 font-extrabold ${primary ? "text-4xl" : "text-2xl"} ${valueClass}`}>{value}</p><p className="mt-1 text-[11px] leading-4 text-[#8A93A5]">{detail}</p></div></div>;
+  return <article className="flex min-h-36 items-start gap-4 rounded-2xl border border-[#E1E5EC] bg-white p-5 shadow-sm"><span className={`rounded-xl p-3 ${warning ? "bg-red-50 text-red-700" : "bg-[#F1ECFE] text-[#6D28D9]"}`}><Icon className="h-5 w-5" /></span><div className="min-w-0"><p className="text-xs font-semibold text-[#5F687C]">{label}</p><p className={`mt-2 text-3xl font-extrabold tracking-tight ${valueClass}`}>{value}</p><p className="mt-2 text-xs leading-5 text-[#737D91]">{detail}</p></div></article>;
+}
+
+function EvidenceHealth({ overview, loading }: { overview: AuditorOverview | null; loading: boolean }) {
+  const hasRecords = Boolean(overview?.total_events);
+  const verified = hasRecords && Boolean(overview?.integrity_valid);
+  const needsReview = hasRecords && !overview?.integrity_valid;
+  const title = loading ? "Verifying evidence chain" : !hasRecords ? "No evidence to verify" : verified ? "Evidence chain verified" : "Evidence integrity needs review";
+  const detail = loading ? "Checking the complete tenant audit chain." : !hasRecords ? "Integrity can be checked after the first tenant audit event is recorded." : verified ? "The complete tenant evidence chain passed verification." : "Review the evidence chain before relying on this audit record set.";
+  return <article className={`flex min-h-36 flex-col justify-between rounded-2xl border p-5 shadow-sm ${needsReview ? "border-red-200 bg-red-50/40" : verified ? "border-emerald-200 bg-emerald-50/40" : "border-[#DDD6FE] bg-white"}`}><div className="flex items-start gap-4"><span className={`rounded-full p-3 ${needsReview ? "bg-red-100 text-red-700" : verified ? "bg-emerald-100 text-emerald-700" : "bg-[#F1ECFE] text-[#6D28D9]"}`}><ShieldCheck className="h-6 w-6" /></span><div><p className="text-base font-bold text-[#0E1726]">{title}</p><p className="mt-1 text-xs leading-5 text-[#5F687C]">{detail}</p></div></div><div className="mt-5 flex flex-wrap items-end justify-between gap-3 border-t border-current/10 pt-4"><div><p className="text-xs font-semibold text-[#737D91]">Last verified</p><p className="mt-1 text-sm font-semibold text-[#354052]">{overview?.last_verified_at ? formatDateTime(overview.last_verified_at) : "Not available"}</p></div><Link href="/itsm/dashboard/auditor?section=evidence" className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#6D28D9] hover:underline">Review evidence <ChevronRight className="h-4 w-4" /></Link></div></article>;
+}
+
+function ReviewPriorities({ overview, loading }: { overview: AuditorOverview | null; loading: boolean }) {
+  const denied = overview?.denied_events ?? 0;
+  const integrityNeedsReview = Boolean(overview?.total_events && !overview.integrity_valid);
+  const reviewCount = denied + (integrityNeedsReview ? 1 : 0);
+  return <section className="overflow-hidden rounded-2xl border border-[#E1E5EC] bg-white shadow-sm" aria-labelledby="review-priorities-title"><div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#E8EBF0] px-5 py-4"><div><div className="flex items-center gap-2"><h2 id="review-priorities-title" className="text-base font-bold text-[#0E1726]">Needs review</h2>{!loading && reviewCount > 0 ? <span className="rounded-full bg-red-100 px-2 py-0.5 text-xs font-bold text-red-700">{reviewCount}</span> : null}</div><p className="mt-1 text-xs leading-5 text-[#6B7488]">Signals that deserve an Auditor&apos;s attention. A denial is evidence to inspect, not proof of misconduct.</p></div><Link href="/itsm/dashboard/auditor?section=audit-log" className="inline-flex items-center gap-1.5 text-sm font-semibold text-[#6D28D9] hover:underline">Open Audit Log <ChevronRight className="h-4 w-4" /></Link></div>{loading ? <div className="space-y-3 p-5"><div className="h-16 animate-pulse rounded-xl bg-[#EEF1F5]" /><div className="h-16 animate-pulse rounded-xl bg-[#EEF1F5]" /></div> : reviewCount === 0 ? <div className="flex min-h-40 flex-col items-center justify-center px-6 py-10 text-center"><CheckCircle2 className="h-8 w-8 text-emerald-600" /><p className="mt-3 text-sm font-bold text-[#0E1726]">No review signals detected</p><p className="mt-1 max-w-md text-xs leading-5 text-[#6B7488]">The current summary contains no denied actions and the complete evidence chain is valid.</p></div> : <div className="divide-y divide-[#EEF1F5]">{integrityNeedsReview ? <ReviewSignal icon={AlertCircle} title="Evidence integrity needs review" detail="The complete tenant chain did not pass verification." href="/itsm/dashboard/auditor?section=evidence" tone="danger" /> : null}{denied > 0 ? <ReviewSignal icon={CircleX} title={`${denied} denied action${denied === 1 ? "" : "s"} recorded`} detail="Review the actor, target, policy decision, and reason before drawing a conclusion." href="/itsm/dashboard/auditor?section=audit-log" tone="warning" /> : null}</div>}</section>;
+}
+
+function ReviewSignal({ icon: Icon, title, detail, href, tone }: { icon: React.ComponentType<{ className?: string }>; title: string; detail: string; href: string; tone: "danger" | "warning" }) {
+  return <Link href={href} className="group flex items-start gap-4 px-5 py-4 transition hover:bg-[#FCFAFF]"><span className={`rounded-lg p-2 ${tone === "danger" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800"}`}><Icon className="h-4 w-4" /></span><span className="min-w-0 flex-1"><span className="block text-sm font-bold text-[#0E1726]">{title}</span><span className="mt-1 block text-xs leading-5 text-[#6B7488]">{detail}</span></span><ChevronRight className="mt-2 h-4 w-4 shrink-0 text-[#8B5CF6] transition group-hover:translate-x-0.5" /></Link>;
+}
+
+function EvidenceCoverage({ overview, loading }: { overview: AuditorOverview | null; loading: boolean }) {
+  const items = [
+    { label: "Platform activity", value: overview?.total_events ?? 0, href: "/itsm/dashboard/auditor?section=audit-log", icon: FileCheck2 },
+    { label: "AI activity", value: overview?.ai_events ?? 0, href: "/itsm/dashboard/auditor?section=evidence", icon: Bot },
+    { label: "Administrative changes", value: overview?.administrative_changes ?? 0, href: "/itsm/dashboard/auditor?section=reports", icon: Wrench },
+    { label: "Signed exports", value: overview?.exported_evidence ?? 0, href: "/itsm/dashboard/auditor?section=exports", icon: Download },
+  ];
+  return <section className="overflow-hidden rounded-2xl border border-[#E1E5EC] bg-white shadow-sm" aria-labelledby="evidence-coverage-title"><div className="border-b border-[#E8EBF0] px-5 py-4"><h2 id="evidence-coverage-title" className="text-base font-bold text-[#0E1726]">Evidence coverage</h2><p className="mt-1 text-xs leading-5 text-[#6B7488]">Open the evidence source that matches the question you are investigating.</p></div><div className="divide-y divide-[#EEF1F5]">{items.map(({ label, value, href, icon: Icon }) => <Link key={label} href={href} className="group flex items-center gap-3 px-5 py-3.5 transition hover:bg-[#FCFAFF]"><Icon className="h-4 w-4 shrink-0 text-[#6D28D9]" /><span className="min-w-0 flex-1 text-sm font-semibold text-[#354052]">{label}</span><span className="text-sm font-bold text-[#0E1726]">{loading ? "—" : value}</span><ChevronRight className="h-4 w-4 text-[#A78BFA] transition group-hover:translate-x-0.5" /></Link>)}</div></section>;
 }
 
 function eventResult(event: AuditEvent) {
@@ -753,22 +800,14 @@ function RecentActivity({ events, loading }: { events: AuditEvent[]; loading: bo
   return <section className="overflow-hidden rounded-2xl border border-[#E6E9F0] bg-white shadow-sm"><div className="flex items-center justify-between border-b border-[#E6E9F0] px-5 py-4"><div><h2 className="text-sm font-bold text-[#0E1726]">Recent activity</h2><p className="mt-1 text-xs text-[#6B7488]">Newest tenant audit events.</p></div><Link href="/itsm/dashboard/auditor?section=audit-log" className="text-xs font-semibold text-[#6D28D9] hover:underline">View all</Link></div><div className="sm:hidden">{loading ? Array.from({ length: 4 }).map((_, index) => <div key={index} className="border-b border-[#EEF1F5] p-4"><div className="h-16 animate-pulse rounded bg-[#EEF1F5]" /></div>) : null}{!loading && events.length === 0 ? <p className="px-5 py-12 text-center text-xs text-[#8A93A5]">No tenant audit activity has been recorded.</p> : null}{!loading ? events.map((event, index) => { const actor = actorPresentation(event); const result = eventResult(event); return <article key={event.record_id || `${event.action}-${index}`} className="border-b border-[#EEF1F5] px-5 py-4 last:border-b-0"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><p className="text-xs font-bold leading-5 text-[#0E1726]">{displayAction(event.action)}</p><p className="mt-1 truncate text-[11px] font-semibold text-[#475069]">{actor.primary}</p></div><span className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-bold ${result.className}`}>{result.label}</span></div><p className="mt-2 text-[10px] text-[#8A93A5]">{event.timestamp ? formatDateTime(event.timestamp) : "Time not recorded"}</p></article>; }) : null}</div><div className="hidden overflow-x-auto sm:block"><table className="w-full min-w-[720px] text-left"><thead className="bg-[#FCFAFF]"><tr>{["Time", "Actor", "Action", "Resource", "Result"].map((heading) => <th key={heading} className="px-4 py-3 text-[10px] font-bold uppercase tracking-[.08em] text-[#6B7488]">{heading}</th>)}</tr></thead><tbody className="divide-y divide-[#EEF1F5]">{loading ? Array.from({ length: 5 }).map((_, index) => <tr key={index} className="animate-pulse"><td colSpan={5} className="px-4 py-3"><div className="h-6 rounded bg-[#EEF1F5]" /></td></tr>) : null}{!loading && events.length === 0 ? <tr><td colSpan={5} className="px-5 py-12 text-center text-xs text-[#8A93A5]">No tenant audit activity has been recorded.</td></tr> : null}{!loading ? events.map((event, index) => { const actor = actorPresentation(event); const target = targetPresentation(event); const result = eventResult(event); return <tr key={event.record_id || `${event.action}-${index}`}><td className="whitespace-nowrap px-4 py-3 text-[11px] text-[#6B7488]">{event.timestamp ? formatDateTime(event.timestamp) : "Not recorded"}</td><td className="px-4 py-3 text-xs font-semibold text-[#475069]">{actor.primary}</td><td className="px-4 py-3 text-xs font-semibold text-[#0E1726]">{displayAction(event.action)}</td><td className="px-4 py-3 text-xs text-[#475069]">{target.primary}<span className="ml-1 text-[10px] text-[#8A93A5]">{target.secondary}</span></td><td className="px-4 py-3"><span className={`rounded-full px-2 py-1 text-[10px] font-bold ${result.className}`}>{result.label}</span></td></tr>; }) : null}</tbody></table></div></section>;
 }
 
-function IntegrityPanel({ overview, loading }: { overview: AuditorOverview | null; loading: boolean }) {
-  const hasRecords = Boolean(overview?.total_events);
-  const verified = hasRecords && Boolean(overview?.integrity_valid);
-  const title = loading ? "Verifying audit chain" : !hasRecords ? "No evidence to verify" : verified ? "Audit chain verified" : "Integrity needs review";
-  const detail = !hasRecords ? "Integrity can be checked after the first tenant audit event is recorded." : verified ? "The complete tenant chain passed verification." : "Review the integrity result before relying on this evidence.";
-  return <aside className="rounded-2xl border border-[#E6E9F0] bg-white p-5 shadow-sm"><h2 className="text-sm font-bold text-[#0E1726]">Integrity status</h2><div className="mt-5 flex items-start gap-3"><span className={`rounded-xl p-3 ${verified ? "bg-emerald-50 text-emerald-700" : "bg-[#F1ECFE] text-[#6D28D9]"}`}><ShieldCheck className="h-5 w-5" /></span><div><p className="text-sm font-bold text-[#0E1726]">{title}</p><p className="mt-1 text-xs leading-5 text-[#6B7488]">{detail}</p></div></div><dl className="mt-6 space-y-4 border-y border-[#EEF1F5] py-5 text-xs"><div className="flex items-start justify-between gap-4"><dt className="text-[#6B7488]">Last checked</dt><dd className="text-right font-semibold text-[#475069]">{overview?.last_verified_at ? formatDateTime(overview.last_verified_at) : "No records"}</dd></div><div className="flex items-start justify-between gap-4"><dt className="text-[#6B7488]">Evidence source</dt><dd className="font-semibold text-[#475069]">{overview?.source === "postgres" ? "PostgreSQL" : overview?.source || "Unavailable"}</dd></div></dl><p className="mt-5 rounded-xl bg-[#F8F5FF] p-3 text-[11px] leading-5 text-[#5B21B6]">This view is read-only and reflects the authoritative tenant audit store.</p></aside>;
-}
-
 function ActivityTrend({ points, loading, compact = false }: { points: { date: string; count: number }[]; loading: boolean; compact?: boolean }) {
   const max = Math.max(...points.map((point) => point.count), 1);
-  return <section className={`rounded-2xl border border-[#E6E9F0] bg-white p-5 shadow-sm ${compact ? "min-h-[330px]" : ""}`}><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-sm font-bold text-[#0E1726]">Audit activity trend</h2><p className="mt-1 text-xs text-[#6B7488]">Recorded events over the latest 14-day evidence window.</p></div>{!compact ? <Link href="/itsm/dashboard/auditor?section=audit-log" className="text-xs font-semibold text-[#6D28D9] hover:underline">Review in Audit Log</Link> : null}</div><div className="mt-7 flex h-44 items-end gap-2 border-b border-[#E6E9F0] px-1" aria-label="Audit events by day">{loading ? Array.from({ length: 10 }).map((_, index) => <div key={index} className="h-full flex-1 animate-pulse rounded-t bg-[#F1ECFE]" />) : points.length ? points.map((point) => <div key={point.date} className="group relative flex h-full flex-1 items-end"><div className="w-full rounded-t bg-[#7C3AED] transition hover:bg-[#5B21B6]" style={{ height: `${Math.max(8, (point.count / max) * 100)}%` }} /><span className="pointer-events-none absolute -top-7 left-1/2 hidden -translate-x-1/2 whitespace-nowrap rounded bg-[#0E1726] px-2 py-1 text-[9px] text-white group-hover:block">{point.count} events</span></div>) : <div className="flex h-full w-full items-center justify-center text-xs text-[#8A93A5]">No activity is available for this period.</div>}</div>{points.length ? <div className="mt-2 flex justify-between text-[9px] text-[#8A93A5]"><span>{points[0]?.date}</span><span>{points[points.length - 1]?.date}</span></div> : null}</section>;
+  return <section className={`rounded-2xl border border-[#E6E9F0] bg-white p-5 shadow-sm ${compact ? "min-h-[330px]" : ""}`}><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-sm font-bold text-[#0E1726]">Audit activity trend</h2><p className="mt-1 text-xs text-[#6B7488]">Recorded events over the latest 14-day evidence window. Hover or focus a bar for its date and total; select it to review that day.</p></div>{!compact ? <Link href="/itsm/dashboard/auditor?section=audit-log" className="text-xs font-semibold text-[#6D28D9] hover:underline">Review in Audit Log</Link> : null}</div><div className="mt-7 flex h-44 items-end gap-1.5 border-b border-[#E6E9F0] px-1 sm:gap-2" aria-label="Audit events by day">{loading ? Array.from({ length: 10 }).map((_, index) => <div key={index} className="h-full flex-1 animate-pulse rounded-t bg-[#F1ECFE]" />) : points.length ? points.map((point) => <div key={point.date} className="relative flex h-full min-w-0 flex-1 items-end"><Link href={auditLogHref({ startDate: point.date, endDate: point.date })} aria-label={`Review ${point.count} audit ${point.count === 1 ? "event" : "events"} recorded on ${point.date}`} className="peer group/bar relative block w-full rounded-t bg-[#7C3AED] shadow-sm transition-colors hover:bg-[#5B21B6] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9] focus-visible:ring-offset-2" style={{ height: `${Math.max(18, (point.count / max) * 100)}%` }}><span aria-hidden="true" className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 -translate-x-1/2 whitespace-nowrap rounded-md bg-[#241542] px-2 py-1 text-[10px] font-semibold text-white opacity-0 shadow-md transition-opacity group-hover/bar:opacity-100 group-focus-visible/bar:opacity-100">{point.count} {point.count === 1 ? "event" : "events"}</span></Link><span aria-hidden="true" className="pointer-events-none absolute left-1/2 top-full mt-2 -translate-x-1/2 whitespace-nowrap rounded bg-white px-1 text-[9px] font-semibold text-[#5B21B6] opacity-0 transition-opacity peer-hover:opacity-100 peer-focus-visible:opacity-100">{formatChartDate(point.date)}</span></div>) : <div className="flex h-full w-full items-center justify-center text-xs text-[#8A93A5]">No activity is available for this period.</div>}</div>{points.length ? <div className="mt-7 flex justify-between text-[9px] text-[#8A93A5]"><span>{formatChartDate(points[0]?.date)}</span><span>{formatChartDate(points[points.length - 1]?.date)}</span></div> : null}</section>;
 }
 
 function TopActions({ actions, loading }: { actions: { action: string; count: number }[]; loading: boolean }) {
   const max = Math.max(...actions.map((item) => item.count), 1);
-  return <section className="rounded-2xl border border-[#E6E9F0] bg-white p-5 shadow-sm"><h2 className="text-sm font-bold text-[#0E1726]">Most recorded actions</h2><p className="mt-1 text-xs text-[#6B7488]">Use these groups as a starting point for investigation.</p><div className="mt-5 space-y-4">{loading ? Array.from({ length: 5 }).map((_, index) => <div key={index} className="h-9 animate-pulse rounded bg-[#EEF1F5]" />) : actions.map((item) => <div key={item.action}><div className="mb-1.5 flex justify-between gap-3 text-xs"><span className="truncate font-semibold text-[#475069]">{displayAction(item.action)}</span><span className="font-bold text-[#0E1726]">{item.count}</span></div><div className="h-1.5 overflow-hidden rounded-full bg-[#F1ECFE]"><div className="h-full rounded-full bg-[#6D28D9]" style={{ width: `${Math.max(4, (item.count / max) * 100)}%` }} /></div></div>)}{!loading && !actions.length ? <p className="py-10 text-center text-xs text-[#8A93A5]">No actions recorded.</p> : null}</div></section>;
+  return <section className="rounded-2xl border border-[#E6E9F0] bg-white p-5 shadow-sm"><h2 className="text-sm font-bold text-[#0E1726]">Most recorded actions</h2><p className="mt-1 text-xs text-[#6B7488]">Hover or focus a bar for its total; select it to inspect the matching evidence.</p><div className="mt-5 space-y-4">{loading ? Array.from({ length: 5 }).map((_, index) => <div key={index} className="h-12 animate-pulse rounded bg-[#EEF1F5]" />) : actions.map((item) => <Link key={item.action} href={auditLogHref({ action: item.action })} aria-label={`Review ${item.count} ${displayAction(item.action)} audit ${item.count === 1 ? "event" : "events"}`} className="group block rounded-lg p-1 transition hover:bg-[#FAF8FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9]"><div className="mb-1.5 flex items-center justify-between gap-3 text-xs"><span className="truncate font-semibold text-[#475069]">{displayAction(item.action)}</span><ChevronRight className="h-3.5 w-3.5 shrink-0 text-[#8B5CF6] transition group-hover:translate-x-0.5" /></div><div className="group/bar relative"><div className="h-2 overflow-hidden rounded-full bg-[#F1ECFE]"><div className="h-full rounded-full bg-[#6D28D9] transition-colors group-hover/bar:bg-[#5B21B6]" style={{ width: `${Math.max(8, (item.count / max) * 100)}%` }} /></div><span aria-hidden="true" className="pointer-events-none absolute bottom-full right-0 z-10 mb-1 whitespace-nowrap rounded-md bg-[#241542] px-2 py-1 text-[10px] font-semibold text-white opacity-0 shadow-md transition-opacity group-hover/bar:opacity-100 group-focus-visible:opacity-100">{item.count} {item.count === 1 ? "event" : "events"}</span></div></Link>)}{!loading && !actions.length ? <p className="py-10 text-center text-xs text-[#8A93A5]">No actions recorded.</p> : null}</div></section>;
 }
 
 function ExportHistoryTable({ events, data, loading, offset, onPageChange }: { events: AuditEvent[]; data: AuditEventsResponse | null; loading: boolean; offset: number; onPageChange: (offset: number) => void }) {

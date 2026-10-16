@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
@@ -16,8 +16,9 @@ from app.db.models import (
     ITSMTeamMember, ITSMUserAccess, User,
 )
 from app.schemas.itsm_outage_alerts import (
-    AlertDeliveryHealthPage, AlertDetail, AlertDraftRequest, AlertEvidencePage, AlertPreview,
-    AlertPreviewRequest, AlertPublicationRequest, AlertReferenceData, AlertSummary,
+    AlertDeliveryHealthPage, AlertDetail, AlertDraftRequest, AlertEvidencePage, AlertLinkInput, AlertPreview,
+    AlertPreviewRequest, AlertPublicationRequest, AlertRecipientEvidencePage,
+    AlertReferenceData, AlertSummary,
     ServiceConsumerRequest, ServiceSupportTeamRequest,
 )
 from app.services.itsm_outage_alert_service import OutageAlertService
@@ -368,6 +369,89 @@ def update_draft(alert_id: UUID, payload: AlertDraftRequest, request: Request, d
     tenant, actor = _identity(request, tenant_id)
     OutageAlertService.update_draft(db, tenant, actor, alert_id, payload)
     return OutageAlertService.detail(db, tenant, actor, alert_id)
+
+
+@router.post("/{alert_id}/links", response_model=AlertDetail)
+def link_alert_record(
+    alert_id: UUID,
+    payload: AlertLinkInput,
+    request: Request,
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    tenant, actor = _identity(request, tenant_id)
+    OutageAlertService.link_record(
+        db,
+        tenant,
+        actor,
+        alert_id,
+        payload.target_type,
+        payload.target_id,
+    )
+    return OutageAlertService.detail(db, tenant, actor, alert_id)
+
+
+@router.delete("/{alert_id}/links/{target_type}/{target_id}", status_code=status.HTTP_204_NO_CONTENT)
+def unlink_alert_record(
+    alert_id: UUID,
+    request: Request,
+    target_type: str = Path(pattern="^(INCIDENT|MAJOR_INCIDENT|PROBLEM|CHANGE)$"),
+    target_id: UUID = Path(),
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    tenant, actor = _identity(request, tenant_id)
+    OutageAlertService.unlink_record(
+        db,
+        tenant,
+        actor,
+        alert_id,
+        target_type,
+        target_id,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/{alert_id}/recipients", response_model=AlertRecipientEvidencePage)
+def list_alert_recipients(
+    alert_id: UUID,
+    request: Request,
+    publication_id: UUID | None = Query(default=None),
+    search: str | None = Query(default=None, max_length=120),
+    audience_type: str | None = Query(
+        default=None,
+        pattern="^(ALL_PORTAL_USERS|SERVICE_USERS|SERVICE_AGENTS|PROBLEM_MANAGERS|CHANGE_MANAGERS|SELECTED_TEAM|SERVICE_OWNERS|SPECIFIC_USER)$",
+    ),
+    projection_type: str | None = Query(default=None, max_length=32),
+    delivery_status: str | None = Query(
+        default=None,
+        pattern="^(QUEUED|AVAILABLE|FAILED|RETRYING|PERMANENTLY_FAILED)$",
+    ),
+    acknowledgement: str | None = Query(
+        default=None,
+        pattern="^(ACKNOWLEDGED|PENDING)$",
+    ),
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=25, ge=1, le=100),
+    db: Session = Depends(get_tenant_db),
+    tenant_id: str = Depends(get_current_tenant),
+):
+    ensure_itsm_role(request, db, ["INCIDENT_MANAGER"])
+    tenant, actor = _identity(request, tenant_id)
+    return OutageAlertService.list_recipient_evidence(
+        db,
+        tenant,
+        actor,
+        alert_id,
+        publication_id=publication_id,
+        search=search,
+        audience_type=audience_type,
+        projection_type=projection_type,
+        delivery_status=delivery_status,
+        acknowledgement=acknowledgement,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @router.get("/{alert_id}", response_model=AlertDetail)

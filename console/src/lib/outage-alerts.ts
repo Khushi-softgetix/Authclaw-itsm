@@ -124,6 +124,33 @@ export type AlertReferenceOptionPage = {
   has_more: boolean;
 };
 
+export type AlertRecipientEvidenceItem = {
+  user_id: string;
+  email: string;
+  role: string;
+  projection_type: string;
+  audience_memberships: Array<{ audience_type: string; reason: string }>;
+  inclusion_reason: string;
+  projection_fields: string[];
+  allowed_actions: string[];
+  channels: string[];
+  delivery_status?: string | null;
+  available_at?: string | null;
+  read_at?: string | null;
+  acknowledged_at?: string | null;
+};
+
+export type AlertRecipientEvidencePage = {
+  source: "LIVE_PREVIEW" | "PUBLICATION_SNAPSHOT";
+  publication_id?: string | null;
+  publication_version?: number | null;
+  items: AlertRecipientEvidenceItem[];
+  total: number;
+  offset: number;
+  limit: number;
+  has_more: boolean;
+};
+
 export async function alertApi<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/itsm/outage-alerts${path}`, {
     ...init,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import logging
+import hashlib
+import json
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID, uuid4
@@ -9,7 +10,15 @@ from fastapi import HTTPException, status
 from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session, joinedload
 
-from app.db.models import AuditLogMetadata, ITSMChangeRequest, ITSMChangeRequestCI, ITSMTicket, ITSMTicketActivity, User
+from app.db.models import (
+    AuditLogMetadata,
+    ITSMChangeRequest,
+    ITSMChangeRequestCI,
+    ITSMMetricSourceEvent,
+    ITSMTicket,
+    ITSMTicketActivity,
+    User,
+)
 from app.schemas.itsm_changes import (
     ChangeActivityItem,
     ChangeAffectedCIItem,
@@ -22,8 +31,6 @@ from app.schemas.itsm_changes import (
 )
 from app.services.audit_store import append_audit_event
 
-logger = logging.getLogger(__name__)
-
 OPEN_STATUSES = {"DRAFT", "SUBMITTED", "CAB_REVIEW", "AWAITING_APPROVAL", "APPROVED", "OPEN"}
 IN_PROGRESS_STATUSES = {"IN_PROGRESS", "IMPLEMENTING"}
 SCHEDULED_STATUSES = {"SCHEDULED"}
@@ -35,6 +42,40 @@ VALID_CHANGE_TYPES = {"STANDARD", "NORMAL", "EMERGENCY"}
 
 
 class ITSMChangeService:
+    @staticmethod
+    def _audit_operation_exists(
+        db: Session,
+        tenant_id: UUID,
+        idempotency_key: str,
+    ) -> bool:
+        """Treat a previously committed request identifier as a safe replay."""
+        return (
+            db.query(AuditLogMetadata.record_id)
+            .filter(
+                AuditLogMetadata.tenant_id == tenant_id,
+                AuditLogMetadata.idempotency_key == idempotency_key,
+            )
+            .first()
+            is not None
+        )
+
+    @staticmethod
+    def _assessment_audit_summary(values: dict[str, object]) -> dict[str, object]:
+        """Keep classification evidence readable without copying plan content."""
+        safe_fields = {"risk_level", "impact_level", "change_type"}
+        summary: dict[str, object] = {}
+        for field, value in values.items():
+            if field in safe_fields:
+                summary[field] = value
+                continue
+            serialized = json.dumps(value, sort_keys=True, default=str)
+            summary[field] = {
+                "changed": True,
+                "length": len(serialized),
+                "sha256": hashlib.sha256(serialized.encode("utf-8")).hexdigest(),
+            }
+        return summary
+
     @classmethod
     def list_changes(
         cls,
@@ -321,6 +362,7 @@ class ITSMChangeService:
         change_id: UUID,
         payload: ChangeAssessmentUpdateRequest,
         actor_id: UUID,
+        operation_id: str | None = None,
     ) -> ChangeDetailResponse:
         chg = (
             db.query(ITSMChangeRequest)
@@ -335,6 +377,21 @@ class ITSMChangeService:
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Change request '{change_id}' not found",
             )
+
+        stable_operation_id = (operation_id or str(uuid4()))[:255]
+        audit_key = f"itsm:change:{chg.id}:assessment:{stable_operation_id}"
+        if operation_id and cls._audit_operation_exists(db, tenant_id, audit_key):
+            return cls.get_change(db, tenant_id, change_id)
+
+        original_values = {
+            "risk_level": chg.risk_level,
+            "impact_level": chg.impact_level,
+            "change_type": chg.change_type,
+            "description": chg.description,
+            "implementation_plan": chg.implementation_plan,
+            "backout_plan": chg.backout_plan,
+            "test_plan": chg.test_plan,
+        }
 
         # Validate enums if provided
         if payload.risk_level is not None:
@@ -377,38 +434,74 @@ class ITSMChangeService:
             chg.test_plan = payload.test_plan
 
         chg.updated_at = datetime.now(timezone.utc)
-
-        db.commit()
-        db.refresh(chg)
-
-        # Emit audit event to compliance audit store
+        current_values = {
+            "risk_level": chg.risk_level,
+            "impact_level": chg.impact_level,
+            "change_type": chg.change_type,
+            "description": chg.description,
+            "implementation_plan": chg.implementation_plan,
+            "backout_plan": chg.backout_plan,
+            "test_plan": chg.test_plan,
+        }
+        changed_fields = set(payload.model_fields_set)
+        before_summary = cls._assessment_audit_summary(
+            {field: original_values[field] for field in changed_fields}
+        )
+        after_summary = cls._assessment_audit_summary(
+            {field: current_values[field] for field in changed_fields}
+        )
+        # Assessment changes and their required audit evidence are one atomic
+        # operation. Never leave a changed business record without evidence.
         try:
-            sp = db.begin_nested()
-            try:
-                db.execute(
-                    text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
-                    {"tenant_id": str(tenant_id)},
+            if "change_type" in changed_fields and original_values["change_type"] != current_values["change_type"]:
+                db.add(
+                    ITSMMetricSourceEvent(
+                        id=uuid4(),
+                        tenant_id=tenant_id,
+                        event_type="CHANGE_TYPE_CHANGED",
+                        source_type="CHANGE",
+                        source_id=chg.id,
+                        occurred_at=chg.updated_at,
+                        event_key=f"{audit_key}:metric-change-type",
+                        payload={
+                            "old_change_type": original_values["change_type"],
+                            "change_type": current_values["change_type"],
+                        },
+                    )
                 )
-                append_audit_event(
-                    db,
-                    {
-                        "id": str(uuid4()),
-                        "idempotency_key": f"itsm:change:{chg.id}:assessment:{datetime.now(timezone.utc).timestamp()}",
-                        "tenant_id": str(tenant_id),
-                        "timestamp": datetime.now(timezone.utc),
-                        "actor_id": str(actor_id),
-                        "actor_type": "user",
-                        "action": "itsm.change.assessed",
-                        "policy_id": str(chg.id),
-                        "reason": f"Change {chg.change_number} assessment updated: Risk={chg.risk_level}, Impact={chg.impact_level}, Type={chg.change_type}",
-                    },
-                )
-                sp.commit()
-            except Exception as audit_err:
-                sp.rollback()
-                logger.warning("Failed to emit audit event for change assessment: %s", audit_err)
+            db.execute(
+                text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                {"tenant_id": str(tenant_id)},
+            )
+            append_audit_event(
+                db,
+                {
+                    "id": str(uuid4()),
+                    "idempotency_key": audit_key,
+                    "tenant_id": str(tenant_id),
+                    "timestamp": datetime.now(timezone.utc),
+                    "actor_id": str(actor_id),
+                    "actor_type": "user",
+                    "action": "itsm.change.assessed",
+                    "request_id": stable_operation_id,
+                    "event_category": "change_assessment",
+                    "target_id": str(chg.id),
+                    "target_type": "change_request",
+                    "before_summary": before_summary,
+                    "after_summary": after_summary,
+                    "policy_id": str(chg.id),
+                    "provider": "itsm",
+                    "reason": f"Change {chg.change_number} assessment updated: Risk={chg.risk_level}, Impact={chg.impact_level}, Type={chg.change_type}",
+                    "response_status": 200,
+                    "frameworks_affected": ["ITIL"],
+                },
+            )
+            db.commit()
         except Exception:
-            pass
+            db.rollback()
+            raise
+
+        db.refresh(chg)
 
         return cls.get_change(db, tenant_id, change_id)
 
@@ -480,6 +573,7 @@ class ITSMChangeService:
         change_id: UUID,
         payload: ChangeLifecycleTransitionRequest,
         actor_id: UUID,
+        operation_id: str | None = None,
     ) -> ChangeDetailResponse:
         """Enforce transition rules and progress Change Request through supported lifecycle states."""
         chg = (
@@ -498,6 +592,10 @@ class ITSMChangeService:
 
         current_status = chg.status.upper() if chg.status else "DRAFT"
         action = payload.action.strip().lower()
+        stable_operation_id = (operation_id or str(uuid4()))[:255]
+        audit_key = f"itsm:change:{chg.id}:lifecycle:{stable_operation_id}"
+        if operation_id and cls._audit_operation_exists(db, tenant_id, audit_key):
+            return cls.get_change(db, tenant_id, change_id)
 
         # Terminal state validation
         if current_status in {"CLOSED", "CANCELLED"}:
@@ -588,37 +686,56 @@ class ITSMChangeService:
             if payload.validation_notes:
                 chg.test_plan = payload.validation_notes
 
-        db.commit()
-        db.refresh(chg)
-
-        # Emit audit event to compliance audit store
         reason_text = payload.notes.strip() if payload.notes and payload.notes.strip() else rule["default_msg"]
         try:
-            sp = db.begin_nested()
-            try:
-                db.execute(
-                    text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
-                    {"tenant_id": str(tenant_id)},
+            if action in {"complete", "cancel"}:
+                db.add(
+                    ITSMMetricSourceEvent(
+                        id=uuid4(),
+                        tenant_id=tenant_id,
+                        event_type="CHANGE_OUTCOME",
+                        source_type="CHANGE",
+                        source_id=chg.id,
+                        occurred_at=now,
+                        event_key=f"{audit_key}:metric-outcome",
+                        payload={
+                            "status": new_status,
+                            "change_type": chg.change_type,
+                        },
+                    )
                 )
-                append_audit_event(
-                    db,
-                    {
-                        "id": str(uuid4()),
-                        "idempotency_key": f"itsm:change:{chg.id}:lifecycle:{now.timestamp()}",
-                        "tenant_id": str(tenant_id),
-                        "timestamp": now,
-                        "actor_id": str(actor_id),
-                        "actor_type": "user",
-                        "action": f"itsm.change.{action}",
-                        "policy_id": str(chg.id),
-                        "reason": f"Change {chg.change_number} transitioned from {old_status} to {new_status}: {reason_text}",
-                    },
-                )
-                sp.commit()
-            except Exception as audit_err:
-                sp.rollback()
-                logger.warning("Failed to emit audit event for change lifecycle: %s", audit_err)
+            db.execute(
+                text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                {"tenant_id": str(tenant_id)},
+            )
+            append_audit_event(
+                db,
+                {
+                    "id": str(uuid4()),
+                    "idempotency_key": audit_key,
+                    "tenant_id": str(tenant_id),
+                    "timestamp": now,
+                    "actor_id": str(actor_id),
+                    "actor_type": "user",
+                    "action": f"itsm.change.{action}",
+                    "request_id": stable_operation_id,
+                    "event_category": "change_lifecycle",
+                    "target_id": str(chg.id),
+                    "target_type": "change_request",
+                    "before_summary": {"status": old_status},
+                    "after_summary": {"status": new_status},
+                    "policy_id": str(chg.id),
+                    "provider": "itsm",
+                    "reason": f"Change {chg.change_number} transitioned from {old_status} to {new_status}: {reason_text}",
+                    "response_status": 200,
+                    "frameworks_affected": ["ITIL"],
+                },
+            )
+            db.commit()
         except Exception:
-            pass
+            db.rollback()
+            raise
+
+        db.refresh(chg)
 
         return cls.get_change(db, tenant_id, change_id)

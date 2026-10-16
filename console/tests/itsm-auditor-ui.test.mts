@@ -15,7 +15,7 @@ test("Auditor workspace uses the real audit search and signed export routes", ()
   assert.match(page, /\/api\/itsm\/audit\/exports/);
   assert.match(page, /\/api\/itsm\/audit\/export/);
   assert.match(page, /\/api\/itsm\/audit\/events\/\$\{encodeURIComponent\(recordId\)\}/);
-  assert.match(page, /Independent, read-only visibility into platform activity and evidence/);
+  assert.match(page, /Verify evidence health, identify activity that needs review, and open the supporting record/);
   assert.match(page, /integrity_check: String\(activeView === "audit" && !search && !hasStructuredFilters\)/);
 });
 
@@ -75,6 +75,41 @@ test("Auditor MVP views cover overview, investigation, evidence, reports, and ex
   assert.match(page, /Privileged actions/);
   assert.match(page, /Denied actions/);
   assert.match(page, /Administrative changes/);
+});
+
+test("Auditor overview prioritizes evidence health and actionable review signals", () => {
+  for (const text of [
+    "Evidence chain verified",
+    "Needs review",
+    "Evidence coverage",
+    "Search evidence",
+    "A denial is evidence to inspect, not proof of misconduct",
+  ]) assert.match(page, new RegExp(text));
+  assert.match(page, /href="\/itsm\/dashboard\/auditor\?section=audit-log"/);
+  assert.match(page, /href="\/itsm\/dashboard\/auditor\?section=evidence"/);
+  assert.match(page, /href="\/itsm\/dashboard\/auditor\?section=exports"/);
+});
+
+test("Auditor overview bars disclose values and dates on hover or focus and open matching evidence", () => {
+  assert.match(page, /function auditLogHref/);
+  assert.match(page, /params\.set\("action", filters\.action\)/);
+  assert.match(page, /params\.set\("start_date", filters\.startDate\)/);
+  assert.match(page, /aria-label=\{`Review \$\{point\.count\} audit/);
+  assert.match(page, /href=\{auditLogHref\(\{ startDate: point\.date, endDate: point\.date \}\)\}/);
+  assert.match(page, /href=\{auditLogHref\(\{ action: item\.action \}\)\}/);
+  assert.match(page, /\{item\.count\} \{item\.count === 1 \? "event" : "events"\}/);
+  assert.match(page, /function formatChartDate/);
+  assert.match(page, /group-hover\/bar:opacity-100 group-focus-visible\/bar:opacity-100/);
+  assert.match(page, /peer-hover:opacity-100 peer-focus-visible:opacity-100/);
+  assert.match(page, /group-hover\/bar:opacity-100 group-focus-visible:opacity-100/);
+  assert.match(page, /h-2 overflow-hidden rounded-full/);
+  assert.doesNotMatch(page, /className="max-w-full truncate">\{point\.count\}/);
+});
+
+test("Auditor page headers expose the read-only boundary without decorative clutter", () => {
+  assert.match(page, /Read-only workspace/);
+  assert.match(page, /children\?: React\.ReactNode/);
+  assert.doesNotMatch(page, /Read-only Auditor workspace/);
 });
 
 test("Audit evidence exposes the documented reconstruction fields", () => {

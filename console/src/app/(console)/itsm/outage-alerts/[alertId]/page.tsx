@@ -370,14 +370,19 @@ function Field({ label, value, wide = false }: { label: string; value: unknown; 
 
 function DeliveryOperatorDiagnostics({ alert }: { alert: AlertDetail }) {
   const health = alert.delivery_health;
-  const status = health?.delivery_health_status || "UNKNOWN";
+  const deliverySummary = health?.summary || {};
+  const totalDelivered = deliverySummary.AVAILABLE || 0;
+  const totalRetrying = deliverySummary.RETRYING || 0;
+  const totalFailed = (deliverySummary.FAILED || 0) + (deliverySummary.PERMANENTLY_FAILED || 0);
+  const status = totalFailed > 0 ? "FAILED" : totalRetrying > 0 ? "RETRYING" : (health?.total_recipients || 0) > 0 ? "HEALTHY" : "IDLE";
+  const lastError = health?.recent_errors?.[0]?.error;
   const channels = health?.channels || [];
   const statusColor =
     status === "HEALTHY"
       ? "text-[#166534] bg-[#F0FDF4] border-[#BBF7D0]"
-      : status === "DEGRADED"
+      : status === "RETRYING"
       ? "text-[#854D0E] bg-[#FEFCE8] border-[#FEF08A]"
-      : status === "CRITICAL"
+      : status === "FAILED"
       ? "text-[#991B1B] bg-[#FEF2F2] border-[#FECACA]"
       : "text-[#6B7488] bg-[#F8F9FA] border-[#E6E9F0]";
 
@@ -404,23 +409,23 @@ function DeliveryOperatorDiagnostics({ alert }: { alert: AlertDetail }) {
             <p className="mt-1 text-xs font-semibold text-[#6B7488]">Dispatched recipients</p>
           </div>
           <div className="rounded-xl border border-[#BBF7D0] bg-[#F0FDF4] p-3 text-center">
-            <p className="text-2xl font-bold text-[#166534]">{health?.total_delivered ?? 0}</p>
+            <p className="text-2xl font-bold text-[#166534]">{totalDelivered}</p>
             <p className="mt-1 text-xs font-semibold text-[#166534]">Delivered</p>
           </div>
           <div className="rounded-xl border border-[#FEF08A] bg-[#FEFCE8] p-3 text-center">
-            <p className="text-2xl font-bold text-[#854D0E]">{health?.total_retrying ?? 0}</p>
+            <p className="text-2xl font-bold text-[#854D0E]">{totalRetrying}</p>
             <p className="mt-1 text-xs font-semibold text-[#854D0E]">Retrying in queue</p>
           </div>
           <div className="rounded-xl border border-[#FECACA] bg-[#FEF2F2] p-3 text-center">
-            <p className="text-2xl font-bold text-[#991B1B]">{health?.total_failed ?? 0}</p>
+            <p className="text-2xl font-bold text-[#991B1B]">{totalFailed}</p>
             <p className="mt-1 text-xs font-semibold text-[#991B1B]">Failed / Dead-letter</p>
           </div>
         </div>
 
-        {health?.last_error ? (
+        {lastError ? (
           <div className="mt-5 rounded-xl border border-[#FECACA] bg-[#FEF2F2] p-4 text-xs text-[#991B1B]">
             <p className="font-semibold">Last recorded transmission error:</p>
-            <p className="mt-1 font-mono">{health.last_error}</p>
+            <p className="mt-1 font-mono">{lastError}</p>
           </div>
         ) : null}
       </section>
@@ -444,14 +449,7 @@ function DeliveryOperatorDiagnostics({ alert }: { alert: AlertDetail }) {
                     {chan.status}
                   </span>
                 </div>
-                <div className="mt-3 flex justify-between text-xs text-[#6B7488]">
-                  <span>
-                    Delivered: <strong className="text-[#0E1726]">{chan.delivered_count}</strong>
-                  </span>
-                  <span>
-                    Failed: <strong className="text-[#0E1726]">{chan.failed_count}</strong>
-                  </span>
-                </div>
+                {chan.name ? <p className="mt-3 text-xs text-[#6B7488]">{chan.name}</p> : null}
               </div>
             ))
           ) : (

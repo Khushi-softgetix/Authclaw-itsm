@@ -282,6 +282,25 @@ export interface OperationalKPIDashboard {
   drilldown_limit: number;
 }
 
+export interface MetricSnapshot {
+  id: string;
+  tenant_id: string;
+  metric_key: string;
+  period_grain: "DAILY" | "WEEKLY" | "MONTHLY";
+  period_start: string;
+  period_end: string;
+  dimensions: { reporting_timezone?: string; week_start?: number; [key: string]: unknown };
+  value: Record<string, unknown>;
+  definition_version: string;
+  source_events: Record<string, unknown>;
+  generated_at: string;
+}
+
+export interface MetricSnapshotList {
+  items: MetricSnapshot[];
+  total: number;
+}
+
 export interface IncidentWorkloadEntry {
   key: string;
   label: string;

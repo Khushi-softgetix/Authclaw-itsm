@@ -215,6 +215,15 @@ def _get_itsm_role(db: Session, tenant_id: UUID, user_id: UUID) -> str:
     )
 
 
+def _deny_platform_admin_business_access(role: str) -> None:
+    """Keep platform configuration authority separate from incident operations."""
+    if role == "PLATFORM_ADMINISTRATOR":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform Administrator does not automatically grant Incident Management business access",
+        )
+
+
 @router.post(
     "",
     response_model=IncidentResponse,
@@ -234,6 +243,7 @@ def create_incident(
     role = _get_itsm_role(db, t_id, actor_id)
 
     deny_itsm_auditor_mutation(request, db, role, "incident.create")
+    _deny_platform_admin_business_access(role)
 
     if role == "REQUESTER":
         if payload.priority and not payload.urgency:
@@ -319,6 +329,7 @@ def list_incidents(
     role = _get_itsm_role(db, t_id, actor_id)
 
     deny_itsm_auditor_access(request, db, role, "incident.list")
+    _deny_platform_admin_business_access(role)
 
     agent_scope_id = None
     if role == "REQUESTER":
@@ -359,6 +370,7 @@ def get_incident_summary(
     actor_id = UUID(str(request.state.user_id))
     t_id = UUID(tenant_id)
     role = _get_itsm_role(db, t_id, actor_id)
+    _deny_platform_admin_business_access(role)
 
     if role == "REQUESTER":
         requester_id = actor_id
@@ -426,6 +438,7 @@ def get_incident(
     role = _get_itsm_role(db, t_id, actor_id)
 
     deny_itsm_auditor_access(request, db, role, "incident.read")
+    _deny_platform_admin_business_access(role)
 
     if agent_view and role != "SERVICE_AGENT":
         raise HTTPException(
@@ -472,6 +485,7 @@ def update_incident(
     role = _get_itsm_role(db, t_id, actor_id)
 
     deny_itsm_auditor_mutation(request, db, role, "incident.update")
+    _deny_platform_admin_business_access(role)
 
     if role == "REQUESTER":
         raise HTTPException(
@@ -541,7 +555,8 @@ def change_incident_status(
 
     role = str(access_row.itsm_role).upper() if (access_row and access_row.itsm_role) else _get_itsm_role(db, t_id, actor_id)
     deny_itsm_auditor_mutation(request, db, role, "incident.status.change")
-    allowed_roles = {"SERVICE_AGENT", "INCIDENT_MANAGER", "PLATFORM_ADMINISTRATOR", "SERVICE_LEAD", "ADMIN"}
+    _deny_platform_admin_business_access(role)
+    allowed_roles = {"SERVICE_AGENT", "INCIDENT_MANAGER", "SERVICE_LEAD", "ADMIN"}
     if role not in allowed_roles:
         if role == "REQUESTER":
             target_status = payload.status.strip().upper() if payload.status else ""
@@ -757,7 +772,8 @@ def add_incident_activity(
 
     role = str(access_row.itsm_role).upper() if (access_row and access_row.itsm_role) else _get_itsm_role(db, t_id, actor_id)
     deny_itsm_auditor_mutation(request, db, role, "incident.activity.create")
-    allowed_roles = {"SERVICE_AGENT", "INCIDENT_MANAGER", "PLATFORM_ADMINISTRATOR", "SERVICE_LEAD", "REQUESTER", "ADMIN"}
+    _deny_platform_admin_business_access(role)
+    allowed_roles = {"SERVICE_AGENT", "INCIDENT_MANAGER", "SERVICE_LEAD", "REQUESTER", "ADMIN"}
     if role not in allowed_roles:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized role")
 
@@ -807,7 +823,8 @@ def list_incident_activities(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ITSM access disabled")
 
     role = str(access_row.itsm_role).upper() if (access_row and access_row.itsm_role) else _get_itsm_role(db, t_id, actor_id)
-    allowed_roles = {"SERVICE_AGENT", "INCIDENT_MANAGER", "PLATFORM_ADMINISTRATOR", "SERVICE_LEAD", "REQUESTER", "ADMIN"}
+    _deny_platform_admin_business_access(role)
+    allowed_roles = {"SERVICE_AGENT", "INCIDENT_MANAGER", "SERVICE_LEAD", "REQUESTER", "ADMIN"}
     if role not in allowed_roles:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Unauthorized role")
 
@@ -863,7 +880,8 @@ def report_recurring_problem(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ITSM access disabled")
 
     role = str(access_row.itsm_role).upper() if (access_row and access_row.itsm_role) else _get_itsm_role(db, t_id, actor_id)
-    allowed_roles = {"SERVICE_AGENT", "ADMIN", "PLATFORM_ADMINISTRATOR"}
+    _deny_platform_admin_business_access(role)
+    allowed_roles = {"SERVICE_AGENT", "ADMIN"}
     if role not in allowed_roles:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

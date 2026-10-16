@@ -38,6 +38,10 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
   const platformRole = principal.platform_role || "NONE";
   const itsmRole = (principal.itsm_role || "").toUpperCase();
   const productAccess = principal.product_access || { governance: true, itsm: false };
+  const isItsmProfile = currentPath === "/itsm/profile" || currentPath.startsWith("/itsm/profile/");
+  const useIncidentManagerShell = isIncidentManagerPortal || (
+    isItsmProfile && (itsmRole === "INCIDENT_MANAGER" || itsmRole === "SERVICE_LEAD")
+  );
 
   if (isItsmPath && !productAccess.itsm) {
     redirect("/itsm/login?error=access_denied");
@@ -46,7 +50,7 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
   }
 
   // Enforce Incident Manager separation from operational ITSM workspace
-  if (isItsmPath && !isAdminPortal && !isIncidentManagerPortal) {
+  if (isItsmPath && !isAdminPortal && !useIncidentManagerShell) {
     if (itsmRole === "INCIDENT_MANAGER" || itsmRole === "SERVICE_LEAD") {
       redirect("/itsm/incident-manager");
     }
@@ -84,7 +88,7 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
     );
   }
 
-  if (isIncidentManagerPortal) {
+  if (useIncidentManagerShell) {
     return (
       <IncidentManagerShell
         userEmail={userEmail}

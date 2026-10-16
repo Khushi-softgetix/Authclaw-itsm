@@ -104,6 +104,35 @@ def test_auditor_cannot_create_incident(monkeypatch):
     assert blocked == [("AUDITOR", "incident.create")]
 
 
+def test_auditor_cannot_change_incident_classification(monkeypatch):
+    request = _request(method="PATCH")
+    db = MagicMock()
+    db.execute.return_value.first.return_value = SimpleNamespace(
+        itsm_role="AUDITOR",
+        has_itsm_access=True,
+    )
+    blocked = []
+
+    def deny(_request, _db, role, action):
+        blocked.append((role, action))
+        raise HTTPException(status_code=403, detail="Auditor access is read-only")
+
+    monkeypatch.setattr(itsm_incidents, "deny_itsm_auditor_mutation", deny)
+
+    with pytest.raises(HTTPException) as exc:
+        itsm_incidents.update_incident(
+            uuid4(),
+            MagicMock(configuration_item_id=uuid4()),
+            request,
+            db,
+            str(request.state.tenant_id),
+            if_match="1",
+        )
+
+    assert exc.value.status_code == 403
+    assert blocked == [("AUDITOR", "incident.update")]
+
+
 @pytest.mark.parametrize(
     ("endpoint", "action"),
     [

@@ -19,7 +19,25 @@ test("Incident Manager operational KPI dashboard stays inside the protected port
   assert.match(page, /MTTR/);
   assert.match(page, /SLA adherence/);
   assert.match(page, /Backlog aging/);
-  assert.match(page, /KPI drill-down/);
+  assert.match(page, /Reporting scope/);
+  assert.match(page, /Performance snapshot/);
+  assert.match(page, /Operational breakdown/);
+  assert.match(page, /Historical KPI snapshots/);
+  assert.match(page, /kpis\/snapshots\?period_grain=/);
+  assert.match(page, /No completed historical snapshots yet/);
+  assert.match(page, /completed periods are missing/);
+  assert.match(page, /Historical KPI snapshots are temporarily unavailable/);
+  assert.match(page, /function BacklogDistribution/);
+  assert.match(page, /aria-pressed=\{active\}/);
+  assert.match(page, /Need the underlying records\?/);
+  assert.match(page, /Showing up to \{dashboard\.drilldown_limit\} source incidents/);
   assert.match(shell, /href: "\/itsm\/incident-manager\/kpis", label: "Operational KPIs"/);
   assert.deepEqual(resolveBffRoute("GET", "itsm/analytics/kpis/operational-dashboard"), { backendPath: "/v1/itsm/analytics/kpis/operational-dashboard", body: "none", status: undefined });
+});
+
+test("immutable KPI history is available only through the explicit analytics BFF route", () => {
+  const route = resolveBffRoute("GET", "itsm/analytics/kpis/snapshots");
+  assert.ok(route, "Historical snapshot reads must be explicitly allowlisted");
+  assert.equal(route?.backendPath, "/v1/itsm/analytics/kpis/snapshots");
+  assert.equal(resolveBffRoute("POST", "itsm/analytics/kpis/snapshots"), null);
 });

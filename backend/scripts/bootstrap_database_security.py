@@ -149,6 +149,17 @@ def configured_roles() -> tuple[Role, Role, Role, Role]:
     )
 
 
+def configured_metric_worker_role() -> Role:
+    """Return the dedicated ANA-004 worker login (never an API runtime role)."""
+    return role_from_url(
+        "METRIC_SNAPSHOT_DATABASE_URL",
+        "METRIC_SNAPSHOT_WORKER",
+        "authclaw_metric_worker",
+        "authclaw_metric_worker",
+        "public",
+    )
+
+
 def ensure_login_role(conn, role: Role) -> None:
     quoted_role = conn.dialect.identifier_preparer.quote(role.name)
     password = quote_literal(role.password)
@@ -336,7 +347,8 @@ def prepare(conn, database_name: str, roles: tuple[Role, Role, Role, Role]) -> N
     ensure_auth_definer_role(conn)
     ensure_agent_auth_definer_role(conn)
 
-    for role in roles:
+    metric_worker = configured_metric_worker_role()
+    for role in (*roles, metric_worker):
         ensure_login_role(conn, role)
         conn.execute(
             text(f"GRANT CONNECT ON DATABASE {database} TO {quote(role.name)}")
@@ -454,11 +466,18 @@ def grant_backend_functions(conn, backend_runtime: Role) -> None:
 
 
 def secure_authentication_boundary(conn, backend_runtime: Role) -> None:
-    worker_maintenance_security.finalize(conn, configured_roles()[0].name, backend_runtime.name)
+    metric_worker = configured_metric_worker_role()
+    worker_maintenance_security.finalize(
+        conn,
+        configured_roles()[0].name,
+        backend_runtime.name,
+        metric_worker.name,
+    )
     quote = conn.dialect.identifier_preparer.quote
     definer = quote(AUTH_DEFINER_ROLE)
     runtime = quote(backend_runtime.name)
     migrator = quote(configured_roles()[0].name)
+    metric_runtime = quote(metric_worker.name)
 
     for role in (runtime, migrator):
         conn.execute(text(f"REVOKE {definer} FROM {role}"))
@@ -503,6 +522,7 @@ def secure_authentication_boundary(conn, backend_runtime: Role) -> None:
         )
     )
     conn.execute(text(f"GRANT USAGE ON SCHEMA authn TO {runtime}"))
+    conn.execute(text(f"GRANT USAGE ON SCHEMA authn TO {metric_runtime}"))
 
     tables = conn.execute(
         text(
@@ -528,6 +548,15 @@ def secure_authentication_boundary(conn, backend_runtime: Role) -> None:
         conn.execute(text(f"REVOKE ALL ON FUNCTION {signature} FROM {runtime}"))
         if function_name in AUTHN_RUNTIME_FUNCTIONS:
             conn.execute(text(f"GRANT EXECUTE ON FUNCTION {signature} TO {runtime}"))
+    conn.execute(
+        text(
+            f"GRANT EXECUTE ON FUNCTION authn.set_context(uuid,uuid,uuid) "
+            f"TO {worker_maintenance_security.OWNER}"
+        )
+    )
+    conn.execute(
+        text(f"GRANT USAGE ON SCHEMA authn TO {worker_maintenance_security.OWNER}")
+    )
 
     definer_functions = (
         "resolve_api_key(text)",

@@ -683,7 +683,7 @@ class IncidentService:
         summary: dict[str, Any] = {}
         for key, value in values.items():
             if key in visible:
-                summary[key] = value
+                summary[key] = json.loads(json.dumps(value, default=str))
             else:
                 serialized = json.dumps(value, sort_keys=True, default=str)
                 summary[key] = {
@@ -814,6 +814,7 @@ class IncidentService:
             assignee_id=payload.assignee_id,
             assignment_group=assignment_group,
             service_id=payload.service_id,
+            configuration_item_id=payload.configuration_item_id,
             category_id=payload.category_id,
             category=payload.category,
             subcategory=payload.subcategory,
@@ -834,6 +835,18 @@ class IncidentService:
             activity_type="CREATED",
             content=f"Incident logged with priority {priority} (Status: {initial_status})"
             + (f". Priority override: {payload.priority_override_reason.strip()}" if priority != matrix_priority else ""),
+            new_value={
+                "status": initial_status,
+                "priority": priority,
+                "service_id": str(ticket.service_id) if ticket.service_id else None,
+                "category": ticket.category,
+                "subcategory": ticket.subcategory,
+                "linked_problem_id": str(ticket.linked_problem_id) if ticket.linked_problem_id else None,
+                "sla_status": ticket.sla_status,
+                "sla_response_due_at": ticket.sla_response_due_at.isoformat() if ticket.sla_response_due_at else None,
+                "sla_resolution_due_at": ticket.sla_resolution_due_at.isoformat() if ticket.sla_resolution_due_at else None,
+                "sla_paused_at": ticket.sla_paused_at.isoformat() if ticket.sla_paused_at else None,
+            },
             actor_id=actor_id,
         )
 
@@ -854,6 +867,7 @@ class IncidentService:
                 "assignment_group": ticket.assignment_group,
                 "assignee_id": str(ticket.assignee_id) if ticket.assignee_id else None,
                 "service_id": str(ticket.service_id) if ticket.service_id else None,
+                "configuration_item_id": str(ticket.configuration_item_id) if ticket.configuration_item_id else None,
                 "category": ticket.category,
                 "is_major_incident": ticket.is_major_incident,
             },
@@ -1366,13 +1380,23 @@ class IncidentService:
                     ticket.assignment_group = routed_group
                     changed_fields.append("assignment_group")
 
-        if "configuration_item_id" in payload.model_fields_set and payload.configuration_item_id is not None:
-            cls._validate_configuration_item_in_tenant(
-                db,
-                tenant_id,
-                payload.configuration_item_id,
-                payload.service_id if "service_id" in payload.model_fields_set else ticket.service_id,
-            )
+        if "configuration_item_id" in payload.model_fields_set:
+            if payload.configuration_item_id is not None:
+                cls._validate_configuration_item_in_tenant(
+                    db,
+                    tenant_id,
+                    payload.configuration_item_id,
+                    payload.service_id if "service_id" in payload.model_fields_set else ticket.service_id,
+                )
+            if payload.configuration_item_id != ticket.configuration_item_id:
+                old_values["configuration_item_id"] = (
+                    str(ticket.configuration_item_id) if ticket.configuration_item_id else None
+                )
+                new_values["configuration_item_id"] = (
+                    str(payload.configuration_item_id) if payload.configuration_item_id else None
+                )
+                ticket.configuration_item_id = payload.configuration_item_id
+                changed_fields.append("configuration_item_id")
 
         if "category_id" in payload.model_fields_set and payload.category_id != ticket.category_id:
             if payload.category_id is not None:
@@ -1416,10 +1440,20 @@ class IncidentService:
 
         if changed_fields:
             if "priority" in changed_fields or "service_id" in changed_fields:
+                old_values.update({
+                    "sla_status": ticket.sla_status,
+                    "sla_response_due_at": ticket.sla_response_due_at.isoformat() if ticket.sla_response_due_at else None,
+                    "sla_resolution_due_at": ticket.sla_resolution_due_at.isoformat() if ticket.sla_resolution_due_at else None,
+                })
                 policy = cls._find_sla_policy(db, tenant_id, ticket.priority, ticket.service_id, ticket_type=ticket.ticket_type)
                 response_met_at = ticket.sla_response_met_at
                 apply_sla_policy(ticket, policy, ticket.created_at)
                 ticket.sla_response_met_at = response_met_at
+                new_values.update({
+                    "sla_status": ticket.sla_status,
+                    "sla_response_due_at": ticket.sla_response_due_at.isoformat() if ticket.sla_response_due_at else None,
+                    "sla_resolution_due_at": ticket.sla_resolution_due_at.isoformat() if ticket.sla_resolution_due_at else None,
+                })
             ticket.updated_at = datetime.now(timezone.utc)
             cls._record_activity(
                 db=db,
@@ -1573,7 +1607,14 @@ class IncidentService:
         elif current_status == "RESOLVED" and target_status == "IN_PROGRESS":
             activity_content = "Incident reopened: Status changed from RESOLVED to IN_PROGRESS" + (f": {payload.status_reason}" if payload.status_reason else "")
 
-        new_val = {"status": target_status, "status_reason": payload.status_reason}
+        new_val = {
+            "status": target_status,
+            "status_reason": payload.status_reason,
+            "sla_status": ticket.sla_status,
+            "sla_response_met_at": ticket.sla_response_met_at.isoformat() if ticket.sla_response_met_at else None,
+            "sla_resolution_met_at": ticket.sla_resolution_met_at.isoformat() if ticket.sla_resolution_met_at else None,
+            "sla_paused_at": ticket.sla_paused_at.isoformat() if ticket.sla_paused_at else None,
+        }
         if target_status == "RESOLVED":
             new_val["resolution_code"] = ticket.resolution_code
             new_val["resolution_summary"] = ticket.resolution_summary
@@ -1642,6 +1683,7 @@ class IncidentService:
         new_group = ticket.assignment_group
 
         # If incident was NEW and is now assigned, advance to ASSIGNED
+        prior_status = ticket.status
         if ticket.status == "NEW" and (ticket.assignee_id or ticket.assignment_group):
             ticket.status = "ASSIGNED"
 
@@ -1654,7 +1696,11 @@ class IncidentService:
             activity_type="ASSIGNMENT_CHANGE",
             content=f"Assigned to user '{new_assignee}' / group '{new_group}'",
             old_value={"assignee_id": old_assignee, "assignment_group": old_group},
-            new_value={"assignee_id": new_assignee, "assignment_group": new_group},
+            new_value={
+                "assignee_id": new_assignee,
+                "assignment_group": new_group,
+                "status": ticket.status if ticket.status != prior_status else None,
+            },
             actor_id=actor_id,
         )
 
@@ -1712,6 +1758,7 @@ class IncidentService:
             tenant_id=tenant_id,
             ticket_id=ticket.id,
             incident_commander_id=commander_id,
+            communication_lead_id=payload.communication_lead_id,
             bridge_url=payload.bridge_url,
             communication_channel=payload.communication_channel,
             declared_at=datetime.now(timezone.utc),
@@ -1719,7 +1766,14 @@ class IncidentService:
             postmortem_status="PENDING",
             executive_summary=payload.executive_summary,
             impacted_business_units=payload.impacted_business_units or [],
+            affected_service_ids=[str(value) for value in payload.affected_service_ids],
+            affected_configuration_item_ids=[str(value) for value in payload.affected_configuration_item_ids],
             customer_impact_description=payload.customer_impact_description,
+            restoration_checkpoints=[value.model_dump(mode="json") for value in payload.restoration_checkpoints],
+            command_decisions=[value.model_dump(mode="json") for value in payload.command_decisions],
+            command_tasks=[value.model_dump(mode="json") for value in payload.command_tasks],
+            stakeholders=[value.model_dump(mode="json") for value in payload.stakeholders],
+            command_communications=[value.model_dump(mode="json") for value in payload.command_communications],
         )
         ticket.is_major_incident = True
         ticket.updated_at = datetime.now(timezone.utc)
@@ -1768,9 +1822,12 @@ class IncidentService:
         before_values = {
             field: getattr(major, field)
             for field in (
-                "incident_commander_id", "bridge_url", "communication_channel",
+                "incident_commander_id", "communication_lead_id", "bridge_url", "communication_channel",
                 "executive_summary", "impacted_business_units",
+                "affected_service_ids", "affected_configuration_item_ids",
                 "customer_impact_description", "postmortem_status", "postmortem_url",
+                "restoration_checkpoints", "command_decisions", "command_tasks",
+                "stakeholders", "command_communications",
             )
         }
         changes = payload.model_dump(exclude_unset=True)
@@ -1780,17 +1837,36 @@ class IncidentService:
         cls._validate_communication_approvals(payload, actor_id, major.command_communications or [])
         valid_fields = {
             "incident_commander_id",
+            "communication_lead_id",
             "bridge_url",
             "communication_channel",
             "executive_summary",
             "impacted_business_units",
+            "affected_service_ids",
+            "affected_configuration_item_ids",
             "customer_impact_description",
+            "restoration_checkpoints",
+            "command_decisions",
+            "command_tasks",
+            "stakeholders",
+            "command_communications",
             "postmortem_status",
             "postmortem_url",
         }
         for field in valid_fields:
             if field in changes:
-                setattr(major, field, changes[field])
+                value = changes[field]
+                if field in {"affected_service_ids", "affected_configuration_item_ids"}:
+                    value = [str(item) for item in value]
+                elif field in {
+                    "restoration_checkpoints", "command_decisions", "command_tasks",
+                    "stakeholders", "command_communications",
+                }:
+                    value = [
+                        item.model_dump(mode="json")
+                        for item in getattr(payload, field)
+                    ]
+                setattr(major, field, value)
         if changes:
             ticket.updated_at = datetime.now(timezone.utc)
             cls._record_activity(db, tenant_id, ticket.id, "MAJOR_INCIDENT_UPDATED", "Major incident command details updated", new_value=payload.model_dump(mode="json", exclude_unset=True), actor_id=actor_id)

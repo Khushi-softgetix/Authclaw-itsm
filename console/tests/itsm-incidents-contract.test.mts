@@ -130,13 +130,20 @@ test("Incident Manager navigation and overview expose the approved control-cente
   assert.match(overview, /summary\.unassigned/);
   assert.match(overview, /summary\.active_major_incidents/);
   assert.match(overview, /assignment_group=__UNASSIGNED__&unassigned=true/);
+  assert.match(overview, /Queue overview/);
+  assert.match(overview, /function QueueSummaryLink/);
+  assert.match(overview, /function AttentionFilter/);
   assert.match(overview, /Focus attention/);
+  assert.match(overview, /Filter worklist/);
   assert.match(overview, /Critical or high priority/);
   assert.match(overview, /Deadline missed/);
   assert.match(overview, /Deadline approaching/);
   assert.match(overview, /No recent activity/);
   assert.match(overview, />Attention reason</);
   assert.match(overview, />Ownership</);
+  assert.match(overview, /How attention is calculated/);
+  assert.match(overview, /role="button" aria-label=\{`Review \$\{item\.ticket_number\}: \$\{item\.title\}`\}/);
+  assert.match(overview, /event\.key === "Enter" \|\| event\.key === " "/);
   assert.match(overview, /aria-label=\{`Review \$\{item\.ticket_number\}: \$\{item\.title\}`\}/);
   assert.doesNotMatch(overview, /<NotificationBell/);
 });
@@ -282,6 +289,21 @@ test("Incident Manager optional UX keeps queue requests focused and mobile-frien
   assert.match(overview, /ATTENTION_PREVIEW_LIMIT = 8/);
   assert.match(overview, /WORKLOAD_PREVIEW_LIMIT = 5/);
   assert.match(overview, /View full queue/);
+});
+
+test("Incident Manager workload bars disclose values on hover or focus and link to matching queues", () => {
+  const overview = readFileSync(new URL("../src/app/(console)/itsm/incident-manager/page.tsx", import.meta.url), "utf8");
+  const queue = readFileSync(new URL("../src/app/(console)/itsm/incident-manager/incidents/page.tsx", import.meta.url), "utf8");
+  assert.match(overview, /\{entry\.open_incidents\} open \{entry\.open_incidents === 1 \? "incident" : "incidents"\}/);
+  assert.match(overview, /assignment_group=\$\{encodeURIComponent/);
+  assert.match(overview, /assignee_id=\$\{encodeURIComponent/);
+  assert.match(overview, /aria-label=\{`View \$\{entry\.open_incidents\} open/);
+  assert.match(overview, /group\/bar relative/);
+  assert.match(overview, /h-2 overflow-hidden rounded-full/);
+  assert.match(overview, /opacity-0 shadow-md transition-opacity group-hover\/bar:opacity-100 group-focus-visible:opacity-100/);
+  assert.match(queue, /const \[filtersReady, setFiltersReady\] = useState\(false\)/);
+  assert.match(queue, /setFiltersReady\(true\)/);
+  assert.match(queue, /if \(!filtersReady\) return;/);
 });
 
 test("Major Incident activity uses the Incident Manager presentation", () => {

@@ -1,432 +1,318 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import { useEffect, useState, type ComponentType } from "react";
 import { useRouter } from "next/navigation";
 import {
-  Building,
+  Building2,
+  Check,
   CheckCircle2,
-  Clock,
-  Key,
+  KeyRound,
   Layers,
   LogOut,
+  Mail,
   Server,
   ShieldCheck,
-  User,
+  UserRound,
   Users,
 } from "lucide-react";
-import { formatDateTime } from "@/lib/itsm-format";
 import type { SupportScopeResponse } from "@/lib/itsm-types";
 
 interface SessionInfo {
-  userId?: string;
   userEmail?: string;
   tenantId?: string;
   tenantName?: string;
   itsmRole?: string;
-  platformRole?: string;
-  productAccess?: { governance?: boolean; itsm?: boolean };
-  authenticatedAt?: string;
 }
 
-function getRoleProfileTitle(role?: string): string {
-  switch (role?.toUpperCase()) {
-    case "REQUESTER":
-      return "Requester Profile";
-    case "SERVICE_AGENT":
-      return "Service Agent Profile";
-    case "INCIDENT_MANAGER":
-      return "Incident Manager Profile";
-    case "PROCESS_CHANGE_MANAGER":
-      return "Problem and Change Manager Profile";
-    case "PLATFORM_ADMINISTRATOR":
-      return "Platform Administrator Profile";
-    case "AUDITOR":
-    case "ITSM_AUDITOR":
-      return "Auditor Profile";
-    case "CATALOG_MANAGER":
-      return "Catalog Manager Profile";
-    default:
-      return "ITSM Profile";
-  }
+const ROLE_PROFILE: Record<string, { title: string; label: string; subtitle: string; access: string[] }> = {
+  "REQUESTER": {
+    title: "Requester Profile",
+    label: "Requester",
+    subtitle: "Your account and access to employee self-service.",
+    access: ["Submit and follow your requests", "View services available to you", "Receive relevant service communications"],
+  },
+  "SERVICE_AGENT": {
+    title: "Service Agent Profile",
+    label: "Service Agent",
+    subtitle: "Your account, support scope, and operational workspace access.",
+    access: ["Work within assigned support teams", "Support authorized services", "Use approved operational guidance"],
+  },
+  "INCIDENT_MANAGER": {
+    title: "Incident Manager Profile",
+    label: "Incident Manager",
+    subtitle: "Your account and access to incident command and service communication.",
+    access: ["Coordinate incident operations", "Manage outage communications", "Review operational performance"],
+  },
+  "PROCESS_CHANGE_MANAGER": {
+    title: "Problem and Change Manager Profile",
+    label: "Problem and Change Manager",
+    subtitle: "Your account and access to problem and change governance.",
+    access: ["Manage authorized problems", "Coordinate approved changes", "Review related service impact"],
+  },
+  "PLATFORM_ADMINISTRATOR": {
+    title: "Platform Administrator Profile",
+    label: "Platform Administrator",
+    subtitle: "Your account and access to ITSM platform configuration.",
+    access: ["Configure authorized platform settings", "Manage service administration", "Review technical delivery health"],
+  },
+  "AUDITOR": {
+    title: "Auditor Profile",
+    label: "Auditor",
+    subtitle: "Your account and read-only access to authorized audit evidence.",
+    access: ["Review immutable audit evidence", "Inspect outage communication history", "Prepare authorized reports and exports"],
+  },
+  "ITSM_AUDITOR": {
+    title: "Auditor Profile",
+    label: "Auditor",
+    subtitle: "Your account and read-only access to authorized audit evidence.",
+    access: ["Review immutable audit evidence", "Inspect outage communication history", "Prepare authorized reports and exports"],
+  },
+  "CATALOG_MANAGER": {
+    title: "Catalog Manager Profile",
+    label: "Catalog Manager",
+    subtitle: "Your account and access to service catalog management.",
+    access: ["Manage catalog offerings", "Maintain request intake forms", "Review catalog responsibilities"],
+  },
+};
+
+const DEFAULT_PROFILE = {
+  title: "ITSM Profile",
+  label: "ITSM User",
+  subtitle: "Your AuthClaw account and workspace access.",
+  access: ["Use your authorized workspace", "Access tenant-scoped records", "Work within assigned permissions"],
+};
+
+function getRoleProfile(role?: string) {
+  return ROLE_PROFILE[String(role || "").toUpperCase()] || DEFAULT_PROFILE;
 }
 
-function getRoleSubtitle(role?: string): string {
-  switch (role?.toUpperCase()) {
-    case "REQUESTER":
-      return "Your authenticated employee self-service session and workspace entitlement details.";
-    case "SERVICE_AGENT":
-      return "Your authenticated service agent session and operational queue entitlement details.";
-    case "INCIDENT_MANAGER":
-      return "Your authenticated incident management session and command center entitlement details.";
-    case "PROCESS_CHANGE_MANAGER":
-      return "Your authenticated problem and change governance session entitlement details.";
-    case "PLATFORM_ADMINISTRATOR":
-      return "Your authenticated platform administrator session and workspace management scope.";
-    case "AUDITOR":
-    case "ITSM_AUDITOR":
-      return "Your authenticated compliance auditor session and audit trail inspection scope.";
-    case "CATALOG_MANAGER":
-      return "Your authenticated catalog management session for managing Service Catalog offerings and request intake forms.";
-    default:
-      return "Your authenticated AuthClaw user session and workspace entitlement details.";
-  }
+function getRoleProfileTitle(role?: string) {
+  return getRoleProfile(role).title;
 }
 
-function getProductEntitlement(role?: string): string {
-  if (role?.toUpperCase() === "REQUESTER") {
-    return "AuthClaw ITSM Requester Self-Service";
-  }
-  return "AuthClaw ITSM";
+function getRoleSubtitle(role?: string) {
+  return getRoleProfile(role).subtitle;
 }
 
-function getRoleBadgeLabel(role?: string): string {
-  switch (role?.toUpperCase()) {
-    case "REQUESTER":
-      return "Requester";
-    case "SERVICE_AGENT":
-      return "Service Agent";
-    case "INCIDENT_MANAGER":
-      return "Incident Manager";
-    case "PROCESS_CHANGE_MANAGER":
-      return "Problem and Change Manager";
-    case "PLATFORM_ADMINISTRATOR":
-      return "Platform Administrator";
-    case "AUDITOR":
-    case "ITSM_AUDITOR":
-      return "Auditor";
-    case "CATALOG_MANAGER":
-      return "Catalog Manager";
-    default:
-      return role || "REQUESTER";
-  }
+function getRoleBadgeLabel(role?: string) {
+  return getRoleProfile(role).label;
 }
 
-function getAvatarInitials(email?: string, role?: string): string {
-  switch (role?.toUpperCase()) {
-    case "SERVICE_AGENT":
-      return "AG";
-    case "INCIDENT_MANAGER":
-      return "IM";
-    case "PROCESS_CHANGE_MANAGER":
-      return "PM";
-    case "PLATFORM_ADMINISTRATOR":
-      return "AD";
-    case "AUDITOR":
-    case "ITSM_AUDITOR":
-      return "AU";
-    case "CATALOG_MANAGER":
-      return "CM";
-    case "REQUESTER":
-      return "RQ";
-  }
-  if (email && email.length >= 2) {
-    return email.slice(0, 2).toUpperCase();
-  }
-  return "RQ";
+function getProductEntitlement(role?: string) {
+  return role?.toUpperCase() === "REQUESTER" ? "AuthClaw ITSM Requester Self-Service" : "AuthClaw ITSM";
+}
+
+function getAvatarInitials(email?: string, role?: string) {
+  const words = getRoleBadgeLabel(role).split(" ").filter(Boolean);
+  if (words.length > 1) return words.slice(0, 2).map((word) => word[0]).join("").toUpperCase();
+  return email?.slice(0, 2).toUpperCase() || "IT";
+}
+
+function DetailRow({ icon: Icon, label, value, detail, mono = false }: {
+  icon: ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+  detail?: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="flex min-w-0 items-start gap-3 py-4 first:pt-0 last:pb-0">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#F4F0FF] text-[#6D28D9]">
+        <Icon className="h-4 w-4" aria-hidden="true" />
+      </span>
+      <div className="min-w-0">
+        <p className="text-xs font-medium text-[#667085]">{label}</p>
+        <p className={`mt-1 break-words text-sm font-semibold text-[#172033] ${mono ? "font-mono text-xs" : ""}`}>{value}</p>
+        {detail ? <p className="mt-1 text-xs leading-5 text-[#667085]">{detail}</p> : null}
+      </div>
+    </div>
+  );
 }
 
 export default function ITSMProfilePage() {
   const router = useRouter();
   const [session, setSession] = useState<SessionInfo | null>(null);
-  const [loading, setLoading] = useState<boolean>(true);
-  const [loggingOut, setLoggingOut] = useState<boolean>(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState("");
+  const [loggingOut, setLoggingOut] = useState(false);
   const [supportScope, setSupportScope] = useState<SupportScopeResponse | null>(null);
-  const [scopeLoading, setScopeLoading] = useState<boolean>(false);
 
   useEffect(() => {
-    async function loadSession() {
-      try {
-        setLoading(true);
-        const res = await fetch("/api/auth/session");
-        if (res.ok) {
-          const data = await res.json();
-          setSession({
-            userId: data.userId || data.id,
-            userEmail: data.userEmail || data.email,
-            tenantId: data.tenantId,
-            tenantName: data.tenantName,
-            itsmRole: data.itsmRole || "REQUESTER",
-            platformRole: data.platformRole || "NONE",
-            productAccess: data.productAccess,
-            authenticatedAt: new Date().toISOString(),
-          });
-        }
-      } catch (err) {
-        // Non-blocking fallback
-      } finally {
-        setLoading(false);
-      }
-    }
-    loadSession();
+    let active = true;
+    fetch("/api/auth/session")
+      .then((response) => {
+        if (!response.ok) throw new Error("Profile details could not be loaded.");
+        return response.json();
+      })
+      .then((data) => {
+        if (!active) return;
+        setSession({
+          userEmail: data.userEmail || data.email,
+          tenantId: data.tenantId || data.tenant_id,
+          tenantName: data.tenantName || data.tenant_name,
+          itsmRole: data.itsmRole || data.itsm_role || "REQUESTER",
+        });
+      })
+      .catch((error) => {
+        if (active) setLoadError(error instanceof Error ? error.message : "Profile details could not be loaded.");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
-    if (session?.itsmRole?.toUpperCase() === "SERVICE_AGENT") {
-      setScopeLoading(true);
-      fetch("/api/itsm/services/my-scope")
-        .then((res) => {
-          if (!res.ok) throw new Error("Failed to load support scope");
-          return res.json();
-        })
-        .then((data: SupportScopeResponse) => {
-          setSupportScope(data);
-        })
-        .catch((err) => {
-          console.error("Support scope fetch error:", err);
-          setSupportScope({ teams: [], services: [], catalog_items: [] });
-        })
-        .finally(() => {
-          setScopeLoading(false);
-        });
-    }
+    if (session?.itsmRole?.toUpperCase() !== "SERVICE_AGENT") return;
+    let active = true;
+    fetch("/api/itsm/services/my-scope")
+      .then((response) => {
+        if (!response.ok) throw new Error("Support scope could not be loaded.");
+        return response.json();
+      })
+      .then((data: SupportScopeResponse) => {
+        if (active) setSupportScope(data);
+      })
+      .catch(() => {
+        if (active) setSupportScope({ teams: [], services: [], catalog_items: [] });
+      });
+    return () => { active = false; };
   }, [session?.itsmRole]);
 
   const handleLogout = async () => {
+    setLoggingOut(true);
     try {
-      setLoggingOut(true);
       await fetch("/api/auth/logout", { method: "POST" });
       router.push("/itsm/login");
       router.refresh();
-    } catch (error) {
-      console.error("Failed to log out:", error);
     } finally {
       setLoggingOut(false);
     }
   };
 
-  const role = session?.itsmRole;
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-5xl space-y-5" aria-label="Loading profile">
+        <div className="h-40 animate-pulse rounded-2xl border border-[#E6E9F0] bg-white" />
+        <div className="grid gap-5 md:grid-cols-2"><div className="h-72 animate-pulse rounded-2xl bg-white" /><div className="h-72 animate-pulse rounded-2xl bg-white" /></div>
+      </div>
+    );
+  }
+
+  if (loadError || !session) {
+    return (
+      <div className="mx-auto max-w-xl rounded-2xl border border-[#FECACA] bg-white p-8 text-center shadow-sm" role="alert">
+        <h1 className="text-xl font-bold text-[#172033]">Profile unavailable</h1>
+        <p className="mt-2 text-sm text-[#667085]">{loadError || "Your profile details could not be loaded."}</p>
+        <button type="button" onClick={() => window.location.reload()} className="mt-5 rounded-lg bg-[#6D28D9] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#5B21B6]">Try again</button>
+      </div>
+    );
+  }
+
+  const role = session.itsmRole;
+  const profile = getRoleProfile(role);
+  const isServiceAgent = role?.toUpperCase() === "SERVICE_AGENT";
+  const scopeLoading = isServiceAgent && supportScope === null;
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
-      {/* Page Header */}
-      <div className="bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-[#F3E8FF] text-[#6D28D9] flex items-center justify-center shrink-0 font-bold text-lg">
-            {getAvatarInitials(session?.userEmail, role)}
+    <div className="mx-auto max-w-5xl space-y-5 pb-8">
+      <section className="overflow-hidden rounded-2xl border border-[#E1E5EC] bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+        <div className="flex flex-col gap-5 p-6 sm:flex-row sm:items-center sm:justify-between sm:p-7">
+          <div className="flex min-w-0 items-center gap-4">
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-[#6D28D9] text-lg font-bold text-white shadow-[0_10px_24px_-12px_rgba(109,40,217,0.75)]">
+              {getAvatarInitials(session.userEmail, role)}
+            </div>
+            <div className="min-w-0">
+              <h1 id="profile-role-title" className="text-2xl font-bold tracking-tight text-[#172033]">{getRoleProfileTitle(role)}</h1>
+              <p className="mt-1 truncate text-sm font-medium text-[#475467]">{session.userEmail}</p>
+              <p id="profile-role-subtitle" className="mt-1 text-sm leading-5 text-[#667085]">{getRoleSubtitle(role)}</p>
+            </div>
           </div>
-          <div>
-            <h1 className="text-xl font-extrabold text-[#0E1726] tracking-tight" id="profile-role-title">
-              {getRoleProfileTitle(role)}
-            </h1>
-            <p className="text-xs text-[#6B7488] mt-1" id="profile-role-subtitle">
-              {getRoleSubtitle(role)}
-            </p>
+          <button
+            type="button"
+            onClick={handleLogout}
+            disabled={loggingOut}
+            className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg border border-[#D0D5DD] bg-white px-4 text-sm font-semibold text-[#344054] transition hover:border-[#FDA29B] hover:bg-[#FFF5F5] hover:text-[#B42318] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9]/25 disabled:opacity-50"
+          >
+            <LogOut className="h-4 w-4" aria-hidden="true" />
+            {loggingOut ? "Signing out…" : "Sign Out"}
+          </button>
+        </div>
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-[#EAECF0] bg-[#FCFCFD] px-6 py-3 text-xs sm:px-7">
+          <span id="profile-role-badge" className="inline-flex items-center gap-1.5 font-semibold text-[#5B21B6]"><ShieldCheck className="h-3.5 w-3.5" />{getRoleBadgeLabel(role)}</span>
+          <span className="inline-flex items-center gap-1.5 font-medium text-[#027A48]"><CheckCircle2 className="h-3.5 w-3.5" />Active account</span>
+          <span className="inline-flex min-w-0 items-center gap-1.5 text-[#667085]"><Building2 className="h-3.5 w-3.5 shrink-0" /><span className="truncate">{session.tenantName || "Current tenant"}</span></span>
+        </div>
+      </section>
+
+      <section className="grid overflow-hidden rounded-2xl border border-[#E1E5EC] bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)] md:grid-cols-2 md:divide-x md:divide-[#EAECF0]">
+        <div className="p-6">
+          <div className="mb-5">
+            <h2 className="text-base font-semibold text-[#172033]">Account details</h2>
+            <p className="mt-1 text-xs leading-5 text-[#667085]">Identity details used across your AuthClaw workspace.</p>
+          </div>
+          <div className="divide-y divide-[#EAECF0]">
+            <DetailRow icon={Mail} label="Email Address" value={session.userEmail || "Not available"} />
+            <DetailRow icon={ShieldCheck} label="ITSM Role" value={getRoleBadgeLabel(role)} detail="Your role and permissions are managed by your organization." />
+            <DetailRow icon={CheckCircle2} label="Account Status" value="Active" detail="Your authenticated session is currently available." />
           </div>
         </div>
 
-        <button
-          onClick={handleLogout}
-          disabled={loggingOut}
-          className="inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-red-50 hover:bg-red-100 text-red-600 rounded-xl text-xs font-bold border border-red-200 transition disabled:opacity-50"
-        >
-          <LogOut className="w-4 h-4" />
-          <span>{loggingOut ? "Signing out..." : "Sign Out"}</span>
-        </button>
-      </div>
-
-      {/* Main Content Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Profile Identity Card */}
-        <div className="bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm space-y-4">
-          <div className="flex items-center gap-2 border-b border-[#E6E9F0] pb-3 text-[#0E1726]">
-            <User className="w-4 h-4 text-[#6D28D9]" />
-            <h2 className="text-sm font-bold">Account Identity</h2>
+        <div className="border-t border-[#EAECF0] p-6 md:border-t-0">
+          <div className="mb-5">
+            <h2 className="text-base font-semibold text-[#172033]">Workspace access</h2>
+            <p className="mt-1 text-xs leading-5 text-[#667085]">The organization and product currently connected to your session.</p>
           </div>
-
-          <div className="space-y-3.5 text-xs">
-            <div>
-              <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
-                Email Address
-              </span>
-              <span className="text-xs font-bold text-[#0E1726] mt-0.5 block">
-                {loading ? "Loading..." : session?.userEmail || "user@authclaw.com"}
-              </span>
-            </div>
-
-            <div>
-              <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
-                ITSM Role
-              </span>
-              <div className="mt-1 inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#F1ECFE] text-[#6D28D9] text-[11px] font-bold border border-[#A78BFA]">
-                <ShieldCheck className="w-3.5 h-3.5" />
-                <span id="profile-role-badge">{getRoleBadgeLabel(role)}</span>
-              </div>
-            </div>
-
-            <div>
-              <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
-                Account Status
-              </span>
-              <span className="inline-flex items-center gap-1 text-xs font-semibold text-emerald-700 mt-0.5">
-                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> Active Session
-              </span>
-            </div>
+          <div className="divide-y divide-[#EAECF0]">
+            <DetailRow icon={Building2} label="Active tenant" value={session.tenantName || "Current tenant"} />
+            <DetailRow icon={Layers} label="Tenant Identifier" value={session.tenantId || "Not available"} mono />
+            <div id="profile-product-entitlement"><DetailRow icon={Server} label="Product access" value={getProductEntitlement(role)} /></div>
+            <DetailRow icon={KeyRound} label="Authentication Protocol" value="Secure AuthClaw session" detail="Signing out securely ends this browser session." />
           </div>
         </div>
+      </section>
 
-        {/* Active Tenant / Workspace Card */}
-        <div className="bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm space-y-4">
-          <div className="flex items-center gap-2 border-b border-[#E6E9F0] pb-3 text-[#0E1726]">
-            <Building className="w-4 h-4 text-[#6D28D9]" />
-            <h2 className="text-sm font-bold">Active Workspace</h2>
-          </div>
-
-          <div className="space-y-3.5 text-xs">
-            <div>
-              <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
-                Tenant Identifier
-              </span>
-              <span className="font-mono text-xs font-semibold text-[#475069] mt-0.5 block truncate">
-                {loading ? "Loading..." : session?.tenantId || "Default Tenant"}
-              </span>
-            </div>
-
-            <div>
-              <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
-                Product Entitlement
-              </span>
-              <span className="text-xs font-medium text-[#0E1726] mt-0.5 block" id="profile-product-entitlement">
-                {getProductEntitlement(role)}
-              </span>
-            </div>
-
-            <div>
-              <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
-                Authentication Protocol
-              </span>
-              <span className="text-xs font-medium text-[#0E1726] mt-0.5 block">
-                AuthClaw Session Token Cookie (`authclaw_session`)
-              </span>
-            </div>
-          </div>
+      <section className="rounded-2xl border border-[#E1E5EC] bg-white p-6 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+        <div className="flex items-start gap-3">
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#F4F0FF] text-[#6D28D9]"><UserRound className="h-4 w-4" /></span>
+          <div><h2 className="text-base font-semibold text-[#172033]">Your workspace access</h2><p className="mt-1 text-xs leading-5 text-[#667085]">A simple summary of how this role is used. Record-level permissions and tenant scope still apply.</p></div>
         </div>
-      </div>
+        <ul className="mt-5 grid gap-3 sm:grid-cols-3">
+          {profile.access.map((item) => (
+            <li key={item} className="flex items-start gap-2.5 rounded-xl border border-[#EAECF0] bg-[#FCFCFD] p-4 text-sm font-medium leading-5 text-[#344054]">
+              <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#EDE9FE] text-[#6D28D9]"><Check className="h-3 w-3" /></span>
+              {item}
+            </li>
+          ))}
+        </ul>
+      </section>
 
-      {/* Role-Specific Support Scope (SERVICE_AGENT only) */}
-      {role?.toUpperCase() === "SERVICE_AGENT" && (
-        <div
-          id="my-support-scope-card"
-          className="bg-white rounded-[20px] border border-[#E6E9F0] p-6 shadow-sm space-y-5"
-        >
-          <div className="flex items-center justify-between border-b border-[#E6E9F0] pb-3 text-[#0E1726]">
-            <div className="flex items-center gap-2">
-              <Layers className="w-4 h-4 text-[#6D28D9]" />
-              <h2 className="text-sm font-bold">My Support Scope</h2>
-            </div>
-            <span className="text-[10px] font-bold text-[#6D28D9] bg-[#F1ECFE] border border-[#A78BFA] px-2.5 py-0.5 rounded-full">
-              Read-Only
-            </span>
+      {isServiceAgent ? (
+        <section id="my-support-scope-card" className="rounded-2xl border border-[#E1E5EC] bg-white p-6 shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+          <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#EAECF0] pb-4">
+            <div><h2 className="text-base font-semibold text-[#172033]">My Support Scope</h2><p className="mt-1 text-xs leading-5 text-[#667085]">Teams and services currently assigned to your support role.</p></div>
+            <span className="rounded-full bg-[#F1ECFE] px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-[#5B21B6]">Read only</span>
           </div>
-
-          <div className="space-y-4">
-            {/* A. Assigned Team(s) */}
-            <div className="space-y-1.5">
-              <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
-                Assigned Team(s)
-              </span>
-              {scopeLoading ? (
-                <p className="text-xs text-[#6B7488]">Loading assigned teams...</p>
-              ) : !supportScope || supportScope.teams.length === 0 ? (
-                <p className="text-xs text-[#6B7488] italic">No team assigned</p>
-              ) : (
-                <div className="flex flex-wrap gap-2 pt-0.5">
-                  {supportScope.teams.map((team) => (
-                    <span
-                      key={team.id}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-50 text-[#0E1726] text-xs font-semibold border border-[#E6E9F0] shadow-sm"
-                      title={team.description || undefined}
-                    >
-                      <Users className="w-3.5 h-3.5 text-[#6D28D9]" />
-                      <span>{team.name}</span>
-                    </span>
-                  ))}
-                </div>
-              )}
+          {scopeLoading ? <p className="py-8 text-sm text-[#667085]">Loading support scope…</p> : (
+            <div className="grid gap-6 pt-5 md:grid-cols-3">
+              <ScopeList title="Assigned teams" icon={Users} items={(supportScope?.teams || []).map((item) => item.name)} empty="No team assigned" />
+              <ScopeList title="Supported services" icon={Server} items={(supportScope?.services || []).map((item) => item.name)} empty="No supported service assigned" />
+              <ScopeList title="Catalog responsibilities" icon={CheckCircle2} items={(supportScope?.catalog_items || []).map((item) => item.name)} empty="No catalog responsibility assigned" />
             </div>
+          )}
+        </section>
+      ) : null}
 
-            {/* B. Supported Services */}
-            <div className="space-y-1.5">
-              <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
-                Supported Services
-              </span>
-              {scopeLoading ? (
-                <p className="text-xs text-[#6B7488]">Loading supported services...</p>
-              ) : !supportScope || supportScope.services.length === 0 ? (
-                <p className="text-xs text-[#6B7488] italic">No supported services assigned</p>
-              ) : (
-                <div className="flex flex-wrap gap-2 pt-0.5">
-                  {supportScope.services.map((svc) => (
-                    <span
-                      key={svc.id}
-                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-purple-50/60 text-[#3B1261] text-xs font-medium border border-purple-100 shadow-sm"
-                      title={svc.description || undefined}
-                    >
-                      <Server className="w-3.5 h-3.5 text-[#6D28D9]" />
-                      <span className="font-semibold text-[#0E1726]">{svc.name}</span>
-                      {svc.tier && (
-                        <span className="text-[9px] uppercase font-bold tracking-wider px-1.5 py-0.5 rounded bg-white text-[#6D28D9] border border-purple-200">
-                          {svc.tier.replace(/_/g, " ")}
-                        </span>
-                      )}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
+      <p className="px-1 text-center text-xs leading-5 text-[#667085]">Profile details and role assignments are managed by your organization.</p>
+    </div>
+  );
+}
 
-            {/* C. Service Catalog Responsibilities */}
-            <div className="space-y-1.5">
-              <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">
-                Service Catalog Responsibilities
-              </span>
-              {scopeLoading ? (
-                <p className="text-xs text-[#6B7488]">Loading service catalog responsibilities...</p>
-              ) : !supportScope || supportScope.catalog_items.length === 0 ? (
-                <p className="text-xs text-[#6B7488] italic">No service catalog responsibilities assigned</p>
-              ) : (
-                <div className="flex flex-wrap gap-2 pt-0.5">
-                  {supportScope.catalog_items.map((item) => (
-                    <span
-                      key={item.id}
-                      className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-emerald-50/60 text-emerald-950 text-xs font-medium border border-emerald-200/70 shadow-sm"
-                      title={item.description || undefined}
-                    >
-                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                      <span className="font-semibold text-[#0E1726]">{item.name}</span>
-                      {item.service_name && (
-                        <span className="text-[10px] text-emerald-700 bg-white/80 px-1.5 py-0.5 rounded border border-emerald-200">
-                          {item.service_name}
-                        </span>
-                      )}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Security & Logout Banner */}
-      <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-[20px] border border-purple-100 p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="space-y-1">
-          <h3 className="text-xs font-bold text-[#0E1726] flex items-center gap-2">
-            <Key className="w-4 h-4 text-[#6D28D9]" />
-            <span>Session Protection &amp; Privacy</span>
-          </h3>
-          <p className="text-[11px] text-[#6B7488] max-w-xl">
-            Your session is secured via AuthClaw RBAC and tenant isolation. When you log out, your authentication token will be cleared.
-          </p>
-        </div>
-
-        <button
-          onClick={handleLogout}
-          disabled={loggingOut}
-          className="shrink-0 px-5 py-2.5 bg-[#6D28D9] hover:bg-[#5B21B6] text-white rounded-xl text-xs font-bold shadow-sm transition disabled:opacity-50"
-        >
-          {loggingOut ? "Signing Out..." : "Sign Out Now"}
-        </button>
-      </div>
+function ScopeList({ title, icon: Icon, items, empty }: { title: string; icon: ComponentType<{ className?: string }>; items: string[]; empty: string }) {
+  return (
+    <div>
+      <h3 className="flex items-center gap-2 text-xs font-semibold text-[#344054]"><Icon className="h-4 w-4 text-[#6D28D9]" />{title}</h3>
+      {items.length ? <ul className="mt-3 space-y-2">{items.map((item) => <li key={item} className="rounded-lg border border-[#EAECF0] bg-[#FCFCFD] px-3 py-2 text-xs font-medium text-[#475467]">{item}</li>)}</ul> : <p className="mt-3 text-xs text-[#98A2B3]">{empty}</p>}
     </div>
   );
 }

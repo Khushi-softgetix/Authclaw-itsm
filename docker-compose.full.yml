@@ -138,6 +138,8 @@ services:
       BACKEND_MIGRATOR_PASSWORD: ${BACKEND_MIGRATOR_PASSWORD:-authclaw_migrator}
       POSTGRES_APP_USER: ${POSTGRES_APP_USER:-authclaw_app}
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-authclaw_app}
+      METRIC_SNAPSHOT_WORKER_USER: ${METRIC_SNAPSHOT_WORKER_USER:-authclaw_metric_worker}
+      METRIC_SNAPSHOT_WORKER_PASSWORD: ${METRIC_SNAPSHOT_WORKER_PASSWORD:-authclaw_metric_worker}
       AGENT_MIGRATOR_USER: ${AGENT_MIGRATOR_USER:-authclaw_agent_migrator}
       AGENT_MIGRATOR_PASSWORD: ${AGENT_MIGRATOR_PASSWORD:-authclaw_agent_migrator}
       AGENT_RUNTIME_USER: ${AGENT_RUNTIME_USER:-authclaw_agent_runtime}
@@ -176,6 +178,8 @@ services:
       BACKEND_MIGRATOR_PASSWORD: ${BACKEND_MIGRATOR_PASSWORD:-authclaw_migrator}
       POSTGRES_APP_USER: ${POSTGRES_APP_USER:-authclaw_app}
       POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-authclaw_app}
+      METRIC_SNAPSHOT_WORKER_USER: ${METRIC_SNAPSHOT_WORKER_USER:-authclaw_metric_worker}
+      METRIC_SNAPSHOT_WORKER_PASSWORD: ${METRIC_SNAPSHOT_WORKER_PASSWORD:-authclaw_metric_worker}
       AGENT_MIGRATOR_USER: ${AGENT_MIGRATOR_USER:-authclaw_agent_migrator}
       AGENT_MIGRATOR_PASSWORD: ${AGENT_MIGRATOR_PASSWORD:-authclaw_agent_migrator}
       AGENT_RUNTIME_USER: ${AGENT_RUNTIME_USER:-authclaw_agent_runtime}
@@ -193,10 +197,12 @@ services:
       BOOTSTRAP_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-authclaw}:${POSTGRES_PASSWORD:-authclaw}@postgres:5432/${POSTGRES_DB:-authclaw}
       BACKEND_DATABASE_URL: postgresql+psycopg://${POSTGRES_APP_USER:-authclaw_app}:${POSTGRES_APP_PASSWORD:-authclaw_app}@postgres:5432/${POSTGRES_DB:-authclaw}
       AGENT_DATABASE_URL: postgresql+psycopg://${AGENT_RUNTIME_USER:-authclaw_agent_runtime}:${AGENT_RUNTIME_PASSWORD:-authclaw_agent_runtime}@postgres:5432/${POSTGRES_DB:-authclaw}
+      METRIC_SNAPSHOT_DATABASE_URL: postgresql+psycopg://${METRIC_SNAPSHOT_WORKER_USER:-authclaw_metric_worker}:${METRIC_SNAPSHOT_WORKER_PASSWORD:-authclaw_metric_worker}@postgres:5432/${POSTGRES_DB:-authclaw}
       BACKEND_MIGRATOR_USER: ${BACKEND_MIGRATOR_USER:-authclaw_migrator}
       POSTGRES_APP_USER: ${POSTGRES_APP_USER:-authclaw_app}
       AGENT_MIGRATOR_USER: ${AGENT_MIGRATOR_USER:-authclaw_agent_migrator}
       AGENT_RUNTIME_USER: ${AGENT_RUNTIME_USER:-authclaw_agent_runtime}
+      METRIC_SNAPSHOT_WORKER_USER: ${METRIC_SNAPSHOT_WORKER_USER:-authclaw_metric_worker}
       AGENT_RLS_CONTEXT_SECRET: ${AGENT_RLS_CONTEXT_SECRET:-authclaw-full-agent-rls-context-secret-change-me}
       AUTHCLAW_ENCRYPTION_KEY: ${AUTHCLAW_ENCRYPTION_KEY:-${AGENT_ENCRYPTION_KEY:-YXV0aGNsYXctYWdlbnQtbG9jYWwtZmVybmV0LWtleSE=}}
     command: ["python", "scripts/verify_database_security.py"]
@@ -336,6 +342,25 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  metric-snapshot-worker:
+    image: authclaw_monorepo-backend:latest
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.demo
+    container_name: authclaw-full-metric-snapshot-worker
+    depends_on:
+      database-security-check:
+        condition: service_completed_successfully
+    environment:
+      METRIC_SNAPSHOT_DATABASE_URL: postgresql+psycopg://${METRIC_SNAPSHOT_WORKER_USER:-authclaw_metric_worker}:${METRIC_SNAPSHOT_WORKER_PASSWORD:-authclaw_metric_worker}@postgres:5432/${POSTGRES_DB:-authclaw}
+      ITSM_METRIC_SNAPSHOT_WORKER_ENABLED: ${ITSM_METRIC_SNAPSHOT_WORKER_ENABLED:-true}
+      ITSM_METRIC_SNAPSHOT_WORKER_INTERVAL_SECONDS: ${ITSM_METRIC_SNAPSHOT_WORKER_INTERVAL_SECONDS:-3600}
+      ITSM_METRIC_SNAPSHOT_MAX_PERIODS_PER_SWEEP: ${ITSM_METRIC_SNAPSHOT_MAX_PERIODS_PER_SWEEP:-12}
+      ITSM_METRIC_DEFAULT_TIMEZONE: ${ITSM_METRIC_DEFAULT_TIMEZONE:-UTC}
+      ITSM_METRIC_WEEK_START: ${ITSM_METRIC_WEEK_START:-0}
+    command: ["python", "-m", "app.services.itsm_metric_snapshot_worker"]
+    restart: unless-stopped
 
   gateway:
     build:

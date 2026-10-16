@@ -47,6 +47,8 @@ export default async function ItsmLayout({ children }: { children: React.ReactNo
       currentPath.startsWith("/itsm/knowledge/") ||
       currentPath === "/itsm/notifications" ||
       currentPath.startsWith("/itsm/notifications/") ||
+      currentPath === "/itsm/outage-alerts" ||
+      currentPath.startsWith("/itsm/outage-alerts/") ||
       currentPath === "/itsm/profile" ||
       currentPath.startsWith("/itsm/profile/") ||
       currentPath.startsWith("/itsm/dashboard") ||

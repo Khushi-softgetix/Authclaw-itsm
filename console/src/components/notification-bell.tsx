@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Bell, CheckCheck, CircleAlert, CircleCheck, TriangleAlert } from "lucide-react";
+import { Bell, CheckCheck, CircleAlert, CircleCheck, TriangleAlert, X } from "lucide-react";
 import { formatDateTime } from "@/lib/ui-format";
 
 type Notification = {
@@ -40,6 +40,8 @@ export default function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   const load = useCallback(async () => {
     try {
@@ -80,6 +82,29 @@ export default function NotificationBell() {
     };
   }, [load]);
 
+  useEffect(() => {
+    if (!open) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open]);
+
   const markRead = async (id: string) => {
     const wasUnread = items.some((item) => item.id === id && !item.read_at);
     setItems((current) => current.map((item) => item.id === id ? { ...item, read_at: new Date().toISOString() } : item));
@@ -96,11 +121,16 @@ export default function NotificationBell() {
   const viewAllPath = isItsm ? "/itsm/notifications" : "/notifications";
 
   return (
-    <div className="relative">
+    <div ref={containerRef} className="relative">
       <button
+        ref={triggerRef}
+        type="button"
         onClick={() => setOpen((current) => !current)}
         className="relative inline-flex h-9 w-9 items-center justify-center rounded-[10px] border border-[#E6E9F0] bg-white text-[#475069] transition hover:border-[#A78BFA] hover:bg-[#F5F7FA] hover:text-[#0E1726]"
         aria-label="Notifications"
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        aria-controls="notification-panel"
       >
         <Bell className="h-4.5 w-4.5" />
         {unreadCount > 0 && (
@@ -111,10 +141,10 @@ export default function NotificationBell() {
       </button>
 
       <div
-        className={`fixed inset-0 z-30 ${open ? "pointer-events-auto" : "pointer-events-none"}`}
-        onClick={() => setOpen(false)}
-      />
-      <div
+        id="notification-panel"
+        role="dialog"
+        aria-label="Notifications"
+        aria-hidden={!open}
         className={`absolute right-0 z-40 mt-2 w-[min(22rem,calc(100vw-2rem))] origin-top-right rounded-[14px] border border-[#E6E9F0] bg-white shadow-[0_1px_2px_rgba(11,31,63,.05),0_20px_48px_-20px_rgba(11,31,63,.28)] transition-all duration-150 ${
           open ? "pointer-events-auto translate-y-0 scale-100 opacity-100" : "pointer-events-none -translate-y-1 scale-95 opacity-0"
         }`}
@@ -124,14 +154,28 @@ export default function NotificationBell() {
             <p className="text-sm font-bold text-[#0E1726]">Notifications</p>
             <p className="text-[10px] font-semibold uppercase tracking-wider text-[#6B7488]">{unreadCount} unread</p>
           </div>
-          <button
-            onClick={markAllRead}
-            disabled={unreadCount === 0}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[#E6E9F0] px-2.5 py-1.5 text-[10px] font-bold text-[#475069] hover:bg-[#F5F7FA] disabled:text-[#A8B0C0]"
-          >
-            <CheckCheck className="h-3.5 w-3.5" />
-            Read all
-          </button>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={markAllRead}
+              disabled={unreadCount === 0}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-[#E6E9F0] px-2.5 py-1.5 text-[10px] font-bold text-[#475069] hover:bg-[#F5F7FA] disabled:text-[#A8B0C0]"
+            >
+              <CheckCheck className="h-3.5 w-3.5" />
+              Read all
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                triggerRef.current?.focus();
+              }}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#667085] transition hover:bg-[#F5F7FA] hover:text-[#101828] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED]"
+              aria-label="Close notifications"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         <div className="max-h-96 overflow-y-auto p-2">

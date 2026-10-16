@@ -2,6 +2,7 @@ import os
 import unittest
 from datetime import datetime, timezone
 from uuid import uuid4
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
@@ -424,14 +425,50 @@ class TestITSMChangeManagement(unittest.TestCase):
                 {"id": cab_id, "tenant_id": self.tenant_id, "service_id": self.service_id, "req_by": self.pcm_user_id},
             )
 
+        operation_id = f"change-approval-{uuid4()}"
         res = self.client.post(
             f"/v1/itsm/changes/{cab_id}/transition",
-            headers={"Authorization": f"Bearer {self.pcm_key}"},
+            headers={
+                "Authorization": f"Bearer {self.pcm_key}",
+                "X-Request-ID": operation_id,
+            },
             json={"action": "approve", "notes": "Approved by Change Manager"},
         )
         self.assertEqual(res.status_code, 200)
         data = res.json()
         self.assertEqual(data["status"], "APPROVED")
+        with self.migrator_engine.connect() as conn:
+            evidence = conn.execute(
+                text(
+                    "SELECT action, request_id, execution_trace FROM public.audit_log_metadata "
+                    "WHERE tenant_id=:tenant_id AND policy_id=:change_id"
+                ),
+                {"tenant_id": self.tenant_id, "change_id": cab_id},
+            ).mappings().one()
+        self.assertEqual(evidence["action"], "itsm.change.approve")
+        self.assertEqual(evidence["request_id"], operation_id)
+        self.assertIn('"before_summary":{"status":"CAB_REVIEW"}', evidence["execution_trace"])
+        self.assertIn('"after_summary":{"status":"APPROVED"}', evidence["execution_trace"])
+
+        replay = self.client.post(
+            f"/v1/itsm/changes/{cab_id}/transition",
+            headers={
+                "Authorization": f"Bearer {self.pcm_key}",
+                "X-Request-ID": operation_id,
+            },
+            json={"action": "approve", "notes": "Approved by Change Manager"},
+        )
+        self.assertEqual(replay.status_code, 200, replay.text)
+        self.assertEqual(replay.json()["status"], "APPROVED")
+        with self.migrator_engine.connect() as conn:
+            audit_count = conn.execute(
+                text(
+                    "SELECT count(*) FROM public.audit_log_metadata "
+                    "WHERE tenant_id=:tenant_id AND request_id=:request_id"
+                ),
+                {"tenant_id": self.tenant_id, "request_id": operation_id},
+            ).scalar_one()
+        self.assertEqual(audit_count, 1)
 
     def test_18_lifecycle_schedule(self):
         # Create an APPROVED change
@@ -614,6 +651,162 @@ class TestITSMChangeManagement(unittest.TestCase):
         activities = res.json()
         self.assertIsInstance(activities, list)
         self.assertGreaterEqual(len(activities), 1)
+
+    def test_28_audit_failure_rolls_back_change_lifecycle(self):
+        draft_id = uuid4()
+        with self.migrator_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_change_requests "
+                    "(id, tenant_id, change_number, title, description, change_type, risk_level, "
+                    "impact_level, status, service_id, requested_by_id, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, 'CHG-990010', 'Audit rollback', "
+                    "'Required audit evidence must be atomic', 'STANDARD', 'LOW', 'LOW', "
+                    "'DRAFT', :service_id, :requested_by, now(), now())"
+                ),
+                {
+                    "id": draft_id,
+                    "tenant_id": self.tenant_id,
+                    "service_id": self.service_id,
+                    "requested_by": self.pcm_user_id,
+                },
+            )
+
+        with patch(
+            "app.services.itsm_change_service.append_audit_event",
+            side_effect=RuntimeError("audit unavailable"),
+        ):
+            with TestClient(app, raise_server_exceptions=False) as failure_client:
+                failed = failure_client.post(
+                    f"/v1/itsm/changes/{draft_id}/transition",
+                    headers={
+                        "Authorization": f"Bearer {self.pcm_key}",
+                        "X-Request-ID": "change-audit-failure-test",
+                    },
+                    json={"action": "submit_review"},
+                )
+        self.assertEqual(failed.status_code, 500, failed.text)
+
+        with self.migrator_engine.connect() as conn:
+            row_after_failure = conn.execute(
+                text(
+                    "SELECT status, risk_level FROM public.itsm_change_requests "
+                    "WHERE id=:id AND tenant_id=:tenant_id"
+                ),
+                {"id": draft_id, "tenant_id": self.tenant_id},
+            ).one()
+            audit_count = conn.execute(
+                text(
+                    "SELECT count(*) FROM public.audit_log_metadata "
+                    "WHERE tenant_id=:tenant_id AND request_id='change-audit-failure-test'"
+                ),
+                {"tenant_id": self.tenant_id},
+            ).scalar_one()
+        self.assertEqual(row_after_failure.status, "DRAFT")
+        self.assertEqual(audit_count, 0)
+
+    def test_29_audit_failure_rolls_back_change_assessment(self):
+        change_id = uuid4()
+        with self.migrator_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_change_requests "
+                    "(id, tenant_id, change_number, title, description, change_type, risk_level, "
+                    "impact_level, status, service_id, requested_by_id, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, 'CHG-990011', 'Assessment rollback', "
+                    "'Original description', 'STANDARD', 'LOW', 'LOW', "
+                    "'DRAFT', :service_id, :requested_by, now(), now())"
+                ),
+                {
+                    "id": change_id,
+                    "tenant_id": self.tenant_id,
+                    "service_id": self.service_id,
+                    "requested_by": self.pcm_user_id,
+                },
+            )
+
+        with patch(
+            "app.services.itsm_change_service.append_audit_event",
+            side_effect=RuntimeError("audit unavailable"),
+        ):
+            with TestClient(app, raise_server_exceptions=False) as failure_client:
+                failed = failure_client.patch(
+                    f"/v1/itsm/changes/{change_id}/assessment",
+                    headers={
+                        "Authorization": f"Bearer {self.pcm_key}",
+                        "X-Request-ID": "change-assessment-audit-failure-test",
+                    },
+                    json={"risk_level": "HIGH", "description": "Sensitive revised plan"},
+                )
+        self.assertEqual(failed.status_code, 500, failed.text)
+
+        with self.migrator_engine.connect() as conn:
+            row_after_failure = conn.execute(
+                text(
+                    "SELECT risk_level, description FROM public.itsm_change_requests "
+                    "WHERE id=:id AND tenant_id=:tenant_id"
+                ),
+                {"id": change_id, "tenant_id": self.tenant_id},
+            ).one()
+            audit_count = conn.execute(
+                text(
+                    "SELECT count(*) FROM public.audit_log_metadata "
+                    "WHERE tenant_id=:tenant_id "
+                    "AND request_id='change-assessment-audit-failure-test'"
+                ),
+                {"tenant_id": self.tenant_id},
+            ).scalar_one()
+        self.assertEqual(row_after_failure.risk_level, "LOW")
+        self.assertEqual(row_after_failure.description, "Original description")
+        self.assertEqual(audit_count, 0)
+
+    def test_30_platform_administrator_has_no_automatic_change_authority(self):
+        admin_id = uuid4()
+        admin_key = f"platform-admin-change-{uuid4().hex[:12]}"
+        with self.migrator_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO public.users "
+                    "(id, tenant_id, email, role, platform_role, is_active, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, :email, 'admin', 'NONE', true, now(), now())"
+                ),
+                {
+                    "id": admin_id,
+                    "tenant_id": self.tenant_id,
+                    "email": f"platform-admin-{uuid4().hex[:6]}@example.com",
+                },
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_user_access "
+                    "(id, tenant_id, user_id, itsm_role, has_itsm_access, "
+                    "has_governance_access, created_at, updated_at) "
+                    "VALUES (gen_random_uuid(), :tenant_id, :user_id, "
+                    "'PLATFORM_ADMINISTRATOR', true, true, now(), now())"
+                ),
+                {"tenant_id": self.tenant_id, "user_id": admin_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO public.api_keys "
+                    "(id, tenant_id, key_hash, name, scopes, is_active, created_by, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, :key_hash, 'platform-admin-change-key', "
+                    "ARRAY['read','write','admin'], true, :created_by, now(), now())"
+                ),
+                {
+                    "id": uuid4(),
+                    "tenant_id": self.tenant_id,
+                    "key_hash": hash_key(admin_key),
+                    "created_by": admin_id,
+                },
+            )
+
+        denied = self.client.post(
+            f"/v1/itsm/changes/{self.change_1_id}/transition",
+            headers={"Authorization": f"Bearer {admin_key}"},
+            json={"action": "approve"},
+        )
+        self.assertEqual(denied.status_code, 403, denied.text)
 
 
 if __name__ == "__main__":

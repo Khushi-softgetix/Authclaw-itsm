@@ -12,7 +12,12 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_current_tenant, get_tenant_db
-from app.db.models import ITSMKnowledgeArticle, ITSMKnowledgeArticleVersion, User
+from app.db.models import (
+    ITSMKnowledgeArticle,
+    ITSMKnowledgeArticleVersion,
+    ITSMMetricSourceEvent,
+    User,
+)
 from app.schemas.itsm_knowledge import (
     CreateKnowledgeArticleRequest,
     ITSMKnowledgeArticleDetailResponse,
@@ -214,8 +219,9 @@ def list_knowledge_articles(
 ):
     actor_id = UUID(str(request.state.user_id)) if getattr(request.state, "user_id", None) else None
     t_id = UUID(tenant_id)
+    actor_role = None
     if actor_id:
-        _verify_itsm_user(db, t_id, actor_id)
+        actor_role = _verify_itsm_user(db, t_id, actor_id)
 
     return KnowledgeService.list_articles(
         db=db,
@@ -280,6 +286,26 @@ def get_knowledge_article(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Knowledge article not found",
         )
+    stored_article = db.query(ITSMKnowledgeArticle).filter(
+        ITSMKnowledgeArticle.id == UUID(str(getattr(article, "id"))),
+        ITSMKnowledgeArticle.tenant_id == t_id,
+    ).first()
+    if stored_article and actor_role == "REQUESTER":
+        occurred_at = datetime.now(timezone.utc)
+        stored_article.view_count += 1
+        db.add(
+            ITSMMetricSourceEvent(
+                id=uuid4(),
+                tenant_id=t_id,
+                event_type="KNOWLEDGE_VIEW",
+                source_type="KNOWLEDGE_ARTICLE",
+                source_id=stored_article.id,
+                occurred_at=occurred_at,
+                event_key=f"knowledge-view:{stored_article.id}:{uuid4()}",
+                payload={},
+            )
+        )
+        db.commit()
     return article
 
 
@@ -295,6 +321,8 @@ def record_article_helpful(
     tenant_id_str: str = Depends(get_current_tenant),
 ):
     tenant_id = UUID(tenant_id_str)
+    actor_id = UUID(str(request.state.user_id)) if getattr(request.state, "user_id", None) else None
+    actor_role = _verify_itsm_user(db, tenant_id, actor_id) if actor_id else None
     article = (
         db.query(ITSMKnowledgeArticle)
         .filter(ITSMKnowledgeArticle.id == article_id, ITSMKnowledgeArticle.tenant_id == tenant_id)
@@ -303,7 +331,21 @@ def record_article_helpful(
     if not article:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Article not found")
 
+    occurred_at = datetime.now(timezone.utc)
     article.helpful_count += 1
+    if actor_role == "REQUESTER":
+        db.add(
+            ITSMMetricSourceEvent(
+                id=uuid4(),
+                tenant_id=tenant_id,
+                event_type="KNOWLEDGE_HELPFUL",
+                source_type="KNOWLEDGE_ARTICLE",
+                source_id=article.id,
+                occurred_at=occurred_at,
+                event_key=f"knowledge-helpful:{article.id}:{uuid4()}",
+                payload={},
+            )
+        )
     db.commit()
     return {"status": "success", "helpful_count": article.helpful_count}
 

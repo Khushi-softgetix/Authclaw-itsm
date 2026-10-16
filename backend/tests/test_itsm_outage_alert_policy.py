@@ -5,7 +5,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.schemas.itsm_outage_alerts import AlertDraftRequest
-from app.services.itsm_outage_alert_service import OutageAlertService
+from app.services.itsm_outage_alert_service import OutageAlertService, TENANT_WIDE_RECIPIENT_ROLES
 from app.services.itsm_outage_alert_policy import allowed_actions_for, can_manage, project_alert
 
 
@@ -88,6 +88,30 @@ def test_incomplete_service_scoped_alert_can_be_saved_as_draft_but_not_previewed
         OutageAlertService._validate_publishable(
             SimpleNamespace(audiences=[SimpleNamespace(audience_type="SERVICE_USERS")], services=[], links=[], service_agent_handling="ALERT_ONLY")
         )
+
+
+def test_tenant_wide_portal_audience_does_not_require_an_affected_service():
+    payload = AlertDraftRequest(
+        title="Planned office power shutdown",
+        alert_type="MAINTENANCE",
+        severity="HIGH",
+        intent="ACTION_REQUIRED",
+        public_summary="Office power will be unavailable tomorrow from 1:00 PM to 2:00 PM.",
+        impact_summary="Workstations at the affected office will not have power.",
+        recommended_action="Save your work and shut down your system before 1:00 PM.",
+        audiences=[{"audience_type": "ALL_PORTAL_USERS"}],
+    )
+
+    assert payload.service_ids == []
+    OutageAlertService._validate_publishable(
+        SimpleNamespace(
+            audiences=[SimpleNamespace(audience_type="ALL_PORTAL_USERS")],
+            services=[],
+            links=[],
+            service_agent_handling="ALERT_ONLY",
+        )
+    )
+    assert "SERVICE_LEAD" in TENANT_WIDE_RECIPIENT_ROLES
 
 
 def test_publishable_validation_requires_an_incident_for_solve():
@@ -175,3 +199,30 @@ def test_platform_admin_delivery_health_permission_and_actions():
         handling="SOLVE",
         has_incident_link=True,
     ) == ["VIEW_DELIVERY_HEALTH"]
+
+
+def test_incident_manager_actions_follow_the_alert_lifecycle(monkeypatch):
+    monkeypatch.setattr(
+        OutageAlertService,
+        "_has_alert_permission",
+        lambda *args, **kwargs: True,
+    )
+
+    draft_actions = set(OutageAlertService._manager_actions(
+        None, uuid4(), uuid4(), SimpleNamespace(status="DRAFT")
+    ))
+    assert draft_actions == {
+        "VIEW", "PREVIEW", "EDIT_DRAFT", "PUBLISH", "CANCEL_DRAFT", "LINK_RECORD",
+    }
+
+    active_actions = set(OutageAlertService._manager_actions(
+        None, uuid4(), uuid4(), SimpleNamespace(status="ACTIVE")
+    ))
+    assert active_actions == {
+        "VIEW", "PREVIEW", "PUBLISH_UPDATE", "PUBLISH_RECOVERY", "LINK_RECORD",
+    }
+
+    recovered_actions = set(OutageAlertService._manager_actions(
+        None, uuid4(), uuid4(), SimpleNamespace(status="RECOVERED")
+    ))
+    assert recovered_actions == {"VIEW"}

@@ -47,7 +47,13 @@ def test_worker_migration_follows_platform_history_and_runtime_gates():
     config = Config(str(backend / "alembic.ini"))
     config.set_main_option("script_location", str(backend / "alembic"))
     scripts = ScriptDirectory.from_config(config)
-    assert scripts.get_heads() == ["059"]
+    assert scripts.get_heads() == ["065"]
+    assert scripts.get_revision("065").down_revision == "064"
+    assert scripts.get_revision("064").down_revision == "063"
+    assert scripts.get_revision("063").down_revision == "062"
+    assert scripts.get_revision("062").down_revision == "061"
+    assert scripts.get_revision("061").down_revision == "060"
+    assert scripts.get_revision("060").down_revision == "059"
     assert scripts.get_revision("059").down_revision == "058"
     assert scripts.get_revision("058").down_revision == "057"
     assert scripts.get_revision("057").down_revision == "056"
@@ -60,10 +66,43 @@ def test_worker_migration_follows_platform_history_and_runtime_gates():
     revisions = list(scripts.walk_revisions())
     assert len({revision.revision for revision in revisions}) == len(revisions)
     assert (
-        '"AUTHCLAW_EXPECTED_DB_REVISION", "059"'
+        '"AUTHCLAW_EXPECTED_DB_REVISION", "065"'
         in (backend / "app/core/startup_checks.py").read_text()
     )
-    assert "version_num IN ('046', '050', '051', '052', '053', '054', '055', '056', '057', '058', '059')" in (backend.parent / "gateway/db.go").read_text()
+    assert "version_num = '065'" in (backend.parent / "gateway/db.go").read_text()
+
+    snapshots = (backend / "alembic/versions/064_add_immutable_metric_snapshots.py").read_text()
+    assert "itsm_metric_snapshots" in snapshots
+    assert "DAILY','WEEKLY','MONTHLY" in snapshots
+    assert "trg_protect_itsm_metric_snapshot" in snapshots
+    assert "FORCE ROW LEVEL SECURITY" in snapshots
+    hardening = (backend / "alembic/versions/065_harden_metric_snapshot_generation.py").read_text()
+    assert "itsm_metric_snapshot_jobs" in hardening
+    assert "itsm_metric_source_events" in hardening
+
+    major_command = (backend / "alembic/versions/063_persist_major_incident_command_records.py").read_text()
+    assert "communication_lead_id" in major_command
+    assert "command_decisions" in major_command
+    assert "command_communications" in major_command
+    assert "ALTER TABLE public.itsm_major_incidents DISABLE ROW LEVEL SECURITY" in major_command
+    assert "ALTER TABLE public.users DISABLE ROW LEVEL SECURITY" in major_command
+    assert "ALTER TABLE public.itsm_major_incidents FORCE ROW LEVEL SECURITY" in major_command
+    assert "ALTER TABLE public.users FORCE ROW LEVEL SECURITY" in major_command
+
+    tenant_wide_audience = (backend / "alembic/versions/062_add_tenant_wide_portal_audience.py").read_text()
+    assert "ALL_PORTAL_USERS" in tenant_wide_audience
+    assert "cannot downgrade" in tenant_wide_audience
+
+    publication_pointer = (backend / "alembic/versions/061_bind_alert_current_publication.py").read_text()
+    assert "CREATE OR REPLACE FUNCTION public.enforce_outage_alert_current_publication_tenant" in publication_pointer
+    assert "publication.tenant_id <> alert.tenant_id" in publication_pointer
+    assert "publication.alert_id <> alert.id" in publication_pointer
+    assert "publication.alert_id = NEW.id" in publication_pointer
+
+    incident_ci = (backend / "alembic/versions/060_persist_incident_configuration_item.py").read_text()
+    assert "configuration_item_id" in incident_ci
+    assert "itsm_configuration_items.id" in incident_ci
+    assert "FORCE ROW LEVEL SECURITY" in incident_ci
 
     public_status = (backend / "alembic/versions/059_add_outage_alert_public_status.py").read_text()
     assert "INVESTIGATING" in public_status
@@ -81,6 +120,7 @@ def test_worker_migration_follows_platform_history_and_runtime_gates():
     assert "SPECIFIC_USER" in outage_audiences
     assert "enforce_outage_alert_reference_tenant" in outage_audiences
     assert "enforce_outage_alert_current_publication_tenant" in outage_integrity
+    assert "CREATE TRIGGER trg_enforce_outage_alert_current_publication_tenant" in outage_integrity
     assert "status = 'EXPIRED'" in outage_integrity
 
     reliability = (backend / "alembic/versions/055_incident_reliability_p0.py").read_text()
@@ -95,4 +135,6 @@ def test_worker_migration_follows_platform_history_and_runtime_gates():
     assert "SLA_BREACH_ESCALATION" in reliability
     worker_security = (backend / "scripts/worker_maintenance_security.py").read_text()
     assert "worker_maintenance.sla_candidate_tenants()" in worker_security
+    assert "worker_maintenance.metric_snapshot_candidate_tenants()" in worker_security
     assert "public.itsm_tickets" in worker_security
+    assert "SELECT(id, status) ON public.tenants" in worker_security

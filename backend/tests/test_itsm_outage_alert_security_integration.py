@@ -269,6 +269,49 @@ def base_published_alert(outage_context):
     yield
 
 
+def test_recipient_evidence_is_paginated_explainable_and_manager_only(outage_context):
+    client = outage_context["client"]
+    alert_id = outage_context["alert_id"]
+
+    live = client.get(
+        f"/v1/itsm/outage-alerts/{alert_id}/recipients?limit=1",
+        headers=headers(outage_context, "manager"),
+    )
+    assert live.status_code == 200, live.text
+    assert live.json()["source"] == "LIVE_PREVIEW"
+    assert live.json()["total"] == 2
+    assert live.json()["has_more"] is True
+    assert len(live.json()["items"]) == 1
+    assert live.json()["items"][0]["audience_memberships"]
+    assert live.json()["items"][0]["inclusion_reason"]
+    assert live.json()["items"][0]["delivery_status"] is None
+
+    published = client.get(
+        f"/v1/itsm/outage-alerts/{alert_id}/recipients",
+        headers=headers(outage_context, "manager"),
+        params={
+            "publication_id": outage_context["publication_id"],
+            "search": "requester-",
+        },
+    )
+    assert published.status_code == 200, published.text
+    assert published.json()["source"] == "PUBLICATION_SNAPSHOT"
+    assert published.json()["publication_version"] == 1
+    assert published.json()["total"] == 1
+    item = published.json()["items"][0]
+    assert item["email"].startswith("requester-")
+    assert item["delivery_status"] == "AVAILABLE"
+    assert item["channels"] == ["IN_APP", "PORTAL"]
+    assert "internal_notes" not in item["projection_fields"]
+
+    for denied_role in ("requester", "auditor", "platform_admin"):
+        denied = client.get(
+            f"/v1/itsm/outage-alerts/{alert_id}/recipients",
+            headers=headers(outage_context, denied_role),
+        )
+        assert denied.status_code == 403
+
+
 def test_explicit_permission_service_scope_and_record_scope(outage_context):
     client = outage_context["client"]
     denied_service = client.post(
@@ -285,6 +328,221 @@ def test_explicit_permission_service_scope_and_record_scope(outage_context):
     )
     assert denied_link.status_code == 422
     assert "outside the affected services" in denied_link.text
+
+
+def test_tenant_wide_portal_audience_is_safe_confirmed_and_tenant_isolated(outage_context):
+    client = outage_context["client"]
+    ids = outage_context["ids"]
+    payload = draft_payload(outage_context)
+    payload.update({
+        "title": "Planned office power shutdown",
+        "alert_type": "MAINTENANCE",
+        "intent": "ACTION_REQUIRED",
+        "public_summary": "Office power will be unavailable tomorrow from 1:00 PM to 2:00 PM.",
+        "impact_summary": "Employee workstations will not have power.",
+        "recommended_action": "Save your work and shut down your system before 1:00 PM.",
+        "service_ids": [],
+        "audiences": [{"audience_type": "ALL_PORTAL_USERS"}],
+    })
+
+    created = client.post(
+        "/v1/itsm/outage-alerts",
+        headers=headers(outage_context, "manager"),
+        json=payload,
+    )
+    assert created.status_code == 201, created.text
+    alert_id = created.json()["id"]
+
+    preview = client.post(
+        f"/v1/itsm/outage-alerts/{alert_id}/preview",
+        headers=headers(outage_context, "manager"),
+        json={},
+    )
+    assert preview.status_code == 200, preview.text
+    # Requesters, Service Agents, process/service managers, and Incident
+    # Managers are employee-facing portal accounts. Auditor and Platform
+    # Administrator accounts remain outside business-alert delivery.
+    assert preview.json()["total_recipients"] == 8
+    assert {group["projection_type"] for group in preview.json()["groups"]} == {"REQUESTER"}
+
+    unconfirmed = client.post(
+        f"/v1/itsm/outage-alerts/{alert_id}/publish",
+        headers=headers(outage_context, "manager"),
+        json={
+            "preview_token": preview.json()["preview_token"],
+            "idempotency_key": f"tenant-wide-unconfirmed-{uuid4()}",
+        },
+    )
+    assert unconfirmed.status_code == 422
+    assert "Confirm the tenant-wide recipient preview" in unconfirmed.text
+
+    published = client.post(
+        f"/v1/itsm/outage-alerts/{alert_id}/publish",
+        headers=headers(outage_context, "manager"),
+        json={
+            "preview_token": preview.json()["preview_token"],
+            "idempotency_key": f"tenant-wide-confirmed-{uuid4()}",
+            "confirm_tenant_wide": True,
+        },
+    )
+    assert published.status_code == 200, published.text
+    assert published.json()["recipient_count"] == preview.json()["total_recipients"]
+
+    with outage_context["engine"].connect() as conn:
+        rows = conn.execute(text(
+            "SELECT recipient.user_id,recipient.projection_type,recipient.content_snapshot "
+            "FROM public.itsm_outage_alert_recipients AS recipient "
+            "WHERE recipient.tenant_id=:tenant AND recipient.publication_id=:publication"
+        ), {
+            "tenant": ids["tenant_a"],
+            "publication": UUID(published.json()["publication_id"]),
+        }).mappings().all()
+    assert {row["user_id"] for row in rows}.isdisjoint({
+        ids["auditor"], ids["platform_admin"], ids["tenant_b_requester"],
+    })
+    assert {row["projection_type"] for row in rows} == {"REQUESTER"}
+    assert all("internal_notes" not in row["content_snapshot"] for row in rows)
+    assert all("service_agent_guidance" not in row["content_snapshot"] for row in rows)
+
+    scoped_payload = dict(payload)
+    scoped_payload["service_ids"] = [str(ids["service_a"])]
+    denied = client.post(
+        "/v1/itsm/outage-alerts",
+        headers=headers(outage_context, "scoped_manager"),
+        json=scoped_payload,
+    )
+    assert denied.status_code == 403
+    assert "tenant-wide permission grant" in denied.text
+
+
+def test_active_alert_links_are_scoped_audited_and_preserve_publications(outage_context):
+    client = outage_context["client"]
+    ids = outage_context["ids"]
+    alert_id, preview_token = create_and_preview(outage_context)
+    publication = client.post(
+        f"/v1/itsm/outage-alerts/{alert_id}/publish",
+        headers=headers(outage_context, "manager"),
+        json={
+            "preview_token": preview_token,
+            "idempotency_key": f"active-link-{uuid4()}",
+        },
+    )
+    assert publication.status_code == 200, publication.text
+    publication_id = publication.json()["publication_id"]
+
+    linked = client.post(
+        f"/v1/itsm/outage-alerts/{alert_id}/links",
+        headers=headers(outage_context, "manager"),
+        json={
+            "target_type": "INCIDENT",
+            "target_id": str(ids["incident_same_service"]),
+        },
+    )
+    assert linked.status_code == 200, linked.text
+    assert linked.json()["status"] == "ACTIVE"
+    assert "LINK_RECORD" in linked.json()["allowed_actions"]
+    assert {
+        "type": "INCIDENT",
+        "id": str(ids["incident_same_service"]),
+    } in linked.json()["links"]
+
+    denied_scope = client.post(
+        f"/v1/itsm/outage-alerts/{alert_id}/links",
+        headers=headers(outage_context, "manager"),
+        json={
+            "target_type": "INCIDENT",
+            "target_id": str(ids["incident_other_service"]),
+        },
+    )
+    assert denied_scope.status_code == 422
+    assert "outside the affected services" in denied_scope.text
+
+    denied_role = client.post(
+        f"/v1/itsm/outage-alerts/{alert_id}/links",
+        headers=headers(outage_context, "agent"),
+        json={
+            "target_type": "INCIDENT",
+            "target_id": str(ids["incident_same_service"]),
+        },
+    )
+    assert denied_role.status_code == 403
+
+    removed = client.delete(
+        f"/v1/itsm/outage-alerts/{alert_id}/links/INCIDENT/{ids['incident_same_service']}",
+        headers=headers(outage_context, "manager"),
+    )
+    assert removed.status_code == 204, removed.text
+    repeated = client.delete(
+        f"/v1/itsm/outage-alerts/{alert_id}/links/INCIDENT/{ids['incident_same_service']}",
+        headers=headers(outage_context, "manager"),
+    )
+    assert repeated.status_code == 204, repeated.text
+
+    detail = client.get(
+        f"/v1/itsm/outage-alerts/{alert_id}",
+        headers=headers(outage_context, "manager"),
+    )
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["links"] == []
+    assert len(detail.json()["publications"]) == 1
+    assert detail.json()["publications"][0]["id"] == publication_id
+
+    with outage_context["engine"].connect() as conn:
+        actions = conn.execute(text(
+            "SELECT action FROM public.audit_log_metadata "
+            "WHERE tenant_id=:tenant AND request_id=:alert "
+            "AND action IN ('itsm.outage_alert.link.added','itsm.outage_alert.link.removed') "
+            "ORDER BY tenant_sequence"
+        ), {
+            "tenant": ids["tenant_a"],
+            "alert": alert_id,
+        }).scalars().all()
+    assert actions == [
+        "itsm.outage_alert.link.added",
+        "itsm.outage_alert.link.removed",
+    ]
+
+
+def test_active_alert_link_rolls_back_when_required_audit_fails(outage_context):
+    client = outage_context["client"]
+    ids = outage_context["ids"]
+    alert_id, preview_token = create_and_preview(outage_context)
+    publication = client.post(
+        f"/v1/itsm/outage-alerts/{alert_id}/publish",
+        headers=headers(outage_context, "manager"),
+        json={
+            "preview_token": preview_token,
+            "idempotency_key": f"active-link-audit-{uuid4()}",
+        },
+    )
+    assert publication.status_code == 200, publication.text
+
+    with TestClient(app, raise_server_exceptions=False) as failure_client:
+        with patch(
+            "app.services.itsm_outage_alert_service.append_audit_event",
+            side_effect=RuntimeError("audit unavailable"),
+        ):
+            response = failure_client.post(
+                f"/v1/itsm/outage-alerts/{alert_id}/links",
+                headers=headers(outage_context, "manager"),
+                json={
+                    "target_type": "INCIDENT",
+                    "target_id": str(ids["incident_same_service"]),
+                },
+            )
+    assert response.status_code == 500
+
+    with outage_context["engine"].connect() as conn:
+        link_count = conn.execute(text(
+            "SELECT count(*) FROM public.itsm_outage_alert_links "
+            "WHERE tenant_id=:tenant AND alert_id=:alert "
+            "AND target_type='INCIDENT' AND target_id=:target"
+        ), {
+            "tenant": ids["tenant_a"],
+            "alert": alert_id,
+            "target": ids["incident_same_service"],
+        }).scalar_one()
+    assert link_count == 0
 
 
 def test_company_wide_service_resolves_requesters_without_manual_user_links(outage_context):
@@ -342,6 +600,55 @@ def test_company_wide_service_resolves_requesters_without_manual_user_links(outa
             json={"alert_recipient_scope": "SERVICE_ENTITLEMENTS"},
         )
         assert restored.status_code == 200, restored.text
+
+
+def test_preview_separates_mixed_role_team_members_by_projection(outage_context):
+    client = outage_context["client"]
+    ids = outage_context["ids"]
+    with outage_context["engine"].begin() as conn:
+        conn.execute(text(
+            "INSERT INTO public.itsm_team_members (id,tenant_id,team_id,user_id,created_at) "
+            "VALUES (gen_random_uuid(),:tenant,:team,:user,now()) ON CONFLICT DO NOTHING"
+        ), {
+            "tenant": ids["tenant_a"],
+            "team": ids["team_a"],
+            "user": ids["requester"],
+        })
+    try:
+        payload = draft_payload(outage_context)
+        payload["audiences"] = [{
+            "audience_type": "SELECTED_TEAM",
+            "team_id": str(ids["team_a"]),
+        }]
+        created = client.post(
+            "/v1/itsm/outage-alerts",
+            headers=headers(outage_context, "manager"),
+            json=payload,
+        )
+        assert created.status_code == 201, created.text
+        preview = client.post(
+            f"/v1/itsm/outage-alerts/{created.json()['id']}/preview",
+            headers=headers(outage_context, "manager"),
+            json={},
+        )
+        assert preview.status_code == 200, preview.text
+        assert {
+            (group["audience_type"], group["projection_type"])
+            for group in preview.json()["groups"]
+        } == {
+            ("SELECTED_TEAM", "REQUESTER"),
+            ("SELECTED_TEAM", "SERVICE_AGENT"),
+        }
+    finally:
+        with outage_context["engine"].begin() as conn:
+            conn.execute(text(
+                "DELETE FROM public.itsm_team_members "
+                "WHERE tenant_id=:tenant AND team_id=:team AND user_id=:user"
+            ), {
+                "tenant": ids["tenant_a"],
+                "team": ids["team_a"],
+                "user": ids["requester"],
+            })
 
 
 def test_saved_draft_can_be_edited_only_by_an_authorized_manager(outage_context):
@@ -959,6 +1266,14 @@ def test_solve_exposes_only_an_independently_authorized_linked_incident(outage_c
     }]
     assert "OPEN_LINKED_INCIDENT" in agent_detail.json()["allowed_actions"]
 
+    blocked_unlink = client.delete(
+        f"/v1/itsm/outage-alerts/{alert_id}/links/INCIDENT/"
+        f"{outage_context['ids']['incident_agent_authorized']}",
+        headers=headers(outage_context, "manager"),
+    )
+    assert blocked_unlink.status_code == 409
+    assert "must keep at least one linked Incident" in blocked_unlink.text
+
 
 def test_database_rejects_cross_tenant_alert_children(outage_context):
     """RLS is necessary but parent ownership must also be a DB invariant."""
@@ -1092,6 +1407,29 @@ def test_publications_and_recipient_snapshots_are_database_immutable(outage_cont
             ), {"id": publication_id})
 
 
+def test_current_publication_pointer_cannot_reference_another_alert(outage_context):
+    other_alert_id, preview_token = create_and_preview(outage_context)
+    other_publication = outage_context["client"].post(
+        f"/v1/itsm/outage-alerts/{other_alert_id}/publish",
+        headers=headers(outage_context, "manager"),
+        json={
+            "preview_token": preview_token,
+            "idempotency_key": f"pointer-integrity-{uuid4()}",
+        },
+    )
+    assert other_publication.status_code == 200, other_publication.text
+
+    with pytest.raises(DBAPIError, match="same alert and tenant"):
+        with outage_context["engine"].begin() as conn:
+            conn.execute(text(
+                "UPDATE public.itsm_outage_alerts SET current_publication_id=:publication "
+                "WHERE id=:alert"
+            ), {
+                "publication": other_publication.json()["publication_id"],
+                "alert": outage_context["alert_id"],
+            })
+
+
 def test_recovery_is_atomic_and_idempotent(outage_context):
     client = outage_context["client"]
     alert_id = outage_context["alert_id"]
@@ -1178,6 +1516,47 @@ def test_platform_admin_can_view_delivery_health_and_technical_diagnostics(outag
             headers=headers(outage_context, unauthorized),
         )
         assert denied.status_code == 403, (unauthorized, denied.text)
+
+
+def test_scoped_incident_manager_delivery_health_respects_read_grants(outage_context):
+    client = outage_context["client"]
+    payload = draft_payload(outage_context, service="service_a_other")
+    payload["audiences"] = [{
+        "audience_type": "SELECTED_TEAM",
+        "team_id": str(outage_context["ids"]["team_a"]),
+    }]
+    created = client.post(
+        "/v1/itsm/outage-alerts",
+        headers=headers(outage_context, "manager"),
+        json=payload,
+    )
+    assert created.status_code == 201, created.text
+    preview = client.post(
+        f"/v1/itsm/outage-alerts/{created.json()['id']}/preview",
+        headers=headers(outage_context, "manager"),
+        json={},
+    )
+    assert preview.status_code == 200, preview.text
+    published = client.post(
+        f"/v1/itsm/outage-alerts/{created.json()['id']}/publish",
+        headers=headers(outage_context, "manager"),
+        json={
+            "preview_token": preview.json()["preview_token"],
+            "idempotency_key": f"delivery-scope-{uuid4()}",
+        },
+    )
+    assert published.status_code == 200, published.text
+
+    response = client.get(
+        "/v1/itsm/outage-alerts/delivery-health",
+        headers=headers(outage_context, "scoped_manager"),
+    )
+    assert response.status_code == 200, response.text
+    assert all(
+        service["id"] != str(outage_context["ids"]["service_a_other"])
+        for item in response.json()["items"]
+        for service in item["affected_services"]
+    )
 
 
 def test_platform_admin_cannot_mutate_or_publish_alerts(outage_context):

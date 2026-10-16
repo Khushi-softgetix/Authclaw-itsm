@@ -19,6 +19,9 @@ test("BFF exposes the protected alert lifecycle and targeting routes", () => {
   assert.equal(resolveBffRoute("GET", "itsm/outage-alerts/reference-options")?.backendPath, "/v1/itsm/outage-alerts/reference-options");
   assert.equal(resolveBffRoute("GET", "itsm/outage-alerts/auditor-evidence")?.backendPath, "/v1/itsm/outage-alerts/auditor-evidence");
   assert.equal(resolveBffRoute("GET", "itsm/outage-alerts/delivery-health")?.backendPath, "/v1/itsm/outage-alerts/delivery-health");
+  assert.equal(resolveBffRoute("GET", "itsm/outage-alerts/alert-id/recipients")?.backendPath, "/v1/itsm/outage-alerts/alert-id/recipients");
+  assert.equal(resolveBffRoute("POST", "itsm/outage-alerts/alert-id/links")?.backendPath, "/v1/itsm/outage-alerts/alert-id/links");
+  assert.equal(resolveBffRoute("DELETE", "itsm/outage-alerts/alert-id/links/INCIDENT/record-id")?.backendPath, "/v1/itsm/outage-alerts/alert-id/links/INCIDENT/record-id");
   assert.equal(resolveBffRoute("POST", "itsm/outage-alerts/alert-id/preview")?.backendPath, "/v1/itsm/outage-alerts/alert-id/preview");
   assert.equal(resolveBffRoute("POST", "itsm/outage-alerts/alert-id/recovery")?.backendPath, "/v1/itsm/outage-alerts/alert-id/recovery");
   assert.equal(resolveBffRoute("PUT", "itsm/outage-alerts/services/service-id/consumers/user-id")?.backendPath, "/v1/itsm/outage-alerts/services/service-id/consumers/user-id");
@@ -47,12 +50,25 @@ test("create alert uses scalable authorized reference search instead of bulk cho
   assert.match(create, /SPECIFIC_USER/);
   assert.match(create, /related_records/);
   assert.match(create, /const hasIncidentLink/);
-  assert.match(create, /How should the resolution work be tracked\?/);
+  assert.doesNotMatch(create, /How should the resolution work be tracked\?/);
+  assert.match(create, /Related records and internal notes/);
+  assert.match(create, /Incident needed/);
+  assert.match(create, /Choose how resolution work will be tracked/);
+  assert.match(create, /const drawerSummaryClass/);
+  assert.match(create, /\[&::-webkit-details-marker\]:hidden/);
+  assert.match(create, /openDrawer === "IMPACT"/);
+  assert.match(create, /openDrawer === "CIS"/);
+  assert.match(create, /openDrawer === "RECIPIENTS"/);
+  assert.match(create, /openDrawer === "RECORDS"/);
+  assert.doesNotMatch(create, /bg-\[#FFF9ED\]/);
+  assert.match(create, /Creating an Incident saves this Alert as a private draft/);
+  assert.match(create, /Resolution work is tracked in/);
   assert.match(create, /Link existing Incident/);
   assert.match(create, /Create new Incident/);
+  assert.match(create, /Visible only to authorized Incident Managers and Auditors/);
   assert.match(create, /save_action/);
   assert.match(create, /outage_alert_id/);
-  assert.doesNotMatch(create, /value === "SOLVE" && !hasIncidentLink/);
+  assert.doesNotMatch(create, /disabled=\{value === "SOLVE"/);
   assert.doesNotMatch(create, /function ChoiceGrid/);
 });
 
@@ -67,6 +83,35 @@ test("alert composer presents intent and audiences as accessible scalable decisi
   assert.match(create, /focus-within:ring-2/);
   assert.doesNotMatch(create, /lg:grid-cols-4/);
   assert.doesNotMatch(create, /Primary recipient audiences/);
+});
+
+test("company-wide portal alerts are explicit, service-optional, and confirmed before publication", () => {
+  const create = read("../src/app/(console)/itsm/incident-manager/outage-alerts/create/page.tsx");
+  const detail = read("../src/app/(console)/itsm/incident-manager/outage-alerts/[alertId]/page.tsx");
+  const banner = read("../src/components/itsm/outage-alert-banner.tsx");
+  const evidence = read("../src/components/itsm/alert-recipient-evidence-dialog.tsx");
+
+  assert.match(create, /ALL_PORTAL_USERS/);
+  assert.match(create, /Everyone in the organization/);
+  assert.match(create, /Notify all active employee-facing portal users in this organization/);
+  assert.match(create, /Affected services are optional for this audience/);
+  assert.match(detail, /confirm_tenant_wide/);
+  assert.match(detail, /I confirm this organization-wide publication/);
+  assert.match(detail, /preview\.total_recipients/);
+  assert.match(banner, /PROBLEM_CHANGE_MANAGER/);
+  assert.match(banner, /SERVICE_LEAD/);
+  assert.match(evidence, /Everyone in the organization/);
+});
+
+test("alert composer keeps draft feedback and recipient eligibility guidance in context", () => {
+  const create = read("../src/app/(console)/itsm/incident-manager/outage-alerts/create/page.tsx");
+  assert.match(create, /Draft readiness/);
+  assert.match(create, /Saved successfully/);
+  assert.match(create, /aria-live="polite"/);
+  assert.match(create, /This person is not eligible for the selected services or linked records/);
+  assert.match(create, /open=\{openDrawer === "RECIPIENTS"\}/);
+  assert.match(create, /Publishing remains a separate, intentional action on the alert detail page/);
+  assert.match(create, /sticky bottom-3/);
 });
 
 test("explicit Incident creation returns to the preserved alert draft and links the record", () => {
@@ -111,8 +156,25 @@ test("recipient page and banner consume only backend-projected alert data", () =
   assert.doesNotMatch(`${detail}\n${banner}\n${list}`, /Ã|Â|â€¦|â€¢/);
 });
 
+test("Requester alert links remain reachable and non-recipient roles do not get the business banner", () => {
+  const itsmLayout = read("../src/app/(console)/itsm/layout.tsx");
+  const shell = read("../src/components/console-shell.tsx");
+  const banner = read("../src/components/itsm/outage-alert-banner.tsx");
+
+  assert.match(itsmLayout, /currentPath === "\/itsm\/outage-alerts"/);
+  assert.match(itsmLayout, /currentPath\.startsWith\("\/itsm\/outage-alerts\/"\)/);
+  assert.match(shell, /<OutageAlertBanner itsmRole=\{effectiveItsmRole\}/);
+  assert.match(banner, /receivesBusinessAlerts/);
+  assert.match(banner, /window\.setInterval\(load, 45_000\)/);
+  assert.match(banner, /\\u00B7/);
+  assert.doesNotMatch(banner, /"AUDITOR"/);
+  assert.doesNotMatch(banner, /"PLATFORM_ADMINISTRATOR"/);
+});
+
 test("Incident Manager publishes explicit customer status through the protected workflow", () => {
   const detail = read("../src/app/(console)/itsm/incident-manager/outage-alerts/[alertId]/page.tsx");
+  assert.match(detail, /projection_type/);
+  assert.match(detail, /projection_type\.replaceAll/);
   assert.match(detail, /INVESTIGATING/);
   assert.match(detail, /IDENTIFIED/);
   assert.match(detail, /MONITORING/);
@@ -122,6 +184,37 @@ test("Incident Manager publishes explicit customer status through the protected 
   assert.doesNotMatch(detail, /label="Last published"/);
 });
 
+test("Incident Manager can inspect large recipient sets without rendering every user at once", () => {
+  const detail = read("../src/app/(console)/itsm/incident-manager/outage-alerts/[alertId]/page.tsx");
+  const dialog = read("../src/components/itsm/alert-recipient-evidence-dialog.tsx");
+
+  assert.match(detail, /Recipient delivery records/);
+  assert.match(detail, /View recipients/);
+  assert.match(detail, /AlertRecipientEvidenceDialog/);
+  assert.match(dialog, /PAGE_SIZE = 25/);
+  assert.match(dialog, /Search by recipient email/);
+  assert.match(dialog, /audience_type/);
+  assert.match(dialog, /delivery_status/);
+  assert.match(dialog, /acknowledgement/);
+  assert.match(dialog, /Why included/);
+  assert.match(dialog, /Authorized information and actions/);
+  assert.match(dialog, /Published version/);
+  assert.match(dialog, /Showing \{firstResult\.toLocaleString\(\)\}/);
+});
+
+test("Incident Manager can manage audited operational links after publication", () => {
+  const detail = read("../src/app/(console)/itsm/incident-manager/outage-alerts/[alertId]/page.tsx");
+  const linkManager = read("../src/components/itsm/alert-link-manager.tsx");
+
+  assert.match(detail, /AlertLinkManager/);
+  assert.match(detail, /allowed_actions\.includes\("LINK_RECORD"\)/);
+  assert.match(linkManager, /kind: "RELATED_RECORD"/);
+  assert.match(linkManager, /Existing publication snapshots are never rewritten/);
+  assert.match(linkManager, /method: "POST"/);
+  assert.match(linkManager, /method: "DELETE"/);
+  assert.match(linkManager, /future updates may change/);
+});
+
 test("Auditor has a discoverable read-only Outage Alert evidence experience", () => {
   const shell = read("../src/components/console-shell.tsx");
   const layout = read("../src/app/(console)/itsm/dashboard/auditor/layout.tsx");
@@ -129,7 +222,9 @@ test("Auditor has a discoverable read-only Outage Alert evidence experience", ()
   const detail = read("../src/app/(console)/itsm/outage-alerts/[alertId]/page.tsx");
   assert.match(shell, /Outage Evidence/);
   assert.match(layout, /!== "AUDITOR"/);
-  assert.match(list, /Independent, read-only review/);
+  assert.match(list, /Read-only workspace/);
+  assert.match(list, /More filters/);
+  assert.match(list, /Search alert number, title, or service/);
   assert.match(list, /alertApi<AlertEvidencePage>/);
   assert.match(list, /\/auditor-evidence/);
   assert.match(list, /Apply filters/);
@@ -359,6 +454,8 @@ test("Platform Administrator: Broadcast health monitoring, delivery telemetry, a
   // 2. Platform Admin Dashboard includes Broadcast Delivery & Diagnostics card
   assert.match(dashboard, /\/itsm\/admin-portal\/broadcast-health/);
   assert.match(dashboard, /Broadcast Delivery (?:&|&amp;) Diagnostics/);
+  assert.doesNotMatch(dashboard, /\/api\/itsm\/incidents/);
+  assert.doesNotMatch(dashboard, /href="\/itsm\/incidents"/);
 
   // 3. Broadcast Health page implements delivery telemetry & diagnostic controls
   assert.match(healthPage, /alertApi<AlertDeliveryHealthPage>/);

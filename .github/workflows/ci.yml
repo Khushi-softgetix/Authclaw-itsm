@@ -192,6 +192,14 @@ jobs:
         env:
           DATABASE_URL: postgresql+psycopg://authclaw_migrator:authclaw_migrator@127.0.0.1:5432/authclaw
         run: ../.ci-outage/bin/alembic upgrade head
+      - name: Exercise migration 061 rollback and re-apply
+        working-directory: backend
+        env:
+          DATABASE_URL: postgresql+psycopg://authclaw_migrator:authclaw_migrator@127.0.0.1:5432/authclaw
+        run: |
+          ../.ci-outage/bin/alembic downgrade 060
+          ../.ci-outage/bin/alembic upgrade 061
+          ../.ci-outage/bin/alembic upgrade head
       - name: Finalize backend grants and RLS
         working-directory: backend
         env:
@@ -202,6 +210,7 @@ jobs:
         working-directory: backend
         env:
           DATABASE_URL: postgresql+psycopg://authclaw_app:authclaw_app@127.0.0.1:5432/authclaw
+          METRIC_SNAPSHOT_DATABASE_URL: postgresql+psycopg://authclaw_metric_worker:authclaw_metric_worker@127.0.0.1:5432/authclaw
           OWNER_DATABASE_URL: postgresql+psycopg://authclaw:authclaw@127.0.0.1:5432/authclaw
           API_KEY_HASH_SECRET: ci-outage-api-key-hash-secret
           ENVELOPE_KEY: YXV0aGNsYXctbG9jYWwtZmVybmV0LWtleS1jaGFuZ2U=
@@ -209,6 +218,7 @@ jobs:
           ../.ci-outage/bin/python -m pytest -p no:cacheprovider -q
           tests/test_itsm_outage_alert_policy.py
           tests/test_itsm_outage_alert_security_integration.py
+          tests/test_itsm_metric_snapshots_postgres.py
           tests/test_migration_chain.py
 
   audit:

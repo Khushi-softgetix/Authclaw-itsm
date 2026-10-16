@@ -54,6 +54,7 @@ export default function IncidentManagerQueuePage() {
   const [viewName, setViewName] = useState("");
   const [savingView, setSavingView] = useState(false);
   const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
+  const [filtersReady, setFiltersReady] = useState(false);
 
   const loadSavedViews = useCallback(async () => {
     const response = await fetch("/api/itsm/incidents/operations/saved-views", { cache: "no-store" });
@@ -70,6 +71,7 @@ export default function IncidentManagerQueuePage() {
       setServiceId(params.get("service_id") || ""); setCategoryId(params.get("category_id") || "");
       setUnassigned(params.get("unassigned") === "true");
       setSortBy(params.get("sort_by") || "priority");
+      setFiltersReady(true);
     }, 0);
     return () => window.clearTimeout(request);
   }, []);
@@ -121,10 +123,15 @@ export default function IncidentManagerQueuePage() {
     } finally { setLoading(false); }
   }, [assigneeId, assignmentGroup, attention, categoryId, offset, priority, search, serviceId, sortBy, status, unassigned]);
 
-  useEffect(() => { const request = window.setTimeout(() => void load(), 0); return () => window.clearTimeout(request); }, [load]);
+  useEffect(() => {
+    if (!filtersReady) return;
+    const request = window.setTimeout(() => void load(), 0);
+    return () => window.clearTimeout(request);
+  }, [filtersReady, load]);
   useEffect(() => { const request = window.setTimeout(() => void loadContext(), 0); return () => window.clearTimeout(request); }, [loadContext]);
   useEffect(() => { const request = window.setTimeout(() => void loadSavedViews(), 0); return () => window.clearTimeout(request); }, [loadSavedViews]);
   useEffect(() => {
+    if (!filtersReady) return;
     const params = new URLSearchParams();
     if (search.trim()) params.set("search", search.trim());
     if (status) params.set("status", status);
@@ -138,7 +145,7 @@ export default function IncidentManagerQueuePage() {
     if (sortBy !== "priority") params.set("sort_by", sortBy);
     const query = params.toString();
     window.history.replaceState(null, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
-  }, [assigneeId, assignmentGroup, attention, categoryId, priority, search, serviceId, sortBy, status, unassigned]);
+  }, [assigneeId, assignmentGroup, attention, categoryId, filtersReady, priority, search, serviceId, sortBy, status, unassigned]);
 
   const groups = dashboard?.workload.assignment_groups || [];
   const assignees = dashboard?.workload.assignees || [];

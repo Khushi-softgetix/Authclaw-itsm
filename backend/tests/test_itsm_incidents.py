@@ -69,11 +69,17 @@ class IncidentReadinessRegressionTest(unittest.TestCase):
         self.assertEqual(_required_incident_version('W/"7"'), 7)
 
     def test_incident_audit_summary_redacts_free_text(self):
+        configuration_item_id = str(uuid4())
+        communication_lead_id = uuid4()
         summary = IncidentService._audit_summary({
             "status": "IN_PROGRESS",
+            "configuration_item_id": configuration_item_id,
+            "communication_lead_id": communication_lead_id,
             "description": "customer secret evidence",
         })
         self.assertEqual(summary["status"], "IN_PROGRESS")
+        self.assertEqual(summary["configuration_item_id"], configuration_item_id)
+        self.assertEqual(summary["communication_lead_id"], str(communication_lead_id))
         self.assertNotIn("customer secret evidence", str(summary))
         self.assertEqual(summary["description"]["changed"], True)
 
@@ -872,6 +878,11 @@ class ITSMIncidentTestCase(unittest.TestCase):
         incident = created.json()
         incident_id = incident["id"]
         version = incident["version"]
+        checkpoint_id = uuid4()
+        decision_id = uuid4()
+        task_id = uuid4()
+        stakeholder_id = uuid4()
+        communication_id = uuid4()
 
         declared = self.client.post(
             f"/v1/itsm/incidents/{incident_id}/major-incident",
@@ -880,6 +891,35 @@ class ITSMIncidentTestCase(unittest.TestCase):
                 "impacted_business_units": ["Payments"],
                 "executive_summary": "Customer payments unavailable",
                 "bridge_url": "https://bridge.example.com/payments-war-room",
+                "communication_lead_id": str(user_id),
+                "restoration_checkpoints": [{
+                    "id": str(checkpoint_id),
+                    "title": "Confirm database recovery",
+                    "owner_id": str(user_id),
+                }],
+                "command_decisions": [{
+                    "id": str(decision_id),
+                    "summary": "Fail over payment database",
+                    "owner_id": str(user_id),
+                    "context": "Primary database health checks failed",
+                }],
+                "command_tasks": [{
+                    "id": str(task_id),
+                    "title": "Validate payment processing",
+                    "owner_id": str(user_id),
+                }],
+                "stakeholders": [{
+                    "id": str(stakeholder_id),
+                    "name": "Payments Operations",
+                    "role": "Business owner",
+                }],
+                "command_communications": [{
+                    "id": str(communication_id),
+                    "audience": "Executive response team",
+                    "channel": "war-room",
+                    "message": "Payment recovery is in progress",
+                    "status": "DRAFT",
+                }],
             },
             headers=self.mutation_headers(headers, version),
         )
@@ -888,12 +928,27 @@ class ITSMIncidentTestCase(unittest.TestCase):
         self.assertEqual(declared.json()["bridge_url"], "https://bridge.example.com/payments-war-room")
         self.assertEqual(declared.json()["executive_summary"], "Customer payments unavailable")
         self.assertEqual(declared.json()["impacted_business_units"], ["Payments"])
+        self.assertEqual(declared.json()["communication_lead_id"], str(user_id))
+        self.assertEqual(declared.json()["restoration_checkpoints"][0]["id"], str(checkpoint_id))
+        self.assertEqual(declared.json()["command_decisions"][0]["id"], str(decision_id))
+        self.assertEqual(declared.json()["command_tasks"][0]["id"], str(task_id))
+        self.assertEqual(declared.json()["stakeholders"][0]["id"], str(stakeholder_id))
+        self.assertEqual(declared.json()["command_communications"][0]["id"], str(communication_id))
         self.assertEqual(declared.json()["postmortem_status"], "PENDING")
         version = self.client.get(f"/v1/itsm/incidents/{incident_id}", headers=headers).json()["version"]
 
         updated = self.client.patch(
             f"/v1/itsm/incidents/{incident_id}/major-incident",
-            json={"postmortem_status": "IN_PROGRESS", "bridge_url": "https://bridge.example.com/updated"},
+            json={
+                "postmortem_status": "IN_PROGRESS",
+                "bridge_url": "https://bridge.example.com/updated",
+                "restoration_checkpoints": [{
+                    "id": str(checkpoint_id),
+                    "title": "Confirm database recovery",
+                    "owner_id": str(user_id),
+                    "completed_at": datetime.now(timezone.utc).isoformat(),
+                }],
+            },
             headers=self.mutation_headers(headers, version),
         )
         self.assertEqual(updated.status_code, 200, updated.text)
@@ -908,6 +963,8 @@ class ITSMIncidentTestCase(unittest.TestCase):
         self.assertEqual(read_command.status_code, 200, read_command.text)
         self.assertEqual(read_command.json()["postmortem_status"], "IN_PROGRESS")
         self.assertEqual(read_command.json()["bridge_url"], "https://bridge.example.com/updated")
+        self.assertIsNotNone(read_command.json()["restoration_checkpoints"][0]["completed_at"])
+        self.assertEqual(read_command.json()["command_decisions"][0]["summary"], "Fail over payment database")
 
         invalid_pir = self.client.patch(f"/v1/itsm/incidents/{incident_id}/major-incident", json={"postmortem_status": "MADE_UP"}, headers=headers)
         self.assertEqual(invalid_pir.status_code, 422)
@@ -1203,6 +1260,20 @@ class ITSMIncidentTestCase(unittest.TestCase):
             self.assertIn("Payments Support", {item["name"] for item in reference_data["teams"]})
         self.assertNotIn(str(foreign_service_id), {item["id"] for item in reference_data["services"]})
 
+        created_with_ci = self.client.post(
+            "/v1/itsm/incidents",
+            json={
+                "title": "Payments CI degraded",
+                "description": "Creation-time configuration item persistence test",
+                "service_id": str(service_id),
+                "configuration_item_id": str(ci_id),
+            },
+            headers=headers,
+        )
+        self.assertEqual(created_with_ci.status_code, 201, created_with_ci.text)
+        self.assertEqual(created_with_ci.json()["service_id"], str(service_id))
+        self.assertEqual(created_with_ci.json()["configuration_item_id"], str(ci_id))
+
         created = self.client.post("/v1/itsm/incidents", json={"title": "Payments degraded", "description": "Classification test"}, headers=headers)
         self.assertEqual(created.status_code, 201, created.text)
         incident = created.json()
@@ -1226,31 +1297,46 @@ class ITSMIncidentTestCase(unittest.TestCase):
         version = assigned.json()["version"]
         classified = self.client.patch(
             f"/v1/itsm/incidents/{incident_id}",
-            json={"service_id": str(service_id), "category_id": str(category_id)},
+            json={
+                "service_id": str(service_id),
+                "configuration_item_id": str(ci_id),
+                "category_id": str(category_id),
+            },
             headers=self.mutation_headers(headers, version),
         )
         self.assertEqual(classified.status_code, 200, classified.text)
         self.assertEqual(classified.json()["service_id"], str(service_id))
+        self.assertEqual(classified.json()["configuration_item_id"], str(ci_id))
         self.assertEqual(classified.json()["category_id"], str(category_id))
         version = classified.json()["version"]
 
         cleared = self.client.patch(
             f"/v1/itsm/incidents/{incident_id}",
-            json={"service_id": None, "category_id": None},
+            json={"service_id": None, "configuration_item_id": None, "category_id": None},
             headers=self.mutation_headers(headers, version),
         )
         self.assertEqual(cleared.status_code, 200, cleared.text)
         self.assertIsNone(cleared.json()["service_id"])
+        self.assertIsNone(cleared.json()["configuration_item_id"])
         self.assertIsNone(cleared.json()["category_id"])
         version = cleared.json()["version"]
 
         declared = self.client.post(
             f"/v1/itsm/incidents/{incident_id}/major-incident",
-            json={"executive_summary": "Major service failure"},
+            json={
+                "executive_summary": "Major service failure",
+                "affected_service_ids": [str(service_id)],
+                "affected_configuration_item_ids": [str(ci_id)],
+            },
             headers=self.mutation_headers(headers, version),
         )
         self.assertEqual(declared.status_code, 201, declared.text)
         self.assertEqual(declared.json()["executive_summary"], "Major service failure")
+        self.assertEqual(declared.json()["affected_service_ids"], [str(service_id)])
+        self.assertEqual(
+            declared.json()["affected_configuration_item_ids"],
+            [str(ci_id)],
+        )
 
         self.assertEqual(self.client.get("/v1/itsm/incidents/operations/reference-data").status_code, 401)
 
@@ -1346,6 +1432,95 @@ class ITSMIncidentTestCase(unittest.TestCase):
         self.assertIsNone(row.resolved_at)
         self.assertIsNone(row.sla_resolution_met_at)
         self.assertEqual(row.resolution_summary, "Recovery verified")
+
+    def test_30_platform_administrator_has_no_automatic_incident_business_access(self):
+        tenant_id, _, manager_key = self.create_fixture_tenant("platform_boundary")
+        manager_headers = {"Authorization": f"Bearer {manager_key}"}
+        created = self.client.post(
+            "/v1/itsm/incidents",
+            headers=manager_headers,
+            json={"title": "Platform boundary", "description": "Business data remains scoped"},
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        incident = created.json()
+
+        admin_id = uuid4()
+        admin_key = f"test-key-platform-boundary-{uuid4().hex[:12]}"
+        with self.migrator_engine.begin() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO public.users "
+                    "(id, tenant_id, email, role, platform_role, is_active, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, :email, 'admin', 'NONE', true, now(), now())"
+                ),
+                {
+                    "id": admin_id,
+                    "tenant_id": tenant_id,
+                    "email": f"platform-boundary-{uuid4().hex[:8]}@example.com",
+                },
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO public.itsm_user_access "
+                    "(id, tenant_id, user_id, itsm_role, has_itsm_access, "
+                    "has_governance_access, created_at, updated_at) "
+                    "VALUES (gen_random_uuid(), :tenant_id, :user_id, "
+                    "'PLATFORM_ADMINISTRATOR', true, true, now(), now())"
+                ),
+                {"tenant_id": tenant_id, "user_id": admin_id},
+            )
+            conn.execute(
+                text(
+                    "INSERT INTO public.api_keys "
+                    "(id, tenant_id, key_hash, name, scopes, is_active, created_by, created_at, updated_at) "
+                    "VALUES (:id, :tenant_id, :key_hash, 'platform-boundary-key', "
+                    "ARRAY['read','write','admin'], true, :created_by, now(), now())"
+                ),
+                {
+                    "id": uuid4(),
+                    "tenant_id": tenant_id,
+                    "key_hash": hash_key(admin_key),
+                    "created_by": admin_id,
+                },
+            )
+
+        admin_headers = {"Authorization": f"Bearer {admin_key}"}
+        denied_requests = (
+            self.client.post(
+                "/v1/itsm/incidents",
+                headers=admin_headers,
+                json={"title": "Denied", "description": "No implicit business role"},
+            ),
+            self.client.get("/v1/itsm/incidents", headers=admin_headers),
+            self.client.get(f"/v1/itsm/incidents/{incident['id']}", headers=admin_headers),
+            self.client.post(
+                f"/v1/itsm/incidents/{incident['id']}/status",
+                headers=self.mutation_headers(admin_headers, incident["version"]),
+                json={"status": "IN_PROGRESS"},
+            ),
+            self.client.post(
+                f"/v1/itsm/incidents/{incident['id']}/activities",
+                headers=admin_headers,
+                json={"content": "Denied platform note"},
+            ),
+            self.client.get(
+                f"/v1/itsm/incidents/{incident['id']}/activities",
+                headers=admin_headers,
+            ),
+            self.client.get("/v1/itsm/analytics/kpis", headers=admin_headers),
+            self.client.get(
+                f"/v1/itsm/incidents/{incident['id']}/major-incident",
+                headers=admin_headers,
+            ),
+            self.client.get(
+                f"/v1/itsm/incidents/{incident['id']}/attachments",
+                headers=admin_headers,
+            ),
+        )
+        self.assertTrue(
+            all(response.status_code == 403 for response in denied_requests),
+            [(response.status_code, response.text) for response in denied_requests],
+        )
 
 
 if __name__ == "__main__":

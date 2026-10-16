@@ -15,6 +15,28 @@ class KPIDateRange(BaseModel):
     evaluated_at: datetime
 
 
+class MetricSnapshotResponse(BaseModel):
+    """One immutable historical KPI value generated for a completed UTC period."""
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    tenant_id: UUID
+    metric_key: str
+    period_grain: str
+    period_start: datetime
+    period_end: datetime
+    dimensions: Dict[str, Any]
+    value: Dict[str, Any]
+    definition_version: str
+    source_events: Dict[str, Any]
+    generated_at: datetime
+
+
+class MetricSnapshotListResponse(BaseModel):
+    items: List[MetricSnapshotResponse]
+    total: int
+
+
 class MTTAKPIResponse(BaseModel):
     """Mean Time to Acknowledge (First Response) KPI."""
     metric: str = "MTTA"
@@ -97,18 +119,18 @@ class BacklogAgeKPIResponse(BaseModel):
 
 
 class SLAPerformanceKPIResponse(BaseModel):
-    """SLA Performance KPI reusing authoritative compute_sla_details()."""
+    """Completed resolution-SLA performance with active risk shown separately."""
     metric: str = "SLA_PERFORMANCE"
     definition: str = (
-        "Percentage of tickets meeting active SLA commitments without breach, "
-        "evaluated using authoritative compute_sla_details()."
+        "Percentage of completed resolution SLA commitments that met their deadline. "
+        "Pending, paused, and unavailable commitments are not counted as met."
     )
     formula: str = "(count(sla_met) / count(sla_evaluated)) * 100"
-    total_evaluated: int = Field(..., description="Total tickets evaluated with SLA commitments")
+    total_evaluated: int = Field(..., description="Completed resolution SLA outcomes evaluated")
     met_count: int = Field(..., description="Tickets that achieved SLA deadline")
     breached_count: int = Field(..., description="Tickets that breached SLA deadline")
-    compliance_rate_pct: float = Field(..., description="SLA compliance percentage (0-100)")
-    breach_rate_pct: float = Field(..., description="SLA breach percentage (0-100)")
+    compliance_rate_pct: Optional[float] = Field(None, description="SLA compliance percentage (0-100), or unavailable")
+    breach_rate_pct: Optional[float] = Field(None, description="SLA breach percentage (0-100), or unavailable")
     active_risk_breakdown: Dict[str, int] = Field(
         ...,
         description="Active ticket SLA risk distribution: within_sla, at_risk, breached, paused",

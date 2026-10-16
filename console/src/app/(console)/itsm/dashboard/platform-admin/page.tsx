@@ -1,47 +1,17 @@
-"use client";
-
-import React, { useEffect, useState } from "react";
+import React from "react";
 import Link from "next/link";
 import {
   Sliders,
   Users,
   Clock,
-  Shield,
-  Server,
   Database,
-  CheckCircle2,
-  AlertCircle,
   ArrowRight,
-  Settings,
   Cpu,
   Layers,
-  Key,
   Radio,
 } from "lucide-react";
-import { Incident } from "@/lib/itsm-types";
 
 export default function PlatformAdminDashboardPage() {
-  const [incidents, setIncidents] = useState<Incident[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    async function load() {
-      try {
-        setLoading(true);
-        const res = await fetch("/api/itsm/incidents?limit=5");
-        if (res.ok) {
-          const data = await res.json();
-          setIncidents(Array.isArray(data) ? data : []);
-        }
-      } catch (e) {
-        // non-blocking
-      } finally {
-        setLoading(false);
-      }
-    }
-    load();
-  }, []);
-
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-8">
       {/* Header */}
@@ -60,10 +30,10 @@ export default function PlatformAdminDashboardPage() {
         </div>
         <div className="flex items-center gap-3 shrink-0">
           <Link
-            href="/itsm/incidents"
+            href="/itsm/admin-portal"
             className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-white text-[#065F46] font-bold text-xs hover:bg-emerald-50 transition shadow-sm"
           >
-            <span>Incident Console</span>
+            <span>Open admin portal</span>
             <ArrowRight className="w-3.5 h-3.5" />
           </Link>
         </div>

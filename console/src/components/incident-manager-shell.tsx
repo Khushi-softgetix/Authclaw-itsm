@@ -15,6 +15,7 @@ import {
   Radio,
   Siren,
   ShieldAlert,
+  User,
   X,
 } from "lucide-react";
 import NotificationBell from "@/components/notification-bell";
@@ -52,6 +53,8 @@ export default function IncidentManagerShell({
       ? "Overview"
       : pathname.startsWith("/itsm/incident-manager/kpis")
         ? "Operational KPIs"
+      : pathname === "/itsm/profile"
+        ? "My Profile"
       : pathname.startsWith("/itsm/incident-manager/outage-alerts")
         ? "Outage & Alerts"
       : pathname.startsWith("/itsm/incident-manager/major-incidents")
@@ -182,6 +185,14 @@ export default function IncidentManagerShell({
                     <p className="truncate text-xs font-medium text-[#475069]">{tenantName || tenantId}</p>
                   </div>
                 </div>
+                <Link
+                  href="/itsm/profile"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-[#475069] transition hover:bg-[#F1ECFE] hover:text-[#5B21B6]"
+                >
+                  <User className="h-4 w-4 text-[#6D28D9]" />
+                  My Profile
+                </Link>
                 <button type="button" onClick={handleLogout} className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium text-red-500 transition hover:bg-red-50">
                   <LogOut className="h-4 w-4" />
                   Sign Out
@@ -223,6 +234,15 @@ export default function IncidentManagerShell({
                   <p className="mt-0.5 truncate text-xs font-medium text-[#475069]">{userEmail}</p>
                   <p className="mt-0.5 text-[10px] font-medium text-[#6D28D9]">Incident Manager</p>
                 </div>
+                <Link
+                  href="/itsm/profile"
+                  role="menuitem"
+                  onClick={() => setProfileDropdownOpen(false)}
+                  className="flex w-full items-center gap-2 border-b border-[#E6E9F0] px-4 py-2.5 text-left text-xs font-semibold text-[#475069] transition-colors hover:bg-[#F5F7FA] hover:text-[#0E1726]"
+                >
+                  <User className="h-3.5 w-3.5 text-[#6D28D9]" />
+                  My Profile
+                </Link>
                 <button type="button" role="menuitem" onClick={handleLogout} className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-red-500 transition-colors hover:bg-red-50">
                   <LogOut className="h-4 w-4" />
                   Sign Out

@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
   ArrowLeft,
-  BellRing,
   Check,
   ChevronDown,
   FilePlus2,
@@ -34,6 +33,13 @@ const intents = [
 
 const primaryAudiences = [
   {
+    value: "ALL_PORTAL_USERS",
+    label: "Everyone in the organization",
+    description: "Notify all active employee-facing portal users in this organization. Auditor and Platform Administrator accounts are excluded.",
+    source: "Tenant-wide scope",
+    icon: Users,
+  },
+  {
     value: "SERVICE_USERS",
     label: "Users of affected services",
     description: "People entitled to use the selected services.",
@@ -56,10 +62,19 @@ const primaryAudiences = [
   },
 ] as const;
 
+const drawerClass =
+  "group overflow-hidden rounded-xl border border-[#E4E7EC] bg-white transition hover:border-[#D0D5DD] open:border-[#D8CFF3] open:shadow-[0_1px_3px_rgba(16,24,40,0.06)]";
+const drawerSummaryClass =
+  "flex min-h-14 cursor-pointer list-none items-center justify-between gap-4 px-4 py-3 text-left select-none transition hover:bg-[#FAFAFC] focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#7C3AED] [&::-webkit-details-marker]:hidden";
+const drawerBodyClass = "space-y-4 border-t border-[#EAECF0] bg-[#FCFCFD] p-4";
+type DrawerId = "IMPACT" | "CIS" | "RECIPIENTS" | "RECORDS";
+
 export default function CreateOutageAlertPage() {
   const router = useRouter();
   const [error, setError] = useState("");
+  const [successMessage, setSuccessMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const [requiredDetailsComplete, setRequiredDetailsComplete] = useState(false);
   const [loadingDraft, setLoadingDraft] = useState(false);
   const [editingAlert, setEditingAlert] = useState<AlertDetail | null>(null);
   const [selectedIntent, setSelectedIntent] = useState<string>("INFORM");
@@ -72,6 +87,7 @@ export default function CreateOutageAlertPage() {
   const [relatedRecordType, setRelatedRecordType] = useState("");
   const [handling, setHandling] = useState("ALERT_ONLY");
   const [incidentPickerOpenRequest, setIncidentPickerOpenRequest] = useState(0);
+  const [openDrawer, setOpenDrawer] = useState<DrawerId | null>("IMPACT");
 
   useEffect(() => {
     const request = window.setTimeout(() => {
@@ -100,8 +116,14 @@ export default function CreateOutageAlertPage() {
           const returnedLink = relatedType && relatedId
             ? { value: `${relatedType}:${relatedId}`, label: `Newly created ${relatedType.replaceAll("_", " ").toLowerCase()}`, meta: relatedType.replaceAll("_", " ") }
             : null;
-          setSelectedLinks(returnedLink && !draftLinks.some((item) => item.value === returnedLink.value) ? [...draftLinks, returnedLink] : draftLinks);
-          setHandling(content.service_agent_handling === "SOLVE" ? "SOLVE" : "ALERT_ONLY");
+          const nextLinks = returnedLink && !draftLinks.some((item) => item.value === returnedLink.value) ? [...draftLinks, returnedLink] : draftLinks;
+          const nextHandling = content.service_agent_handling === "SOLVE" ? "SOLVE" : "ALERT_ONLY";
+          setSelectedLinks(nextLinks);
+          setHandling(nextHandling);
+          if (nextHandling === "SOLVE" && !nextLinks.some((item) => item.value.startsWith("INCIDENT:"))) {
+            setOpenDrawer("RECORDS");
+          }
+          setRequiredDetailsComplete(Boolean(String(content.title || "").trim() && String(content.public_summary || "").trim()));
         }).catch((cause) => setError(cause instanceof Error ? cause.message : "Draft could not be loaded")).finally(() => setLoadingDraft(false));
       } else if (relatedType && relatedId) {
         setSelectedLinks([{ value: `${relatedType}:${relatedId}`, label: "Linked operational record", meta: relatedType.replaceAll("_", " ") }]);
@@ -111,8 +133,22 @@ export default function CreateOutageAlertPage() {
   }, []);
 
   const showAgentHandling = selectedAudiences.includes("SERVICE_AGENTS");
+  const hasTenantWideAudience = selectedAudiences.includes("ALL_PORTAL_USERS");
+  const requiresAffectedService = selectedAudiences.some((audience) =>
+    ["SERVICE_USERS", "SERVICE_AGENTS", "SERVICE_OWNERS"].includes(audience),
+  ) || selectedUsers.length > 0;
   const selectedServiceIds = useMemo(() => selectedServices.map((item) => item.value), [selectedServices]);
-  const hasIncidentLink = useMemo(() => selectedLinks.some((item) => item.value.startsWith("INCIDENT:")), [selectedLinks]);
+  const linkedIncident = useMemo(
+    () => selectedLinks.find((item) => item.value.startsWith("INCIDENT:")),
+    [selectedLinks],
+  );
+  const hasIncidentLink = Boolean(linkedIncident);
+  const selectedAudienceCount = selectedAudiences.length + selectedTeams.length + selectedUsers.length;
+  const deliveryScopeReady = selectedAudienceCount > 0 && (!requiresAffectedService || selectedServices.length > 0);
+  const readyChecks = [requiredDetailsComplete, deliveryScopeReady, selectedAudienceCount > 0];
+  const readyCount = readyChecks.filter(Boolean).length;
+  const recipientEligibilityError = /selected user is not currently eligible/i.test(error);
+  const toggleDrawer = (drawer: DrawerId) => setOpenDrawer((current) => current === drawer ? null : drawer);
 
   const toggle = (value: string, values: string[], setValues: (value: string[]) => void) =>
     setValues(values.includes(value) ? values.filter((item) => item !== value) : [...values, value]);
@@ -128,6 +164,7 @@ export default function CreateOutageAlertPage() {
     }
     setSaving(true);
     setError("");
+    setSuccessMessage("");
     const form = new FormData(event.currentTarget);
     const alertAudiences = [
       ...selectedAudiences.map((audience_type) => ({ audience_type })),
@@ -166,15 +203,24 @@ export default function CreateOutageAlertPage() {
       if (afterSaveAction === "CREATE_INCIDENT") {
         router.push(`/itsm/incidents/new?outage_alert_id=${encodeURIComponent(created.id)}`);
       } else {
+        setSuccessMessage(editingAlert ? "Draft changes saved. Opening the alert…" : "Draft saved privately. Opening the alert…");
+        await new Promise((resolve) => window.setTimeout(resolve, 900));
         router.push(`/itsm/incident-manager/outage-alerts/${created.id}`);
       }
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Draft could not be saved");
+      const message = cause instanceof Error ? cause.message : "Draft could not be saved";
+      setError(message);
+      if (/selected user is not currently eligible/i.test(message)) {
+        setOpenDrawer("RECIPIENTS");
+        window.setTimeout(() => {
+          document.getElementById("specific-people")?.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 0);
+      }
       setSaving(false);
     }
   }
 
-  const inputClass = "mt-1.5 w-full rounded-xl border border-[#DCE1E8] bg-white px-3.5 py-2.5 text-sm text-[#0E1726] outline-none transition focus:border-[#8B5CF6] focus:ring-2 focus:ring-[#6D28D9]/10";
+  const inputClass = "mt-1.5 w-full rounded-xl border border-[#D7DCE5] bg-white px-3.5 py-3 text-sm text-[#0E1726] outline-none transition placeholder:text-[#98A2B3] hover:border-[#C5CBD6] focus:border-[#7C3AED] focus:ring-2 focus:ring-[#6D28D9]/10";
   const draftContent = editingAlert?.content || {};
 
   if (loadingDraft) {
@@ -187,47 +233,71 @@ export default function CreateOutageAlertPage() {
   }
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4">
+    <div className="mx-auto max-w-5xl space-y-5 pb-24">
       {/* Header */}
-      <div>
+      <header>
         <Link
           href="/itsm/incident-manager/outage-alerts"
-          className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#5B21B6] hover:text-[#6D28D9]"
+          className="inline-flex min-h-10 items-center gap-2 text-sm font-semibold text-[#5B21B6] hover:text-[#6D28D9] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9]"
         >
-          <ArrowLeft className="h-3.5 w-3.5" /> Back to alerts
+          <ArrowLeft className="h-4 w-4" /> Back to alerts
         </Link>
-        <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <span className="inline-flex items-center gap-1 rounded-full border border-[#DDD6FE] bg-[#F8F5FF] px-2.5 py-0.5 text-[11px] font-semibold text-[#6D28D9]">
-              <BellRing className="h-3 w-3" /> Private draft
-            </span>
-            <h1 className="text-2xl font-bold tracking-tight text-[#0E1726]">
-              {editingAlert ? "Edit outage alert" : "Create outage alert"}
-            </h1>
-          </div>
+        <div className="mt-1 flex flex-wrap items-center gap-3">
+          <h1 className="text-2xl font-bold tracking-tight text-[#0E1726] sm:text-3xl">
+            {editingAlert ? "Edit outage alert" : "Create outage alert"}
+          </h1>
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-[#F1ECFE] px-3 py-1 text-xs font-semibold text-[#5B21B6]">
+            <ShieldCheck className="h-3.5 w-3.5" /> Private draft
+          </span>
         </div>
-        <p className="mt-0.5 text-xs text-[#6B7488]">
-          Compose the public outage announcement and service scope. You will preview exact recipient rosters and permissions before publishing.
+        <p className="mt-1 max-w-3xl text-sm leading-6 text-[#667085]">
+          Add the customer-safe message, affected services, and intended audience. You will preview exact recipients before anything is published.
         </p>
-      </div>
+      </header>
 
-      {error ? (
-        <div role="alert" className="rounded-xl border border-[#E7D9CF] bg-[#FFF9F5] p-3.5 text-sm text-[#704C3B]">
-          {error}
+      {successMessage ? (
+        <div role="status" aria-live="polite" className="fixed bottom-24 right-5 z-50 flex max-w-sm items-start gap-3 rounded-xl border border-[#A7F3D0] bg-white p-4 text-sm text-[#065F46] shadow-xl">
+          <Check className="mt-0.5 h-5 w-5 shrink-0 rounded-full bg-[#059669] p-1 text-white" />
+          <div><strong className="block">Saved successfully</strong><span>{successMessage}</span></div>
         </div>
       ) : null}
 
-      <form key={editingAlert?.id || "new-alert"} onSubmit={submit} className="space-y-4">
+      <div className="rounded-xl border border-[#E6E9F0] bg-white px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div><p className="text-sm font-semibold text-[#172033]">Draft readiness</p><p className="text-xs text-[#667085]">Complete the message, service scope, and audience before preview.</p></div>
+          <div className="flex items-center gap-2 text-xs font-semibold text-[#5B21B6]"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#F1ECFE]">{readyCount}</span> of 3 essentials ready</div>
+        </div>
+      </div>
+
+      {error && !recipientEligibilityError ? (
+        <div role="alert" className="flex items-start gap-3 rounded-xl border border-[#FECACA] bg-[#FFF7F7] p-4 text-sm text-[#991B1B]">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+          <div><strong className="block">Draft could not be saved</strong>{error}</div>
+        </div>
+      ) : null}
+
+      <form
+        key={editingAlert?.id || "new-alert"}
+        onSubmit={submit}
+        onInput={(event) => {
+          const form = event.currentTarget;
+          const title = (form.elements.namedItem("title") as HTMLInputElement | null)?.value.trim();
+          const summary = (form.elements.namedItem("public_summary") as HTMLTextAreaElement | null)?.value.trim();
+          const complete = Boolean(title && summary);
+          setRequiredDetailsComplete((current) => current === complete ? current : complete);
+        }}
+        className="space-y-5"
+      >
         {/* Card 1: Alert Details */}
-        <section className="rounded-2xl border border-[#E6E9F0] bg-white p-5 shadow-sm">
-          <div className="border-b border-[#EEF1F5] pb-2.5">
-            <h2 className="text-xs font-bold uppercase tracking-wider text-[#6D28D9]">Alert Details</h2>
-            <p className="text-xs text-[#6B7488]">Essential notice facts broadcast to affected recipients.</p>
+        <section className="rounded-2xl border border-[#E1E5EC] bg-white p-5 shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:p-6">
+          <div className="border-b border-[#EEF1F5] pb-3">
+            <div className="flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#6D28D9] text-sm font-bold text-white">1</span><h2 className="text-lg font-semibold tracking-tight text-[#172033]">Alert details</h2></div>
+            <p className="mt-1 pl-11 text-sm text-[#667085]">The essential facts recipients need to understand the disruption.</p>
           </div>
 
           <div className="mt-3.5 space-y-3.5">
             <div>
-              <label className="text-xs font-semibold uppercase tracking-wide text-[#475069]">
+              <label className="text-sm font-semibold text-[#344054]">
                 Alert title <span className="text-[#DC2626]">*</span>
               </label>
               <input
@@ -242,57 +312,58 @@ export default function CreateOutageAlertPage() {
 
             <div className="grid gap-3.5 sm:grid-cols-2">
               <div>
-                <label className="text-xs font-semibold uppercase tracking-wide text-[#475069]">
+                <label className="text-sm font-semibold text-[#344054]">
                   Alert type <span className="text-[#DC2626]">*</span>
                 </label>
                 <select name="alert_type" className={inputClass} defaultValue={String(draftContent.alert_type || "OUTAGE")}>
-                  <option value="OUTAGE">OUTAGE</option>
-                  <option value="DEGRADATION">DEGRADATION</option>
-                  <option value="MAINTENANCE">MAINTENANCE</option>
-                  <option value="INFORMATION">INFORMATION</option>
+                  <option value="OUTAGE">Outage</option>
+                  <option value="DEGRADATION">Degradation</option>
+                  <option value="MAINTENANCE">Maintenance</option>
+                  <option value="INFORMATION">Information</option>
                 </select>
               </div>
 
               <div>
-                <label className="text-xs font-semibold uppercase tracking-wide text-[#475069]">
+                <label className="text-sm font-semibold text-[#344054]">
                   Severity <span className="text-[#DC2626]">*</span>
                 </label>
                 <select name="severity" className={inputClass} defaultValue={String(draftContent.severity || "HIGH")}>
-                  <option value="CRITICAL">CRITICAL</option>
-                  <option value="HIGH">HIGH</option>
-                  <option value="MEDIUM">MEDIUM</option>
-                  <option value="LOW">LOW</option>
+                  <option value="CRITICAL">Critical</option>
+                  <option value="HIGH">High</option>
+                  <option value="MEDIUM">Medium</option>
+                  <option value="LOW">Low</option>
                 </select>
               </div>
             </div>
 
             <div>
-              <label className="text-xs font-semibold uppercase tracking-wide text-[#475069]">
+              <label className="text-sm font-semibold text-[#344054]">
                 Customer-safe summary <span className="text-[#DC2626]">*</span>
               </label>
               <textarea
                 required
                 name="public_summary"
-                rows={3}
+                rows={4}
                 className={inputClass}
                 placeholder="Explain what users are experiencing without internal jargon or sensitive configuration tokens."
                 defaultValue={String(draftContent.public_summary || "")}
               />
+              <p className="mt-1.5 text-xs leading-5 text-[#667085]">Customer-facing content only. Do not include credentials, internal notes, or sensitive technical details.</p>
             </div>
           </div>
         </section>
 
         {/* Card 2: Affected Services */}
-        <section id="affected-services" className="rounded-2xl border border-[#E6E9F0] bg-white p-5 shadow-sm">
-          <div className="border-b border-[#EEF1F5] pb-2.5">
-            <h2 className="text-xs font-bold uppercase tracking-wider text-[#6D28D9]">Affected Services</h2>
-            <p className="text-xs text-[#6B7488]">Services define recipient subscriber boundaries and configuration item scope.</p>
+        <section id="affected-services" className="scroll-mt-24 rounded-2xl border border-[#E1E5EC] bg-white p-5 shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:p-6">
+          <div className="border-b border-[#EEF1F5] pb-3">
+            <div className="flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#6D28D9] text-sm font-bold text-white">2</span><h2 className="text-lg font-semibold tracking-tight text-[#172033]">Affected services</h2>{hasTenantWideAudience && !requiresAffectedService ? <span className="rounded-full bg-[#F1F3F7] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#667085]">Optional</span> : null}</div>
+            <p className="mt-1 pl-11 text-sm text-[#667085]">{hasTenantWideAudience && !requiresAffectedService ? "Affected services are optional for this audience. Add one only when the communication concerns a specific service." : "Services define recipient eligibility and keep related records within the correct scope."}</p>
           </div>
 
-          <div className="mt-2">
+          <div className="mt-4">
             <SearchableChoicePicker
               title="Select affected services"
-              description="Search authorized services by name. Selected services stay accessible without full page reloads."
+              description="Search by service name. You select the service; AuthClaw resolves eligible people automatically."
               kind="SERVICE"
               selected={selectedServices}
               onChange={setSelectedServices}
@@ -302,37 +373,32 @@ export default function CreateOutageAlertPage() {
         </section>
 
         {/* Card 3: Audience and Communication Intent */}
-        <section className="overflow-hidden rounded-2xl border border-[#E2E6EE] bg-white shadow-sm">
-          <div className="flex items-start gap-3 border-b border-[#E8EBF1] bg-[#FBFAFF] px-5 py-4">
-            <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[#DDD6FE] bg-white text-[#6D28D9] shadow-sm">
-              <BellRing className="h-4.5 w-4.5" aria-hidden="true" />
-            </span>
+        <section className="overflow-hidden rounded-2xl border border-[#E1E5EC] bg-white shadow-[0_1px_2px_rgba(16,24,40,0.04)]">
+          <div className="flex items-start gap-3 border-b border-[#E8EBF1] px-5 py-4 sm:px-6">
+            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#6D28D9] text-sm font-bold text-white">3</span>
             <div>
-              <h2 className="text-base font-semibold tracking-tight text-[#172033]">Audience &amp; communication</h2>
-              <p className="mt-0.5 max-w-2xl text-xs leading-5 text-[#59657A]">
-                Choose the purpose and audience. AuthClaw resolves eligible recipients from the affected services before preview and publication.
+              <h2 className="text-lg font-semibold tracking-tight text-[#172033]">Audience and intent</h2>
+              <p className="mt-0.5 max-w-2xl text-sm leading-5 text-[#667085]">
+                Choose why you are communicating and which business audiences should receive it.
               </p>
             </div>
           </div>
 
-          <div className="grid gap-5 p-5 lg:grid-cols-[1.08fr_0.92fr]">
+          <div className="space-y-5 p-5 sm:p-6">
             {/* Intent selector */}
-            <fieldset className="min-w-0 rounded-2xl border border-[#E5E8EF] bg-[#FCFCFD] p-4">
+            <fieldset className="min-w-0">
               <legend className="sr-only">Communication intent</legend>
               <div className="mb-3">
-                <div className="flex items-center gap-2">
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#6D28D9] text-[11px] font-bold text-white">1</span>
-                  <h3 className="text-sm font-semibold text-[#172033]">Communication intent</h3>
-                </div>
-                <p className="mt-1 pl-7 text-xs leading-5 text-[#667085]">What should recipients understand or do?</p>
+                <h3 className="text-sm font-semibold text-[#172033]">Communication intent <span className="text-[#DC2626]">*</span></h3>
+                <p className="mt-1 text-xs leading-5 text-[#667085]">What should recipients understand or do? Intent never overrides authorization.</p>
               </div>
-              <div className="grid gap-2.5 sm:grid-cols-2">
+              <div className="grid gap-2.5 sm:grid-cols-2 xl:grid-cols-4">
                 {intents.map(({ value, label, description, icon: Icon }) => {
                   const isSelected = selectedIntent === value;
                   return (
                     <label
                       key={value}
-                      className={`group relative flex min-h-28 cursor-pointer flex-col rounded-xl border p-3.5 outline-none transition focus-within:ring-2 focus-within:ring-[#6D28D9]/20 ${
+                      className={`group relative flex min-h-24 cursor-pointer flex-col rounded-xl border p-3.5 outline-none transition focus-within:ring-2 focus-within:ring-[#6D28D9]/20 ${
                         isSelected
                           ? "border-[#7C3AED] bg-[#F7F3FF] shadow-[0_1px_3px_rgba(109,40,217,0.12)]"
                           : "border-[#DDE2EA] bg-white hover:border-[#C4B5FD] hover:bg-[#FDFCFF]"
@@ -369,15 +435,18 @@ export default function CreateOutageAlertPage() {
             </fieldset>
 
             {/* Primary audiences */}
-            <fieldset className="min-w-0 rounded-2xl border border-[#E5E8EF] bg-[#FCFCFD] p-4">
+            <fieldset className="min-w-0 border-t border-[#EEF1F5] pt-5">
               <legend className="sr-only">Who should receive this alert?</legend>
               <div className="mb-3">
-                <div className="flex items-center gap-2">
-                  <span className="flex h-5 w-5 items-center justify-center rounded-full bg-[#6D28D9] text-[11px] font-bold text-white">2</span>
-                  <h3 className="text-sm font-semibold text-[#172033]">Who should receive this alert?</h3>
-                </div>
-                <p className="mt-1 pl-7 text-xs leading-5 text-[#667085]">Select audience groups—not individual people.</p>
+                <h3 className="text-sm font-semibold text-[#172033]">Who should receive this alert? <span className="text-[#DC2626]">*</span></h3>
+                <p className="mt-1 text-xs leading-5 text-[#667085]">Select audience groups—not individual people.</p>
               </div>
+              {hasTenantWideAudience ? (
+                <div className="mb-3 flex items-start gap-2 rounded-xl border border-[#DDD6FE] bg-[#F8F5FF] p-3 text-xs leading-5 text-[#4C1D95]">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+                  <p><strong>Broad audience selected.</strong> AuthClaw will show the exact eligible count before publication and require a separate confirmation. People without an AuthClaw portal account cannot receive the in-app alert.</p>
+                </div>
+              ) : null}
               <div className="space-y-2.5">
                 {primaryAudiences.map(({ value, label, description, source, icon: Icon }) => {
                   const isChecked = selectedAudiences.includes(value);
@@ -416,17 +485,17 @@ export default function CreateOutageAlertPage() {
             </fieldset>
           </div>
 
-          <div className="mx-5 mb-5 flex items-start gap-2.5 rounded-xl border border-[#E3E7EE] bg-[#F8FAFC] px-3.5 py-3">
+          <div className="mx-5 mb-5 flex items-start gap-2.5 rounded-xl bg-[#F8FAFC] px-3.5 py-3 sm:mx-6">
             <Info className="mt-0.5 h-4 w-4 shrink-0 text-[#6D28D9]" aria-hidden="true" />
             <p className="text-xs leading-5 text-[#59657A]">
               <strong className="font-semibold text-[#344054]">Recipients are resolved automatically.</strong>{" "}
-              Eligibility comes from current service access, support-team coverage, and service ownership when you preview or publish.
+              Eligibility comes from the selected tenant-wide scope, service access, support-team coverage, and service ownership when you preview or publish.
             </p>
           </div>
 
           {/* Service Agent handling (conditional) */}
           {showAgentHandling ? (
-            <div className="mx-5 mb-5 rounded-xl border border-[#DDD6FE] bg-[#FAF5FF] p-4">
+            <div className="mx-5 mb-5 rounded-xl border border-[#DDD6FE] bg-[#FAF8FF] p-4 sm:mx-6">
               <div className="flex items-center justify-between">
                 <h3 className="text-xs font-bold uppercase tracking-wide text-[#6D28D9]">Service Agent Handling</h3>
                 <span className="text-[11px] text-[#6B7488]">Governs agent queue resolution workflow</span>
@@ -446,7 +515,14 @@ export default function CreateOutageAlertPage() {
                     <input
                       type="radio"
                       checked={handling === value}
-                      onChange={() => setHandling(value)}
+                      onChange={() => {
+                        setHandling(value);
+                        if (value === "SOLVE" && !hasIncidentLink) {
+                          setRelatedRecordType("INCIDENT");
+                          setOpenDrawer("RECORDS");
+                          setIncidentPickerOpenRequest((request) => request + 1);
+                        }
+                      }}
                       className="mt-0.5 accent-[#6D28D9]"
                     />
                     <div>
@@ -456,43 +532,6 @@ export default function CreateOutageAlertPage() {
                   </label>
                 ))}
               </div>
-
-              {handling === "SOLVE" && !hasIncidentLink ? (
-                <div className="mt-3 rounded-xl border border-[#DDD6FE] bg-white p-3.5 shadow-sm">
-                  <p className="text-xs font-bold text-[#352A52]">How should the resolution work be tracked?</p>
-                  <p className="mt-1 text-xs text-[#5B5670] leading-relaxed">
-                    Solve needs an Incident for ownership, assignment, and work history. Choose an existing Incident or explicitly create one. Publishing an alert never creates an Incident automatically.
-                  </p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setRelatedRecordType("INCIDENT");
-                        setIncidentPickerOpenRequest((val) => val + 1);
-                        document.getElementById("related-operational-records")?.scrollIntoView({ behavior: "smooth", block: "center" });
-                      }}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-[#C4B5FD] bg-[#F8F5FF] px-3 py-2 text-xs font-semibold text-[#5B21B6] hover:bg-[#F1ECFE]"
-                    >
-                      <Link2 className="h-3.5 w-3.5" /> Link existing Incident
-                    </button>
-                    <button
-                      type="submit"
-                      name="save_action"
-                      value="CREATE_INCIDENT"
-                      disabled={saving}
-                      className="inline-flex items-center gap-1.5 rounded-lg bg-[#6D28D9] px-3 py-2 text-xs font-semibold text-white hover:bg-[#5B21B6] disabled:opacity-60"
-                    >
-                      <FilePlus2 className="h-3.5 w-3.5" /> {saving ? "Saving draft…" : "Create new Incident"}
-                    </button>
-                  </div>
-                </div>
-              ) : null}
-
-              {handling === "SOLVE" && hasIncidentLink ? (
-                <p className="mt-3 text-xs font-semibold text-[#047857] flex items-center gap-1.5">
-                  <Check className="h-4 w-4" /> An Incident is linked. Authorized Service Agents can use it for assignment and resolution work.
-                </p>
-              ) : null}
 
               <div className="mt-3">
                 <label className="text-xs font-semibold uppercase tracking-wide text-[#475069]">
@@ -510,28 +549,31 @@ export default function CreateOutageAlertPage() {
           ) : null}
         </section>
 
-        {/* Card 4: Optional Information (Organized, Collapsible Drawers) */}
-        <section className="rounded-2xl border border-[#E6E9F0] bg-white p-5 shadow-sm">
-          <div className="border-b border-[#EEF1F5] pb-2.5">
-            <h2 className="text-xs font-bold uppercase tracking-wider text-[#6D28D9]">Optional Information</h2>
-            <p className="text-xs text-[#6B7488]">Supplementary operational notes, configuration assets, timeline, and advanced recipient targeting.</p>
+        {/* Communication and advanced context */}
+        <section className="rounded-2xl border border-[#E1E5EC] bg-white p-5 shadow-[0_1px_2px_rgba(16,24,40,0.04)] sm:p-6">
+          <div className="border-b border-[#EEF1F5] pb-3">
+            <div className="flex items-center gap-3"><span className="flex h-8 w-8 items-center justify-center rounded-full bg-[#6D28D9] text-sm font-bold text-white">4</span><div className="flex flex-wrap items-center gap-2"><h2 className="text-lg font-semibold tracking-tight text-[#172033]">Communication details</h2><span className="rounded-full bg-[#F1F3F7] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[#667085]">Optional</span></div></div>
+            <p className="mt-1 pl-11 text-sm text-[#667085]">Add impact, recommended action, and timing when they help recipients.</p>
           </div>
 
           <div className="mt-3.5 space-y-3">
             {/* Drawer 1: Business Impact & Timeline */}
-            <details className="group rounded-xl border border-[#EEF1F5] bg-[#FBFAF9] overflow-hidden transition">
-              <summary className="flex cursor-pointer items-center justify-between p-3.5 font-semibold text-xs text-[#0E1726] hover:bg-[#F8F5FF] select-none">
-                <span className="flex items-center gap-2">
-                  <span>Business Impact & Schedule</span>
+            <details open={openDrawer === "IMPACT"} className={drawerClass}>
+              <summary className={drawerSummaryClass} onClick={(event) => { event.preventDefault(); toggleDrawer("IMPACT"); }}>
+                <span className="min-w-0">
+                  <span className="flex items-center gap-2 text-sm font-semibold text-[#1D2939]">
+                    Customer impact and timing
                   {draftContent.impact_summary || draftContent.recommended_action || draftContent.outage_started_at ? (
                     <span className="h-2 w-2 rounded-full bg-[#8B5CF6]" />
                   ) : null}
+                  </span>
+                  <span className="mt-0.5 block text-xs font-normal text-[#667085]">Impact, user guidance, and expected update times</span>
                 </span>
-                <ChevronDown className="h-4 w-4 text-[#8A93A5] transition group-open:rotate-180" />
+                <ChevronDown className="h-4 w-4 shrink-0 text-[#667085] transition group-open:rotate-180 group-open:text-[#6D28D9]" />
               </summary>
-              <div className="p-4 pt-2 bg-white border-t border-[#EEF1F5] space-y-3">
+              <div className={drawerBodyClass}>
                 <div>
-                  <label className="text-xs font-semibold uppercase tracking-wide text-[#475069]">Business/user impact</label>
+                  <label className="text-sm font-semibold text-[#344054]">Business or user impact <span className="ml-2 text-xs font-normal text-[#8A93A5]">Optional</span></label>
                   <textarea
                     name="impact_summary"
                     rows={2}
@@ -541,7 +583,7 @@ export default function CreateOutageAlertPage() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-semibold uppercase tracking-wide text-[#475069]">What should users do?</label>
+                  <label className="text-sm font-semibold text-[#344054]">What should users do? <span className="ml-2 text-xs font-normal text-[#8A93A5]">Optional</span></label>
                   <textarea
                     name="recommended_action"
                     rows={2}
@@ -552,7 +594,7 @@ export default function CreateOutageAlertPage() {
                 </div>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
-                    <label className="text-xs font-semibold uppercase tracking-wide text-[#475069]">Outage started</label>
+                    <label className="text-sm font-semibold text-[#344054]">Outage started <span className="ml-2 text-xs font-normal text-[#8A93A5]">Optional</span></label>
                     <input
                       name="outage_started_at"
                       type="datetime-local"
@@ -561,7 +603,7 @@ export default function CreateOutageAlertPage() {
                     />
                   </div>
                   <div>
-                    <label className="text-xs font-semibold uppercase tracking-wide text-[#475069]">Next update</label>
+                    <label className="text-sm font-semibold text-[#344054]">Expected next update <span className="ml-2 text-xs font-normal text-[#8A93A5]">Optional</span></label>
                     <input
                       name="next_update_at"
                       type="datetime-local"
@@ -573,20 +615,28 @@ export default function CreateOutageAlertPage() {
               </div>
             </details>
 
+            <div className="flex items-start gap-3 pt-3">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#6D28D9] text-sm font-bold text-white">5</span>
+              <div><h3 className="text-base font-semibold text-[#172033]">Related records and advanced options</h3><p className="mt-0.5 text-xs leading-5 text-[#667085]">Open only the optional areas you need.</p></div>
+            </div>
+
             {/* Drawer 2: Affected Configuration Items */}
-            <details className="group rounded-xl border border-[#EEF1F5] bg-[#FBFAF9] overflow-hidden transition">
-              <summary className="flex cursor-pointer items-center justify-between p-3.5 font-semibold text-xs text-[#0E1726] hover:bg-[#F8F5FF] select-none">
-                <span className="flex items-center gap-2">
-                  <span>Affected Configuration Items</span>
+            <details open={openDrawer === "CIS"} className={drawerClass}>
+              <summary className={drawerSummaryClass} onClick={(event) => { event.preventDefault(); toggleDrawer("CIS"); }}>
+                <span className="min-w-0">
+                  <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[#1D2939]">
+                    Affected configuration items
                   {selectedCis.length ? (
                     <span className="rounded-full bg-[#F1ECFE] px-2 py-0.5 text-[10px] font-bold text-[#5B21B6]">
                       {selectedCis.length} selected
                     </span>
                   ) : null}
+                  </span>
+                  <span className="mt-0.5 block text-xs font-normal text-[#667085]">Optionally identify impacted infrastructure or applications</span>
                 </span>
-                <ChevronDown className="h-4 w-4 text-[#8A93A5] transition group-open:rotate-180" />
+                <ChevronDown className="h-4 w-4 shrink-0 text-[#667085] transition group-open:rotate-180 group-open:text-[#6D28D9]" />
               </summary>
-              <div className="p-4 pt-2 bg-white border-t border-[#EEF1F5]">
+              <div className={drawerBodyClass}>
                 <SearchableChoicePicker
                   title="Affected configuration items (optional)"
                   description={selectedServiceIds.length ? "Results are limited to the selected services." : "Select a service first to narrow configuration items."}
@@ -600,17 +650,23 @@ export default function CreateOutageAlertPage() {
             </details>
 
             {/* Drawer 3: Additional Recipients */}
-            <details className="group rounded-xl border border-[#EEF1F5] bg-[#FBFAF9] overflow-hidden transition">
-              <summary className="flex cursor-pointer items-center justify-between p-3.5 font-semibold text-xs text-[#0E1726] hover:bg-[#F8F5FF] select-none">
-                <span className="flex items-center gap-2">
-                  <span>Additional Recipients (Managers, Teams, Specific People)</span>
+            <details
+              open={openDrawer === "RECIPIENTS"}
+              className={drawerClass}
+            >
+              <summary className={drawerSummaryClass} onClick={(event) => { event.preventDefault(); toggleDrawer("RECIPIENTS"); }}>
+                <span className="min-w-0">
+                  <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[#1D2939]">
+                    Additional recipients
                   {selectedTeams.length || selectedUsers.length || selectedAudiences.includes("PROBLEM_MANAGERS") || selectedAudiences.includes("CHANGE_MANAGERS") ? (
                     <span className="h-2 w-2 rounded-full bg-[#8B5CF6]" />
                   ) : null}
+                  </span>
+                  <span className="mt-0.5 block text-xs font-normal text-[#667085]">Managers, authorized teams, or specific eligible people</span>
                 </span>
-                <ChevronDown className="h-4 w-4 text-[#8A93A5] transition group-open:rotate-180" />
+                <ChevronDown className="h-4 w-4 shrink-0 text-[#667085] transition group-open:rotate-180 group-open:text-[#6D28D9]" />
               </summary>
-              <div className="p-4 pt-2 bg-white border-t border-[#EEF1F5] space-y-4">
+              <div className={drawerBodyClass}>
                 <div>
                   <label className="text-xs font-semibold uppercase tracking-wide text-[#475069]">Process Managers</label>
                   <div className="mt-2 grid gap-2 sm:grid-cols-2">
@@ -651,37 +707,109 @@ export default function CreateOutageAlertPage() {
                   empty="No authorized teams match your search."
                 />
 
-                <SearchableChoicePicker
-                  title="Specific people (optional)"
-                  description="Only people who already have an authorized relationship to the selected services or linked records are available."
-                  kind="RECIPIENT"
-                  serviceIds={selectedServiceIds}
-                  relatedRecords={selectedLinks.map((item) => item.value)}
-                  selected={selectedUsers}
-                  onChange={setSelectedUsers}
-                  empty="No eligible people match the selected services or linked records."
-                />
+                <div id="specific-people" className="scroll-mt-24">
+                  <SearchableChoicePicker
+                    title="Specific people (optional)"
+                    description="Use only for an exception. The person must already be eligible through the selected services or linked records."
+                    kind="RECIPIENT"
+                    serviceIds={selectedServiceIds}
+                    relatedRecords={selectedLinks.map((item) => item.value)}
+                    selected={selectedUsers}
+                    onChange={(items) => {
+                      setSelectedUsers(items);
+                      if (recipientEligibilityError) setError("");
+                    }}
+                    empty="No eligible people match the selected services or linked records."
+                    error={recipientEligibilityError ? "This person is not eligible for the selected services or linked records. Check the affected service, add a related record, or remove this recipient." : ""}
+                  />
+                </div>
               </div>
             </details>
 
             {/* Drawer 4: Related Records & Internal Notes */}
-            <details id="related-operational-records" open={incidentPickerOpenRequest > 0} className="group rounded-xl border border-[#EEF1F5] bg-[#FBFAF9] overflow-hidden transition">
-              <summary className="flex cursor-pointer items-center justify-between p-3.5 font-semibold text-xs text-[#0E1726] hover:bg-[#F8F5FF] select-none">
-                <span className="flex items-center gap-2">
-                  <span>Related Operational Records & Internal Notes</span>
-                  {selectedLinks.length || draftContent.internal_notes ? (
+            <details
+              id="related-operational-records"
+              open={openDrawer === "RECORDS"}
+              className={drawerClass}
+            >
+              <summary className={drawerSummaryClass} onClick={(event) => { event.preventDefault(); toggleDrawer("RECORDS"); }}>
+                <span className="min-w-0">
+                  <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-[#1D2939]">
+                    Related records and internal notes
+                  {handling === "SOLVE" && !hasIncidentLink ? (
+                    <span className="rounded-full bg-[#F1ECFE] px-2 py-0.5 text-[10px] font-semibold text-[#5B21B6]">
+                      Incident needed
+                    </span>
+                  ) : selectedLinks.length ? (
                     <span className="rounded-full bg-[#F1ECFE] px-2 py-0.5 text-[10px] font-bold text-[#5B21B6]">
                       {selectedLinks.length} linked
                     </span>
+                  ) : draftContent.internal_notes ? (
+                    <span className="rounded-full bg-[#F1F3F7] px-2 py-0.5 text-[10px] font-bold text-[#59657A]">
+                      Notes added
+                    </span>
                   ) : null}
+                  </span>
+                  <span className="mt-0.5 block text-xs font-normal text-[#667085]">Link operational work and add restricted context when needed</span>
                 </span>
-                <ChevronDown className="h-4 w-4 text-[#8A93A5] transition group-open:rotate-180" />
+                <ChevronDown className="h-4 w-4 shrink-0 text-[#667085] transition group-open:rotate-180 group-open:text-[#6D28D9]" />
               </summary>
-              <div className="p-4 pt-2 bg-white border-t border-[#EEF1F5] space-y-4">
+              <div className={drawerBodyClass}>
+                {handling === "SOLVE" ? (
+                  hasIncidentLink ? (
+                    <div className="flex items-start gap-2.5 rounded-xl border border-[#A7F3D0] bg-[#F0FDF4] p-3.5 text-[#065F46]">
+                      <Check className="mt-0.5 h-4 w-4 shrink-0" />
+                      <div>
+                        <p className="text-xs font-bold">Resolution work is tracked in {linkedIncident?.label}</p>
+                        <p className="mt-0.5 text-[11px] leading-5">Authorized Service Agents can use the linked Incident for ownership, assignment, and work history.</p>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-[#DDD6FE] bg-[#F8F7FC] p-4">
+                      <div className="flex items-start gap-2.5">
+                        <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#EDE9FE] text-[#6D28D9]">
+                          <Link2 className="h-3.5 w-3.5" />
+                        </span>
+                        <div>
+                          <p className="text-sm font-semibold text-[#2D2450]">Choose how resolution work will be tracked</p>
+                          <p className="mt-1 text-xs leading-5 text-[#625A7A]">Solve uses an Incident for ownership, assignment, and work history.</p>
+                        </div>
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRelatedRecordType("INCIDENT");
+                            setOpenDrawer("RECORDS");
+                            setIncidentPickerOpenRequest((request) => request + 1);
+                          }}
+                          className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-[#CFC5EC] bg-white px-3 text-xs font-semibold text-[#5B21B6] transition hover:border-[#A78BFA] hover:bg-[#F5F3FF]"
+                        >
+                          <Link2 className="h-3.5 w-3.5" /> Link existing Incident
+                        </button>
+                        <button
+                          type="submit"
+                          name="save_action"
+                          value="CREATE_INCIDENT"
+                          disabled={saving}
+                          className="inline-flex min-h-10 items-center gap-1.5 rounded-lg bg-[#6D28D9] px-3 text-xs font-semibold text-white hover:bg-[#5B21B6] disabled:opacity-60"
+                        >
+                          <FilePlus2 className="h-3.5 w-3.5" /> {saving ? "Saving draft…" : "Create new Incident"}
+                        </button>
+                      </div>
+                      <p className="mt-2 text-[11px] leading-5 text-[#667085]">Creating an Incident saves this Alert as a private draft. It never publishes the Alert automatically.</p>
+                    </div>
+                  )
+                ) : null}
+
                 <div>
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <label className="text-xs font-semibold uppercase tracking-wide text-[#475069]">Filter by Record type</label>
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-[#475069]">Related records</p>
+                      <p className="mt-0.5 text-[11px] leading-5 text-[#667085]">Link only records that provide useful operational context for this alert.</p>
+                    </div>
                     <select
+                      aria-label="Filter related records by type"
                       value={relatedRecordType}
                       onChange={(event) => setRelatedRecordType(event.target.value)}
                       className="rounded-lg border border-[#DCE1E8] bg-white px-2.5 py-1 text-xs text-[#0E1726] outline-none"
@@ -697,7 +825,7 @@ export default function CreateOutageAlertPage() {
                   <SearchableChoicePicker
                     key={`related-records-${incidentPickerOpenRequest}`}
                     title="Find records"
-                    description="Search by record number or title. Only records you are authorized to link are returned."
+                    description="Search by record number or title. Results are restricted to authorized records for the affected services."
                     kind="RELATED_RECORD"
                     recordType={relatedRecordType}
                     serviceIds={selectedServiceIds}
@@ -710,8 +838,9 @@ export default function CreateOutageAlertPage() {
 
                 <div className="border-t border-[#EEF1F5] pt-3">
                   <label className="text-xs font-semibold uppercase tracking-wide text-[#475069]">
-                    Internal operational notes <span className="font-normal text-[#8A93A5]">(Incident Manager and Auditor only)</span>
+                    Internal operational notes <span className="font-normal normal-case tracking-normal text-[#8A93A5]">Optional</span>
                   </label>
+                  <p className="mt-1 text-[11px] leading-5 text-[#667085]">Visible only to authorized Incident Managers and Auditors. Never included in recipient communications.</p>
                   <textarea
                     name="internal_notes"
                     rows={2}
@@ -726,29 +855,29 @@ export default function CreateOutageAlertPage() {
         </section>
 
         {/* Safety banner & actions */}
-        <section className="rounded-2xl border border-[#DDD6FE] bg-[#F8F5FF] p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
-          <div className="flex items-center gap-3">
+        <section className="sticky bottom-3 z-20 flex flex-col items-start justify-between gap-3 rounded-2xl border border-[#D8DDE6] bg-white/95 p-4 shadow-[0_10px_30px_rgba(16,24,40,0.12)] backdrop-blur sm:flex-row sm:items-center">
+          <div className="flex items-start gap-3">
             <ShieldCheck className="h-5 w-5 shrink-0 text-[#6D28D9]" />
             <div>
-              <h2 className="text-xs font-bold text-[#0E1726]">Save privately, then verify before publishing</h2>
-              <p className="text-[11px] text-[#475069]">
-                Preview recipients shows who is included, why, which fields they see, and their allowed actions. Active channels: In-app & Portal warnings.
+              <h2 className="text-sm font-semibold text-[#172033]">Save privately, then preview recipients</h2>
+              <p className="text-xs leading-5 text-[#667085]">
+                Publishing remains a separate, intentional action on the alert detail page.
               </p>
             </div>
           </div>
 
-          <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+          <div className="flex shrink-0 items-center gap-2 self-end sm:self-center">
             <Link
               href={editingAlert ? `/itsm/incident-manager/outage-alerts/${editingAlert.id}` : "/itsm/incident-manager/outage-alerts"}
-              className="rounded-xl border border-[#E6E9F0] bg-white px-4 py-2 text-xs font-semibold text-[#475069] hover:bg-[#F8F5FF]"
+              className="inline-flex min-h-11 items-center justify-center rounded-xl border border-[#D8DDE6] bg-white px-4 text-sm font-semibold text-[#475069] hover:bg-[#F8F5FF]"
             >
               Cancel
             </Link>
             <button
               disabled={saving}
-              className="inline-flex items-center gap-2 rounded-xl bg-[#6D28D9] px-5 py-2 text-xs font-semibold text-white hover:bg-[#5B21B6] shadow-sm disabled:opacity-60"
+              className="inline-flex min-h-11 min-w-32 items-center justify-center gap-2 rounded-xl bg-[#6D28D9] px-5 text-sm font-semibold text-white shadow-sm hover:bg-[#5B21B6] disabled:cursor-not-allowed disabled:opacity-60"
             >
-              <Save className="h-3.5 w-3.5" /> {saving ? "Saving…" : editingAlert ? "Save changes" : "Save draft"}
+              {saving ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} {saving ? "Saving…" : editingAlert ? "Save changes" : "Save draft"}
             </button>
           </div>
         </section>
@@ -770,6 +899,7 @@ function SearchableChoicePicker({
   serviceIds = [],
   relatedRecords = [],
   initiallyOpen = false,
+  error = "",
 }: {
   title: string;
   description: string;
@@ -781,6 +911,7 @@ function SearchableChoicePicker({
   serviceIds?: string[];
   relatedRecords?: string[];
   initiallyOpen?: boolean;
+  error?: string;
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(initiallyOpen);
@@ -836,11 +967,11 @@ function SearchableChoicePicker({
   };
 
   return (
-    <div className="rounded-xl border border-[#EEF1F5] bg-[#FBFAF9] p-3.5">
+    <div className={error ? "rounded-xl border border-[#FCA5A5] bg-[#FFF7F7] p-4 ring-1 ring-[#FECACA]" : "rounded-xl border border-[#E1E5EC] bg-[#FCFCFD] p-4"} aria-invalid={error ? "true" : undefined}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="text-xs font-bold text-[#0E1726]">{title}</p>
-          <p className="text-[11px] text-[#6B7488]">{description}</p>
+          <p className="text-sm font-semibold text-[#172033]">{title}</p>
+          <p className="mt-0.5 text-xs leading-5 text-[#667085]">{description}</p>
         </div>
         <div className="flex items-center gap-2">
           <span className="rounded-full border border-[#DDD6FE] bg-white px-2 py-0.5 text-[10px] font-bold text-[#5B21B6]" aria-live="polite">
@@ -850,7 +981,7 @@ function SearchableChoicePicker({
             type="button"
             aria-expanded={open}
             onClick={() => setOpen((val) => !val)}
-            className="inline-flex items-center gap-1 rounded-lg border border-[#DDD6FE] bg-white px-2.5 py-1 text-xs font-semibold text-[#5B21B6] hover:bg-[#F1ECFE] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9]"
+            className="inline-flex min-h-10 items-center gap-1.5 rounded-lg border border-[#DDD6FE] bg-white px-3 text-xs font-semibold text-[#5B21B6] hover:bg-[#F1ECFE] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9]"
           >
             <Search className="h-3 w-3" />
             {open ? "Hide search" : "Search options"}
@@ -879,6 +1010,12 @@ function SearchableChoicePicker({
         </div>
       ) : null}
 
+      {error ? (
+        <p role="alert" className="mt-2.5 flex items-start gap-2 rounded-lg bg-white p-2.5 text-xs leading-5 text-[#B42318]">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" /> {error}
+        </p>
+      ) : null}
+
       {open ? (
         <>
           <label className="relative mt-2.5 block">
@@ -887,7 +1024,7 @@ function SearchableChoicePicker({
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              className="w-full rounded-xl border border-[#DCE1E8] bg-white py-2 pl-8 pr-8 text-xs outline-none transition focus:border-[#8B5CF6] focus:ring-2 focus:ring-[#6D28D9]/10"
+              className="w-full rounded-xl border border-[#D7DCE5] bg-white py-3 pl-9 pr-9 text-sm outline-none transition placeholder:text-[#98A2B3] focus:border-[#8B5CF6] focus:ring-2 focus:ring-[#6D28D9]/10"
               placeholder={`Search ${title.toLowerCase()}…`}
             />
             {query ? (
@@ -914,7 +1051,7 @@ function SearchableChoicePicker({
             ) : page.items.length === 0 ? (
               <p className="py-3 text-xs text-[#6B7488]">{empty}</p>
             ) : (
-              <div className="grid max-h-56 gap-1.5 overflow-y-auto pr-1 sm:grid-cols-2">
+              <div className="grid max-h-72 gap-2 overflow-y-auto pr-1 sm:grid-cols-2">
                 {page.items.map((item) => {
                   const active = selectedValues.has(item.value);
                   return (
@@ -924,7 +1061,7 @@ function SearchableChoicePicker({
                       aria-selected={active}
                       key={item.value}
                       onClick={() => toggleOption(item)}
-                      className={`flex min-w-0 items-center gap-2.5 rounded-lg border p-2 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9] ${
+                      className={`flex min-h-11 min-w-0 items-center gap-2.5 rounded-lg border p-2.5 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-[#6D28D9] ${
                         active ? "border-[#8B5CF6] bg-[#F8F5FF]" : "border-[#E6E9F0] bg-white hover:border-[#C4B5FD]"
                       }`}
                     >

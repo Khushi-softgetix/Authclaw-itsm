@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 from app.core.auth import get_tenant_db, require_itsm_roles
@@ -18,18 +18,20 @@ from app.schemas.itsm_analytics import (
     FCRKPIResponse,
     MTTAKPIResponse,
     MTTRKPIResponse,
+    MetricSnapshotListResponse,
+    MetricSnapshotResponse,
     OperationalKPIDashboardResponse,
     ReopenRateKPIResponse,
     RepeatIncidentsKPIResponse,
     SLAPerformanceKPIResponse,
 )
 from app.services.itsm_kpi_service import ITSMKPIService
+from app.services.itsm_metric_snapshot_service import DEFINITION_VERSION, ITSMMetricSnapshotService
 
 ANALYTICS_ROLES = [
     "INCIDENT_MANAGER",
     "SERVICE_LEAD",
     "PROCESS_CHANGE_MANAGER",
-    "PLATFORM_ADMINISTRATOR",
     "SERVICE_AGENT",
     "AUDITOR",
 ]
@@ -40,6 +42,37 @@ router = APIRouter(dependencies=[require_itsm_roles(ANALYTICS_ROLES)])
 def _get_service(request: Request, db: Session) -> ITSMKPIService:
     tenant_id = request.state.tenant_id
     return ITSMKPIService(db, tenant_id)
+
+
+@router.get("/kpis/snapshots", response_model=MetricSnapshotListResponse)
+def list_metric_snapshots(
+    request: Request,
+    metric_key: Optional[str] = Query(None, description="Canonical KPI key"),
+    period_grain: Optional[str] = Query(None, description="DAILY, WEEKLY, or MONTHLY"),
+    start_time: Optional[datetime] = Query(None, description="Earliest period start (UTC ISO)"),
+    end_time: Optional[datetime] = Query(None, description="Latest period end (UTC ISO)"),
+    definition_version: Optional[str] = Query(DEFINITION_VERSION, description="Metric definition version"),
+    limit: int = Query(100, ge=1, le=500),
+    db: Session = Depends(get_tenant_db),
+    _evidence_reader: None = require_itsm_roles(["INCIDENT_MANAGER", "AUDITOR"]),
+) -> MetricSnapshotListResponse:
+    """Read immutable tenant-scoped ANA-004 history; this endpoint never recomputes it."""
+    service = ITSMMetricSnapshotService(db, request.state.tenant_id)
+    try:
+        rows = service.list_snapshots(
+            metric_key=metric_key,
+            period_grain=period_grain,
+            start_time=start_time,
+            end_time=end_time,
+            limit=limit,
+            definition_version=definition_version,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+    return MetricSnapshotListResponse(
+        items=[MetricSnapshotResponse.model_validate(row) for row in rows],
+        total=len(rows),
+    )
 
 
 @router.get("/kpis", response_model=CoreKPISummaryResponse)

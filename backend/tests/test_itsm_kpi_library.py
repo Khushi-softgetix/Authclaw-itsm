@@ -46,7 +46,10 @@ def compile_array_sqlite(type_, compiler, **kw):
 
 from app.db.models import (
     ITSMChangeRequest,
+    ITSMBusinessCalendar,
     ITSMKnowledgeArticle,
+    ITSMMetricSnapshot,
+    ITSMMetricSourceEvent,
     ITSMTicket,
     ITSMTicketActivity,
     User,
@@ -54,6 +57,7 @@ from app.db.models import (
 from fastapi import FastAPI
 from app.api.v1.endpoints.itsm_analytics import router as itsm_analytics_router
 from app.services.itsm_kpi_service import ITSMKPIService
+from app.services.itsm_metric_snapshot_service import ITSMMetricSnapshotService
 
 test_app = FastAPI()
 test_app.include_router(itsm_analytics_router, prefix="/v1/itsm/analytics")
@@ -64,7 +68,16 @@ class TestITSMKPILibrary(unittest.TestCase):
 
     def setUp(self):
         self.engine = create_engine("sqlite:///:memory:")
-        for tbl in (ITSMTicket, ITSMTicketActivity, ITSMKnowledgeArticle, ITSMChangeRequest, User):
+        for tbl in (
+            ITSMTicket,
+            ITSMTicketActivity,
+            ITSMKnowledgeArticle,
+            ITSMChangeRequest,
+            User,
+            ITSMMetricSnapshot,
+            ITSMMetricSourceEvent,
+            ITSMBusinessCalendar,
+        ):
             tbl.__table__.create(bind=self.engine)
         self.Session = sessionmaker(bind=self.engine, autocommit=False, autoflush=False)
         self.db = self.Session()
@@ -463,12 +476,12 @@ class TestITSMKPILibrary(unittest.TestCase):
 
         res = self.service.compute_sla_performance(end_time=eval_time)
 
-        self.assertEqual(res.total_evaluated, 4)
-        self.assertEqual(res.met_count, 2)       # t1 (met) + t3 (within_sla)
-        self.assertEqual(res.breached_count, 2)  # t2 (breached) + t4 (breached)
-        self.assertEqual(res.compliance_rate_pct, 50.0)
-        self.assertEqual(res.breach_rate_pct, 50.0)
-        self.assertEqual(res.active_risk_breakdown["breached"], 2)
+        self.assertEqual(res.total_evaluated, 3)
+        self.assertEqual(res.met_count, 1)       # t1 completed within its deadline
+        self.assertEqual(res.breached_count, 2)  # t2 completed late + t4 overdue
+        self.assertEqual(res.compliance_rate_pct, round(1 / 3 * 100, 2))
+        self.assertEqual(res.breach_rate_pct, round(2 / 3 * 100, 2))
+        self.assertEqual(res.active_risk_breakdown["breached"], 1)
 
     # -------------------------------------------------------------------------
     # 7. CSAT Tests
@@ -597,6 +610,7 @@ class TestITSMKPILibrary(unittest.TestCase):
             status="COMPLETED",
             requested_by_id=self.requester_id,
             created_at=self.base_time,
+            actual_finish_at=self.base_time + timedelta(hours=2),
         )
         # Change 2: Completed Normal Change
         c2 = ITSMChangeRequest(
@@ -609,6 +623,7 @@ class TestITSMKPILibrary(unittest.TestCase):
             status="CLOSED",
             requested_by_id=self.requester_id,
             created_at=self.base_time,
+            actual_finish_at=self.base_time + timedelta(hours=3),
         )
         # Change 3: Cancelled / Rolled Back Emergency Change
         c3 = ITSMChangeRequest(
@@ -621,6 +636,7 @@ class TestITSMKPILibrary(unittest.TestCase):
             status="CANCELLED",
             requested_by_id=self.requester_id,
             created_at=self.base_time,
+            actual_finish_at=self.base_time + timedelta(hours=4),
         )
         # Change 4: Draft (not implemented yet)
         c4 = ITSMChangeRequest(
@@ -736,7 +752,7 @@ class TestITSMKPILibrary(unittest.TestCase):
 
         sla = empty_service.compute_sla_performance()
         self.assertEqual(sla.total_evaluated, 0)
-        self.assertEqual(sla.compliance_rate_pct, 0.0)
+        self.assertIsNone(sla.compliance_rate_pct)
 
         csat = empty_service.compute_csat()
         self.assertEqual(csat.survey_count, 0)
@@ -788,6 +804,53 @@ class TestITSMKPILibrary(unittest.TestCase):
         mtta_b = service_b.compute_mtta()
         self.assertEqual(mtta_b.total_tickets, 1)
         self.assertEqual(mtta_b.count, 1)
+
+    def test_metric_snapshots_are_idempotent_immutable_and_tenant_scoped(self):
+        reference = datetime(2026, 10, 16, 12, 0, tzinfo=timezone.utc)
+        snapshot_service = ITSMMetricSnapshotService(self.db, self.tenant_a)
+
+        first = snapshot_service.generate_completed_period("DAILY", reference)
+        second = snapshot_service.generate_completed_period("DAILY", reference)
+        self.assertEqual(len(first), 10)
+        self.assertEqual(len(second), 10)
+        self.assertEqual(
+            self.db.query(ITSMMetricSnapshot)
+            .filter(ITSMMetricSnapshot.tenant_id == self.tenant_a)
+            .count(),
+            10,
+        )
+
+        original_mtta = next(item for item in first if item.metric_key == "MTTA").value
+        self.db.add(
+            ITSMTicket(
+                id=uuid4(),
+                tenant_id=self.tenant_a,
+                ticket_number="INC-AFTER-SNAPSHOT",
+                ticket_type="INCIDENT",
+                title="Later correction",
+                description="Must not rewrite historical facts",
+                requester_id=self.requester_id,
+                created_at=datetime(2026, 10, 15, 8, 0, tzinfo=timezone.utc),
+                sla_response_met_at=datetime(2026, 10, 15, 8, 30, tzinfo=timezone.utc),
+            )
+        )
+        self.db.commit()
+        replayed = snapshot_service.generate_completed_period("DAILY", reference)
+        self.assertEqual(next(item for item in replayed if item.metric_key == "MTTA").value, original_mtta)
+
+        tenant_b_rows = ITSMMetricSnapshotService(self.db, self.tenant_b).generate_completed_period(
+            "DAILY", reference
+        )
+        self.assertEqual(len(tenant_b_rows), 10)
+        tenant_a_rows = snapshot_service.list_snapshots(
+            metric_key=None,
+            period_grain=None,
+            start_time=None,
+            end_time=None,
+            limit=100,
+        )
+        self.assertEqual(len(tenant_a_rows), 10)
+        self.assertTrue(all(row.tenant_id == self.tenant_a for row in tenant_a_rows))
 
     # -------------------------------------------------------------------------
     # 13. Date-Range Filtering

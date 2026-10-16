@@ -55,6 +55,21 @@ test("ITSM Profile page is role-aware with dynamic titles and entitlement labels
   assert.ok(source.includes("Account Status"), "Must preserve Account Status");
   assert.ok(source.includes("Tenant Identifier"), "Must preserve Tenant Identifier");
   assert.ok(source.includes("Authentication Protocol"), "Must preserve Authentication Protocol");
-  assert.ok(source.includes("Session Protection"), "Must preserve Session Protection");
+  assert.ok(source.includes("Your workspace access"), "Must explain role-specific workspace access");
+  assert.ok(source.includes("Secure AuthClaw session"), "Must describe authentication without exposing cookie implementation details");
+  assert.ok(!source.includes("authclaw_session"), "Must not expose the internal session-cookie name in the profile UI");
   assert.ok(source.includes("Sign Out"), "Must preserve Sign Out button");
+});
+
+test("Incident Manager and Auditor can open the shared protected profile experience", () => {
+  const incidentShell = fs.readFileSync(path.join(consoleDir, "src/components/incident-manager-shell.tsx"), "utf-8");
+  const sharedShell = fs.readFileSync(path.join(consoleDir, "src/components/console-shell.tsx"), "utf-8");
+  const consoleLayout = fs.readFileSync(path.join(consoleDir, "src/app/(console)/layout.tsx"), "utf-8");
+
+  assert.match(incidentShell, /href="\/itsm\/profile"/);
+  assert.match(incidentShell, /My Profile/);
+  assert.match(sharedShell, /href="\/itsm\/profile"/);
+  assert.match(sharedShell, /My Profile/);
+  assert.match(consoleLayout, /isItsmProfile/);
+  assert.match(consoleLayout, /useIncidentManagerShell/);
 });

@@ -420,6 +420,49 @@ def verify_agent_totp_encryption(bootstrap_url: str) -> None:
         """)).scalar_one()
     assert plaintext_count == 0, f"{plaintext_count} agent TOTP secrets remain plaintext"
 
+
+def verify_metric_snapshot_worker(
+    bootstrap_url: str,
+    worker_url: str,
+    worker_role: str,
+    backend_role: str,
+) -> None:
+    worker_engine = create_engine(worker_url, pool_pre_ping=True)
+    with worker_engine.connect() as conn:
+        row = conn.execute(
+            text(
+                "SELECT session_user,rolsuper,rolinherit,rolcreaterole,rolcreatedb,rolbypassrls "
+                "FROM pg_roles WHERE rolname=session_user"
+            )
+        ).one()
+        assert row[0] == worker_role
+        assert tuple(row[1:]) == (False, False, False, False, False)
+        assert conn.execute(
+            text("SELECT count(*) FROM public.itsm_tickets")
+        ).scalar_one() == 0, "worker must see no tenant data before binding context"
+
+    bootstrap_engine = create_engine(bootstrap_url, pool_pre_ping=True)
+    with bootstrap_engine.connect() as conn:
+        worker_candidate, app_candidate, worker_bind, app_bind = conn.execute(
+            text(
+                "SELECT "
+                "has_function_privilege(:worker,'worker_maintenance.metric_snapshot_candidate_tenants()','EXECUTE'),"
+                "has_function_privilege(:app,'worker_maintenance.metric_snapshot_candidate_tenants()','EXECUTE'),"
+                "has_function_privilege(:worker,'worker_maintenance.bind_metric_snapshot_context(uuid)','EXECUTE'),"
+                "has_function_privilege(:app,'worker_maintenance.bind_metric_snapshot_context(uuid)','EXECUTE')"
+            ),
+            {"worker": worker_role, "app": backend_role},
+        ).one()
+        assert (worker_candidate, app_candidate, worker_bind, app_bind) == (True, False, True, False)
+        assert conn.execute(
+            text("SELECT has_table_privilege(:worker,'public.itsm_metric_snapshots','INSERT')"),
+            {"worker": worker_role},
+        ).scalar_one() is True
+        assert conn.execute(
+            text("SELECT has_table_privilege(:app,'public.itsm_metric_snapshots','INSERT')"),
+            {"app": backend_role},
+        ).scalar_one() is False
+
 def main() -> None:
     backend_role = os.getenv("POSTGRES_APP_USER", "authclaw_app")
     backend_migrator = os.getenv("BACKEND_MIGRATOR_USER", "authclaw_migrator")
@@ -428,11 +471,16 @@ def main() -> None:
     bootstrap_url = required_url("BOOTSTRAP_DATABASE_URL")
     backend_url = required_url("BACKEND_DATABASE_URL")
     agent_url = required_url("AGENT_DATABASE_URL")
+    metric_worker_url = required_url("METRIC_SNAPSHOT_DATABASE_URL")
+    metric_worker_role = os.getenv("METRIC_SNAPSHOT_WORKER_USER", "authclaw_metric_worker")
     verify_runtime(backend_url, backend_role, backend_migrator, "public", "agent")
     verify_runtime(agent_url, agent_role, agent_migrator, "agent", "public")
     verify_rls(bootstrap_url, ("public", "agent"))
     verify_audit_append_boundary(bootstrap_url, backend_role)
     verify_agent_totp_encryption(bootstrap_url)
+    verify_metric_snapshot_worker(
+        bootstrap_url, metric_worker_url, metric_worker_role, backend_role
+    )
     verify_cross_tenant(bootstrap_url, backend_url, agent_url)
     print("Database identity, privilege, cross-schema, and RLS verification passed.")
 
